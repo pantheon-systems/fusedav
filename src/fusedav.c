@@ -111,7 +111,9 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
     st->st_mtime = glm ? ne_rfc1123_parse(glm) : 0;
     st->st_ctime = cd ? ne_iso8601_parse(cd) : 0;
 
-    //fprintf(stderr, "a: %u; m: %u; c: %u\n", st->st_atime, st->st_mtime, st->st_ctime);
+
+    st->st_blocks = (st->st_size+511)/512;
+    /*fprintf(stderr, "a: %u; m: %u; c: %u\n", st->st_atime, st->st_mtime, st->st_ctime);*/
 
     st->st_mode &= ~mask;
     
@@ -612,7 +614,7 @@ static void usage(char *argv0) {
 }
 
 static void exit_handler(int s) {
-    static const char m[] = "Signal caught\n";
+    static const char m[] = "*** Caught signal ***\n";
     write(2, m, strlen(m));
     if(fuse != NULL)
         fuse_exit(fuse);
@@ -648,6 +650,8 @@ int main(int argc, char *argv[]) {
     char *u=NULL, *p = NULL;
     int fuse_fd = -1;
     int ret = 1;
+    char mountpoint[PATH_MAX];
+    static const char *mount_args[] = { "-n",  NULL, "-l", "-c", NULL };
 
     if (ne_sock_init()) {
         fprintf(stderr, "Failed to initialize libneon.\n");
@@ -696,7 +700,17 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if ((fuse_fd = fuse_mount(argv[optind+1], NULL)) < 0) {
+    if (argv[optind+1][0] == '/')
+        snprintf(mountpoint, sizeof(mountpoint), "%s", argv[optind+1]);
+    else {
+        char *pwd = get_current_dir_name();
+        snprintf(mountpoint, sizeof(mountpoint), "%s/%s", pwd, argv[optind+1]);
+        free(pwd);
+    }
+
+    mount_args[1] = argv[optind];
+    
+    if ((fuse_fd = fuse_mount(mountpoint, mount_args)) < 0) {
         fprintf(stderr, "Failed to mount FUSE file system.\n");
         goto finish;
     }
@@ -716,7 +730,7 @@ finish:
         fuse_destroy(fuse);
     
     if (fuse_fd >= 0)
-        fuse_unmount(argv[optind]);
+        fuse_unmount(mountpoint);
     
     file_cache_close_all();
     cache_free();
