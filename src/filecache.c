@@ -137,7 +137,7 @@ void* file_cache_open(const char *path, int flags) {
     struct file_info *fi;
     char tempfile[PATH_MAX];
     char *length = NULL;
-    ne_request *req;
+    ne_request *req = NULL;
     ne_session *session;
 
     if ((fi = file_cache_get(path))) {

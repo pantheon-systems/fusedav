@@ -33,8 +33,7 @@ static pthread_mutex_t credential_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char* ask_user(char *p, int hidden) {
     char q[256], *r;
     struct termios t;
-    int c, l;
-
+    int c = 0, l;
 
     if (hidden) {
         if (!isatty(fileno(stdin)))
