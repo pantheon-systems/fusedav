@@ -34,7 +34,6 @@ if type -p stow > /dev/null && test -d /usr/local/stow ; then
 fi
 
 # Checks for programs.
-AC_PROG_CXX
 AC_PROG_CC
 AC_PROG_CPP
 AC_PROG_INSTALL
@@ -50,24 +49,22 @@ fi
 AC_SYS_LARGEFILE
 
 # Checks for header files.
+AC_HEADER_DIRENT
 AC_HEADER_STDC
-AC_HEADER_SYS_WAIT
-AC_CHECK_HEADERS([fcntl.h limits.h netinet/in.h stdlib.h string.h sys/ioctl.h sys/time.h syslog.h unistd.h])
+AC_CHECK_HEADERS([fcntl.h inttypes.h limits.h malloc.h stdlib.h string.h sys/statfs.h termios.h unistd.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_CONST
-AC_TYPE_PID_T
-AC_HEADER_TIME
-AC_C_VOLATILE
+AC_TYPE_MODE_T
+AC_TYPE_OFF_T
+AC_TYPE_SIZE_T
+AC_STRUCT_ST_BLOCKS
 
 # Checks for library functions.
-AC_FUNC_FORK
-AC_PROG_GCC_TRADITIONAL
-AC_FUNC_SELECT_ARGTYPES
 AC_FUNC_MALLOC
-AC_TYPE_SIGNAL
-AC_FUNC_VPRINTF
-AC_CHECK_FUNCS([alarm dup2 memset select setenv socket strchr strdup strerror strrchr strspn])
+AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr])
+
+AC_CHECK_LIB([pthread], [pthread_create])
 
 NEON_REQUIRE(0,24)
 NEON_LIBRARY
@@ -76,7 +73,6 @@ NEON_WARNINGS
 # FUSE
 AC_CHECK_HEADER(fuse.h,, [AC_MSG_ERROR([ *** fuse.h not found *** ])])
 AC_CHECK_LIB(fuse,fuse_main, [FUSE_LIBS="-lfuse"], [AC_MSG_ERROR([ *** libfuse.a not found *** ])], -lpthread)
-
 AC_SUBST(FUSE_LIBS)
 
 # LYNX documentation generation
