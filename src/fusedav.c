@@ -70,11 +70,11 @@ struct fuse* fuse = NULL;
 ne_lock_store *lock_store = NULL;
 struct ne_lock *lock = NULL;
 int lock_thread_exit = 0;
+int lock_timeout = 60;
 
 #define MIME_XATTR "user.mime_type"
 
 #define MAX_REDIRECTS 10
-#define LOCK_TIMEOUT 8
 
 struct fill_info {
     void *buf;
@@ -248,7 +248,7 @@ static void getdir_propfind_callback(void *userdata, const char *href, const ne_
         else
             t = fn;
 
-        dir_cache_add(f->root, t, is_dir);
+        dir_cache_add(f->root, t);
         f->filler(f->buf, h = ne_path_unescape(t), NULL, 0);
         free(h);
     }
@@ -260,7 +260,6 @@ static void getdir_propfind_callback(void *userdata, const char *href, const ne_
 static void getdir_cache_callback(
         const char *root,
         const char *fn,
-        int is_dir,
         void *user) {
     
     struct fill_info *f = user;
@@ -279,8 +278,8 @@ static int dav_readdir(
         const char *path,
         void *buf,
         fuse_fill_dir_t filler,
-        off_t offset,
-        struct fuse_file_info *fi) {
+        __unused off_t offset,
+        __unused struct fuse_file_info *fi) {
     
     struct fill_info f;
     ne_session *session;
@@ -426,7 +425,7 @@ static int dav_rmdir(const char *path) {
     return 0;
 }
 
-static int dav_mkdir(const char *path, mode_t mode) {
+static int dav_mkdir(const char *path, __unused mode_t mode) {
     char fn[PATH_MAX];
     ne_session *session;
 
@@ -496,7 +495,7 @@ finish:
     return r;
 }
 
-static int dav_release(const char *path, struct fuse_file_info *info) {
+static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     void *f = NULL;
     int r = 0;
     ne_session *session;
@@ -529,7 +528,7 @@ finish:
     return r;
 }
 
-static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
+static int dav_fsync(const char *path, __unused int isdatasync, __unused struct fuse_file_info *info) {
     void *f = NULL;
     int r = 0;
     ne_session *session;
@@ -562,7 +561,7 @@ finish:
     return r;
 }
 
-static int dav_mknod(const char *path, mode_t mode, dev_t rdev) {
+static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     char tempfile[PATH_MAX];
     int fd;
     ne_session *session;
@@ -613,7 +612,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     return 0;
 }
 
-static int dav_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
+static int dav_read(const char *path, char *buf, size_t size, off_t offset, __unused struct fuse_file_info *info) {
     void *f = NULL;
     ssize_t r;
  
@@ -633,8 +632,6 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
         goto finish;
     }
 
-    fprintf(stderr, "read: %i\n", r);
-
 finish:
     if (f)
         file_cache_unref(f);
@@ -642,7 +639,7 @@ finish:
     return r;
 }
 
-static int dav_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
+static int dav_write(const char *path, const char *buf, size_t size, off_t offset, __unused struct fuse_file_info *info) {
     void *f = NULL;
     ssize_t r;
 
@@ -759,7 +756,7 @@ static int listxattr_iterator(
         void *userdata,
         const ne_propname *pname,
         const char *value,
-        const ne_status *status) {
+        __unused const ne_status *status) {
 
     struct listxattr_info *l = userdata;
     int n;
@@ -794,7 +791,7 @@ static int listxattr_iterator(
     }
 }
 
-static void listxattr_propfind_callback(void *userdata, const char *href, const ne_prop_result_set *results) {
+static void listxattr_propfind_callback(void *userdata, __unused const char *href, const ne_prop_result_set *results) {
     struct listxattr_info *l = userdata;
     ne_propset_iterate(results, listxattr_iterator, l);
 }
@@ -859,7 +856,7 @@ static int getxattr_iterator(
         void *userdata,
         const ne_propname *pname,
         const char *value,
-        const ne_status *status) {
+        __unused const ne_status *status) {
 
     struct getxattr_info *g = userdata;
     
@@ -892,7 +889,7 @@ static int getxattr_iterator(
     return 0;
 }
 
-static void getxattr_propfind_callback(void *userdata, const char *href, const ne_prop_result_set *results) {
+static void getxattr_propfind_callback(void *userdata, __unused const char *href, const ne_prop_result_set *results) {
     struct getxattr_info *g = userdata;
     ne_propset_iterate(results, getxattr_iterator, g);
 }
@@ -1173,23 +1170,25 @@ static void usage(char *argv0) {
         e = argv0;
     
     fprintf(stderr,
-            "%s [-h] [-D] [-u USERNAME] [-p PASSWORD] [-o OPTIONS] URL MOUNTPOINT\n"
+            "%s [-hDL] [-t SECS] [-u USERNAME] [-p PASSWORD] [-o OPTIONS] URL MOUNTPOINT\n"
             "\t-h Show this help\n"
             "\t-D Enable debug mode\n"
             "\t-u Username if required\n"
             "\t-p Password if required\n"
-            "\t-o Additional FUSE mount options\n",
+            "\t-o Additional FUSE mount options\n"
+            "\t-L Locking the repository during mount\n"
+            "\t-t Set lock timeout\n",
             e);
 }
 
-static void exit_handler(int s) {
+static void exit_handler(__unused int sig) {
     static const char m[] = "*** Caught signal ***\n";
     if(fuse != NULL)
         fuse_exit(fuse);
     write(2, m, strlen(m));
 }
 
-static void empty_handler(int sig) {}
+static void empty_handler(__unused int sig) {}
 
 static int setup_signal_handlers(void) {
     struct sigaction sa;
@@ -1256,10 +1255,11 @@ static int create_lock(void) {
     
     lock->uri.path = strdup(base_directory);
     lock->depth = NE_DEPTH_INFINITE;
-    lock->timeout = LOCK_TIMEOUT+2;
+    lock->timeout = lock_timeout;
     lock->owner = strdup(owner);
 
-    fprintf(stderr, "Acquiring lock...\n");
+    if (debug)
+        fprintf(stderr, "Acquiring lock...\n");
     
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
@@ -1330,9 +1330,9 @@ static void *lock_thread_func(__unused void *p) {
     assert(lock);
 
     while (!lock_thread_exit) {
-        int r;
+        int r, t;
         
-        lock->timeout = LOCK_TIMEOUT;
+        lock->timeout = lock_timeout;
 
         pthread_sigmask(SIG_BLOCK, &block, NULL);
         r = ne_lock_refresh(session, lock);
@@ -1346,7 +1346,10 @@ static void *lock_thread_func(__unused void *p) {
         if (lock_thread_exit)
             break;
 
-        sleep(LOCK_TIMEOUT);
+        t = lock_timeout/2;
+        if (t <= 0)
+            t = 1;
+        sleep(t);
     }
     
     if (debug)
@@ -1414,8 +1417,18 @@ int main(int argc, char *argv[]) {
             case 'L':
                 enable_locking = 1;
                 break;
+
+            case 't':
+                if ((lock_timeout = atoi(optarg)) < 0) {
+                    fprintf(stderr, "Invalid lock timeout '%s'\n", optarg);
+                    goto finish;
+                }
+                break;
                 
             case 'h':
+                ret = 0;
+
+                /* fall through */
             default:
                 usage(argv[0]);
                 goto finish;
@@ -1443,7 +1456,7 @@ int main(int argc, char *argv[]) {
     mount_args_strings[0] = argv[optind];
 
     if (o) {
-        mount_args_strings[1] = "-o";
+        mount_args_strings[1] = (char*) "-o";
         mount_args_strings[2] = o;
         mount_args.argc += 2;
     }

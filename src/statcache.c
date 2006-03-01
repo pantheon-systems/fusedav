@@ -41,7 +41,6 @@
 
 struct dir_entry {
     struct dir_entry *next;
-    int is_dir;
     char filename[];
 };
 
@@ -247,7 +246,7 @@ void dir_cache_finish(const char *fn, int success) {
     free_dir_entries(de);
 }
 
-void dir_cache_add(const char *fn, const char *subdir, int is_dir) {
+void dir_cache_add(const char *fn, const char *subdir) {
     uint32_t h;
     struct cache_entry *ce;
     assert(cache);
@@ -270,7 +269,6 @@ void dir_cache_add(const char *fn, const char *subdir, int is_dir) {
         assert(n);
 
         strcpy(n->filename, subdir);
-        n->is_dir = is_dir;
         
         n->next = ce->dir_info.entries2;
         ce->dir_info.entries2 = n;
@@ -279,7 +277,7 @@ void dir_cache_add(const char *fn, const char *subdir, int is_dir) {
     pthread_mutex_unlock(&dir_cache_mutex);
 }
 
-int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *subdir, int is_dir, void *user), void *user) {
+int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *subdir, void *user), void *user) {
     uint32_t h;
     struct cache_entry *ce;
     struct dir_entry *de = NULL;
@@ -302,7 +300,7 @@ int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *su
         pthread_mutex_unlock(&dir_cache_mutex);
 
         for (de = ce->dir_info.entries; de; de = de->next)
-            f(fn, de->filename, de->is_dir, user);
+            f(fn, de->filename, user);
 
         pthread_mutex_lock(&dir_cache_mutex);
         ce->dir_info.in_use = 0;
