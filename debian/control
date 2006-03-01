@@ -2,7 +2,7 @@ Source: fusedav
 Section: utils
 Priority: optional
 Maintainer: Sebastien ESTIENNE <sebastien.estienne@gmail.com>
-Build-Depends: debhelper (>= 5.0.0), autotools-dev, libfuse-dev (>= 2.5), libneon25-dev, pkg-config, lynx
+Build-Depends: debhelper (>= 5.0.0), autotools-dev, libfuse-dev (>= 2.4), libneon25-dev, pkg-config, lynx
 Standards-Version: 3.6.2
 
 Package: fusedav
