@@ -156,7 +156,7 @@ int file_cache_close(void *f) {
 }
 
 void* file_cache_open(const char *path, int flags) {
-    struct file_info *fi;
+    struct file_info *fi = NULL;
     char tempfile[PATH_MAX];
     const char *length = NULL;
     ne_request *req = NULL;
