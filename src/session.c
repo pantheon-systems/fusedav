@@ -105,7 +105,8 @@ static int ne_auth_creds_cb(__unused void *userdata, const char *realm, int atte
         username = password = NULL;
     }
 
-    fprintf(stderr, "Realm '%s' requires authentication.\n", realm);
+    if (!username || !password)
+        fprintf(stderr, "Realm '%s' requires authentication.\n", realm);
     
     if (!username)
         username = ask_user("Username", 0);
