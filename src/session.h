@@ -32,5 +32,6 @@ int session_is_local(const ne_uri *u);
 
 extern char *base_directory;
 extern ne_uri uri;
+extern char *username;
 
 #endif

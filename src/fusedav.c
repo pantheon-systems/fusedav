@@ -1245,11 +1245,12 @@ static int create_lock(void) {
     if (!(session = session_get(0)))
         return -1;
 
-    if (!(owner = getenv("USER")))
-        if (!(owner = getenv("LOGNAME"))) {
-            snprintf(_owner, sizeof(_owner), "%lu", (unsigned long) getuid());
-            owner = owner;
-        }
+    if (!(owner = username))
+        if (!(owner = getenv("USER")))
+            if (!(owner = getenv("LOGNAME"))) {
+                snprintf(_owner, sizeof(_owner), "%lu", (unsigned long) getuid());
+                owner = owner;
+            }
 
     ne_fill_server_uri(session, &lock->uri);
     
