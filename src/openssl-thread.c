@@ -38,7 +38,7 @@ static void pthreads_locking_callback(int mode, int n, __unused const char *file
 }                                                                                                                                                                     
 
 static unsigned long pthreads_thread_id(void) {
-    return (unsigned long)pthread_self();
+    return (unsigned long) pthread_self();
 }
 
 void openssl_thread_setup(void) {
