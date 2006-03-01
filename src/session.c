@@ -49,7 +49,8 @@ static pthread_key_t session_tsd_key;
 ne_uri uri;
 static int b_uri = 0;
 
-static char *username = NULL, *password = NULL;
+char *username = NULL;
+static char *password = NULL;
 char *base_directory = NULL;
 
 static pthread_mutex_t credential_mutex = PTHREAD_MUTEX_INITIALIZER;
