@@ -529,7 +529,7 @@ finish:
     return r;
 }
 
-static int dav_fsync(const char *path, int isdatasync, struct fuse_file_info *info) {
+static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
     void *f = NULL;
     int r = 0;
     ne_session *session;
@@ -566,7 +566,7 @@ static int dav_mknod(const char *path, mode_t mode, dev_t rdev) {
     char tempfile[PATH_MAX];
     int fd;
     ne_session *session;
-    
+
     path = path_cvt(path);
     if (debug)
         fprintf(stderr, "mknod(%s)\n", path);
@@ -1189,9 +1189,12 @@ static void exit_handler(int s) {
     write(2, m, strlen(m));
 }
 
+static void empty_handler(int sig) {}
+
 static int setup_signal_handlers(void) {
     struct sigaction sa;
-                                                                                                        
+    sigset_t m;
+                                                                            
     sa.sa_handler = exit_handler;
     sigemptyset(&(sa.sa_mask));
     sa.sa_flags = 0;
@@ -1211,13 +1214,29 @@ static int setup_signal_handlers(void) {
         return -1;
     }
 
+    /* Used to shut down the locking thread */
+    sa.sa_handler = empty_handler;
+
+    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+        fprintf(stderr, "Cannot set user signals: %s\n", strerror(errno));
+        return -1;
+    }
+
+    sigemptyset(&m);
+    pthread_sigmask(SIG_BLOCK, &m, &m);
+    sigdelset(&m, SIGHUP);
+    sigdelset(&m, SIGINT);
+    sigdelset(&m, SIGTERM);
+    sigaddset(&m, SIGPIPE);
+    sigaddset(&m, SIGUSR1);
+    pthread_sigmask(SIG_SETMASK, &m, NULL);
+    
     return 0;
 }
 
 static int create_lock(void) {
     ne_session *session;
-    char token[64], _owner[64], *owner;
-    char hn[32];
+    char _owner[64], *owner;
     int i;
     int ret;
     
@@ -1233,19 +1252,15 @@ static int create_lock(void) {
             owner = owner;
         }
 
-    gethostname(hn, sizeof(hn)-1);
-    hn[sizeof(hn)-1] = 0;
-    
-    snprintf(token, sizeof(token), "%s.%lu.%lu", hn, (unsigned long) getpid(), (unsigned long) time(NULL));
-
     ne_fill_server_uri(session, &lock->uri);
     
     lock->uri.path = strdup(base_directory);
     lock->depth = NE_DEPTH_INFINITE;
     lock->timeout = LOCK_TIMEOUT+2;
     lock->owner = strdup(owner);
-/*     lock->token = strdup(token); */
 
+    fprintf(stderr, "Acquiring lock...\n");
+    
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
 
@@ -1280,8 +1295,28 @@ static int create_lock(void) {
     return 0;
 }
 
+static int remove_lock(void) {
+    ne_session *session;
+
+    assert(lock);
+
+    if (!(session = session_get(0)))
+        return -1;
+
+    if (debug)
+        fprintf(stderr, "Removing lock...\n");
+
+    if (ne_unlock(session, lock)) {
+        fprintf(stderr, "UNLOCK failed: %s\n", ne_get_error(session));
+        return -1;
+    }
+
+    return 0;
+}
+
 static void *lock_thread_func(__unused void *p) {
     ne_session *session;
+    sigset_t block;
 
     if (debug)
         fprintf(stderr, "lock_thread entering\n");
@@ -1289,14 +1324,21 @@ static void *lock_thread_func(__unused void *p) {
     if (!(session = session_get(1)))
         return NULL;
 
+    sigemptyset(&block);
+    sigaddset(&block, SIGUSR1);
+
     assert(lock);
 
     while (!lock_thread_exit) {
+        int r;
+        
         lock->timeout = LOCK_TIMEOUT;
 
+        pthread_sigmask(SIG_BLOCK, &block, NULL);
+        r = ne_lock_refresh(session, lock);
+        pthread_sigmask(SIG_UNBLOCK, &block, NULL);
 
-        
-        if (ne_lock_refresh(session, lock)) {
+        if (r) {
             fprintf(stderr, "LOCK refresh failed: %s\n", ne_get_error(session));
             break;
         }
@@ -1350,7 +1392,7 @@ int main(int argc, char *argv[]) {
     if (setup_signal_handlers() < 0)
         goto finish;
     
-    while ((c = getopt(argc, argv, "hu:p:Do:L")) != -1) {
+    while ((c = getopt(argc, argv, "hu:p:Do:Lt:")) != -1) {
 
         switch(c) {
             case 'u':
@@ -1417,15 +1459,16 @@ int main(int argc, char *argv[]) {
     }
     
     if (enable_locking && create_lock() >= 0) {
-        if (pthread_create(&lock_thread, NULL, lock_thread_func, NULL) < 0) {
-            fprintf(stderr, "pthread_create(): %s\n", strerror(errno));
+        int r;
+        if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, NULL)) < 0) {
+            fprintf(stderr, "pthread_create(): %s\n", strerror(r));
             goto finish;
         }
         
         lock_thread_running = 1;
     }
     
-    fuse_loop(fuse);
+    fuse_loop_mt(fuse);
 
     if (debug)
         fprintf(stderr, "Exiting cleanly.\n");
@@ -1436,8 +1479,9 @@ finish:
     
     if (lock_thread_running) {
         lock_thread_exit = 1;
-        pthread_kill(lock_thread, SIGPIPE);
+        pthread_kill(lock_thread, SIGUSR1);
         pthread_join(lock_thread, NULL);
+        remove_lock();
         ne_lockstore_destroy(lock_store);
     }
 
