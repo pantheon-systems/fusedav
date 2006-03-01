@@ -1,0 +1,16 @@
+This package was debianized by Sebastien ESTIENNE <sebastien.estienne@gmail.com> on
+Tue, 28 Feb 2006 23:33:31 +0100
+
+It was downloaded from http://0pointer.de/lennart/projects/fusedav/
+
+Copyright: Copyright 2006 Lennart Poettering <mzqrooht@0pointer.de>
+
+License:
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the
+Free Software Foundation; either version 2, or (at your option) any
+later version.
+
+On Debian systems, the complete text of the GNU General Public License
+can be found in the file `/usr/share/common-licenses/GPL'.

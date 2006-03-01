@@ -1,0 +1,6 @@
+fusedav for Debian
+------------------
+
+fusedav is a Fuse plugin to access WebDAV shares.
+	
+ -- Sebastien ESTIENNE <sebastien.estienne@gmail.com>  Wed, 01 Mar 2006 00:42:52 +0100

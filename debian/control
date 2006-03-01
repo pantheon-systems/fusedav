@@ -1,0 +1,18 @@
+Source: fusedav
+Section: utils
+Priority: optional
+Maintainer: Sebastien ESTIENNE <sebastien.estienne@gmail.com>
+Build-Depends: debhelper (>= 5.0.0), autotools-dev, libfuse-dev (>= 2.5), libneon25-dev, pkg-config, lynx
+Standards-Version: 3.6.2
+
+Package: fusedav
+Architecture: any
+Depends: ${shlibs:Depends}, fuse-utils
+Suggests: fuse-module
+Description: filesystem client based on WebDAV Protocol
+ fusedav is a filesystem client based on the WebDAV protocol
+ .
+ fusedav is based on FUSE (userspace filesystem framework for Linux),
+ thus you will have to prepare fuse kernel module to be able to use it.
+ .
+ Homepage: http://fuse.sourceforge.net/
