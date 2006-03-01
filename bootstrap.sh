@@ -39,7 +39,7 @@ else
     run_versioned automake 1.7 -a -c
     autoconf -Wall
 
-    ./configure --sysconfdir=/etc "$@"
+    CFLAGS="-g -O0" ./configure --sysconfdir=/etc "$@"
 
     make clean
 fi

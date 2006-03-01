@@ -24,5 +24,5 @@ fusedav_SOURCES=fusedav.c fusedav.h \
 				session.c session.h \
 				openssl-thread.c openssl-thread.h
 
-fusedav_CFLAGS = $(AM_CFLAGS) -D_GNU_SOURCE $ 
+fusedav_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS) $(FUSE_CFLAGS) -DFUSE_USE_VERSION=25
 fusedav_LDADD = -lpthread $(NEON_LIBS) $(FUSE_LIBS)

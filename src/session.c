@@ -38,23 +38,23 @@
 #include <ne_socket.h>
 #include <ne_auth.h>
 #include <ne_dates.h>
+#include <ne_redirect.h>
 
 #include "session.h"
-
+#include "fusedav.h"
 
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
 
-static ne_uri uri;
+ne_uri uri;
 static int b_uri = 0;
 
-static const char *username = NULL, *password = NULL;
-const char *base_directory = NULL;
+static char *username = NULL, *password = NULL;
+char *base_directory = NULL;
 
 static pthread_mutex_t credential_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-
-static char* ask_user(char *p, int hidden) {
+static char* ask_user(const char *p, int hidden) {
     char q[256], *r;
     struct termios t;
     int c = 0, l;
@@ -89,22 +89,23 @@ static char* ask_user(char *p, int hidden) {
     return r ? strdup(r) : NULL;
 }
 
-static int ssl_verify_cb(void *userdata, int failures, const ne_ssl_certificate *cert) {
+static int ssl_verify_cb(__unused void *userdata, __unused int failures, __unused const ne_ssl_certificate *cert) {
     return 0;
 }
 
-static int ne_auth_creds_cb(void *userdata, const char *realm, int attempt, char *u, char *p) {
+static int ne_auth_creds_cb(__unused void *userdata, const char *realm, int attempt, char *u, char *p) {
     int r = -1;
-    
     
     pthread_mutex_lock(&credential_mutex);
 
     if (attempt) {
-        fprintf(stderr, "Authenication failure!\n");
+        fprintf(stderr, "Authentication failure!\n");
         free((void*) username);
         free((void*) password);
         username = password = NULL;
     }
+
+    fprintf(stderr, "Realm '%s' requires authentication.\n", realm);
     
     if (!username)
         username = ask_user("Username", 0);
@@ -122,9 +123,11 @@ static int ne_auth_creds_cb(void *userdata, const char *realm, int attempt, char
     return r;
 }
 
-static ne_session *session_open(void) {
-    char *scheme = NULL;
+static ne_session *session_open(int with_lock) {
+    const char *scheme = NULL;
     ne_session *session;
+
+    extern ne_lock_store *lock_store;
 
     if (!b_uri)
         return NULL;
@@ -138,6 +141,11 @@ static ne_session *session_open(void) {
 
     ne_ssl_set_verify(session, ssl_verify_cb, NULL);
     ne_set_server_auth(session, ne_auth_creds_cb, NULL);
+    ne_redirect_register(session);
+
+    if (with_lock && lock_store)
+        ne_lockstore_register(lock_store, session);
+    
     return session;
 }
 
@@ -151,7 +159,7 @@ static void session_tsd_key_init(void) {
     pthread_key_create(&session_tsd_key, session_destroy);
 }
 
-ne_session *session_get(void) {
+ne_session *session_get(int with_lock) {
     ne_session *session;
     
     pthread_once(&session_once, session_tsd_key_init);
@@ -159,16 +167,19 @@ ne_session *session_get(void) {
     if ((session = pthread_getspecific(session_tsd_key)))
         return session;
 
-    session = session_open();
+    session = session_open(with_lock);
     pthread_setspecific(session_tsd_key, session);
 
     return session;
 }
 
 int session_set_uri(const char *s, const char *u, const char *p) {
-    assert(!b_uri && !username && !password);
     int l;
         
+    assert(!b_uri);
+    assert(!username);
+    assert(!password);
+
     if (ne_uri_parse(s, &uri)) {
         fprintf(stderr, "Invalid URI <%s>\n", s);
         goto finish;
@@ -216,5 +227,15 @@ void session_free(void) {
     free((char*) base_directory);
 
     username = password = base_directory = NULL;
+}
+
+int session_is_local(const ne_uri *u) {
+    assert(u);
+    assert(b_uri);
+
+    return
+        strcmp(u->scheme, uri.scheme) == 0 &&
+        strcmp(u->host, uri.host) == 0 &&
+        u->port == uri.port;
 }
 

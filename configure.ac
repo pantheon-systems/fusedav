@@ -33,6 +33,8 @@ if type -p stow > /dev/null && test -d /usr/local/stow ; then
    ac_default_prefix="/usr/local/stow/${PACKAGE_NAME}-${PACKAGE_VERSION}"
 fi
 
+AC_GNU_SOURCE
+
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_CPP
@@ -40,9 +42,50 @@ AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
 
-# If using GCC specifiy some additional parameters
+test_gcc_flag() {
+    AC_LANG_CONFTEST([int main() {}])
+    $CC -c conftest.c $CFLAGS $@ > /dev/null 2> /dev/null
+    ret=$?
+    rm -f conftest.o
+    return $ret
+}
+
+# If using GCC specify some additional parameters
 if test "x$GCC" = "xyes" ; then
-   CFLAGS="$CFLAGS -pipe -Wall -ansi"
+
+    DESIRED_FLAGS="-Wall -W -Wextra -pedantic -pipe -Wformat -Wold-style-definition -Wdeclaration-after-statement -Wfloat-equal -Wmissing-declarations -Wmissing-prototypes -Wstrict-prototypes -Wredundant-decls -Wmissing-noreturn -Wshadow -Wendif-labels -Wpointer-arith -Wbad-function-cast -Wcast-qual -Wcast-align -Wwrite-strings -Winline"
+
+    if test "x$HAVE_NETLINK" = "xyes" ; then
+        # Test whether rtnetlink.h can be included when compiled with -std=c99
+        # some distributions (e.g. archlinux) have broken headers that dont
+        # define __u64 with -std=c99
+        AC_MSG_CHECKING([checking whether rtnetlink.h can be included with -std=c99])
+        OLDCFLAGS="$CFLAGS"
+        CFLAGS="-std=c99"
+        AC_TRY_COMPILE([#include <linux/rtnetlink.h>], [],
+            use_stdc99=yes, use_stdc99=no)
+
+        if test x"$use_stdc99" = xyes; then
+            DESIRED_FLAGS="-std=c99 $DESIRED_FLAGS"
+            AC_MSG_RESULT([yes])
+        else
+            AC_MSG_RESULT([no])
+        fi
+
+        CFLAGS="$OLDCFLAGS"
+    else
+        DESIRED_FLAGS="-std=c99 $DESIRED_FLAGS"
+    fi
+
+    for flag in $DESIRED_FLAGS ; do
+        AC_MSG_CHECKING([whether $CC accepts $flag])
+        if test_gcc_flag $flag ; then 
+           CFLAGS="$CFLAGS $flag"
+           AC_MSG_RESULT([yes])
+        else
+           AC_MSG_RESULT([no])
+        fi
+    done 
 fi
 
 # 64 Bit LFS support
@@ -66,14 +109,8 @@ AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr])
 
 AC_CHECK_LIB([pthread], [pthread_create])
 
-NEON_REQUIRE(0,24)
-NEON_LIBRARY
-NEON_WARNINGS
-
-# FUSE
-AC_CHECK_HEADER(fuse.h,, [AC_MSG_ERROR([ *** fuse.h not found *** ])])
-AC_CHECK_LIB(fuse,fuse_main, [FUSE_LIBS="-lfuse"], [AC_MSG_ERROR([ *** libfuse.a not found *** ])], -lpthread)
-AC_SUBST(FUSE_LIBS)
+PKG_CHECK_MODULES(NEON, [ neon >= 0.25 ])
+PKG_CHECK_MODULES(FUSE, [ fuse >= 2.5 ])
 
 # LYNX documentation generation
 AC_ARG_ENABLE(lynx,

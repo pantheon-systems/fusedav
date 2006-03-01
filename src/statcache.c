@@ -31,6 +31,7 @@
 #include <assert.h>
 
 #include "statcache.h"
+#include "filecache.h"
 #include "fusedav.h"
 
 #include <ne_uri.h>
@@ -70,7 +71,7 @@ static uint32_t calc_hash(const char *s) {
     uint32_t h = 0;
 
     for (; *s; s++) {
-        h ^= * (uint8_t*) s;
+        h ^= * (const uint8_t*) s;
         h = (h << 8) | (h  >> 24);
     }
 
@@ -81,6 +82,7 @@ int stat_cache_get(const char *fn, struct stat *st) {
     uint32_t h;
     struct cache_entry *ce;
     int r = -1;
+    void *f;
 
     if (debug)
         fprintf(stderr, "CGET: %s\n", fn);
@@ -99,6 +101,12 @@ int stat_cache_get(const char *fn, struct stat *st) {
         time(NULL) <= ce->stat_info.dead) {
         
         *st = ce->stat_info.st;
+
+        if ((f = file_cache_get(fn))) {
+            st->st_size = file_cache_get_size(f);
+            file_cache_unref(f);
+        }
+
         r = 0;
     }
 
@@ -275,8 +283,9 @@ int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *su
     uint32_t h;
     struct cache_entry *ce;
     struct dir_entry *de = NULL;
-    assert(cache && f);
     int r = -1;
+
+    assert(cache && f);
     
     h = calc_hash(fn);
     ce = cache + (h % CACHE_SIZE);
@@ -380,6 +389,7 @@ void cache_alloc(void) {
         return;
 
     cache = malloc(sizeof(struct cache_entry)*CACHE_SIZE);
+    assert(cache);
     memset(cache, 0, sizeof(struct cache_entry)*CACHE_SIZE);
 }
 

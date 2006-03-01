@@ -23,6 +23,8 @@
 
 #include <sys/types.h>
 
+#include <ne_session.h>
+
 void* file_cache_open(const char *path, int flags);
 void* file_cache_get(const char *path);
 void file_cache_unref(void *f);
@@ -35,5 +37,6 @@ int file_cache_truncate(void *f, off_t s);
 int file_cache_sync(void *f);
 int file_cache_close_all(void);
 
+off_t file_cache_get_size(void *f);
 
 #endif

@@ -35,6 +35,7 @@
 #include <errno.h>
 #include <sys/statfs.h>
 #include <getopt.h>
+#include <attr/xattr.h>
 
 #include <ne_request.h>
 #include <ne_basic.h>
@@ -43,6 +44,8 @@
 #include <ne_socket.h>
 #include <ne_auth.h>
 #include <ne_dates.h>
+#include <ne_redirect.h>
+#include <ne_uri.h>
 
 #include <fuse.h>
 
@@ -50,6 +53,7 @@
 #include "filecache.h"
 #include "session.h"
 #include "openssl-thread.h"
+#include "fusedav.h"
 
 const ne_propname query_properties[] = {
     { "DAV:", "resourcetype" },
@@ -63,10 +67,18 @@ const ne_propname query_properties[] = {
 mode_t mask = 0;
 int debug = 0;
 struct fuse* fuse = NULL;
+ne_lock_store *lock_store = NULL;
+struct ne_lock *lock = NULL;
+int lock_thread_exit = 0;
+
+#define MIME_XATTR "user.mime_type"
+
+#define MAX_REDIRECTS 10
+#define LOCK_TIMEOUT 8
 
 struct fill_info {
-    fuse_dirh_t h;
-    fuse_dirfil_t filler;
+    void *buf;
+    fuse_fill_dir_t filler;
     const char *root;
 };
 
@@ -103,6 +115,66 @@ static const char *path_cvt(const char *path) {
     return r;
 }
 
+static int simple_propfind_with_redirect(
+        ne_session *session,
+        const char *path,
+        int depth,
+        const ne_propname *props,
+        ne_props_result results,
+        void *userdata) {
+
+    int i, ret;
+    
+    for (i = 0; i < MAX_REDIRECTS; i++) {
+        const ne_uri *u;
+
+        if ((ret = ne_simple_propfind(session, path, depth, props, results, userdata)) != NE_REDIRECT)
+            return ret;
+
+        if (!(u = ne_redirect_location(session)))
+            break;
+
+        if (!session_is_local(u))
+            break;
+
+        if (debug)
+            fprintf(stderr, "REDIRECT FROM '%s' to '%s'\n", path, u->path);
+        
+        path = u->path;
+    }
+
+    return ret;
+}
+
+static int proppatch_with_redirect(
+        ne_session *session,
+        const char *path,
+        const ne_proppatch_operation *ops) {
+    
+    int i, ret;
+    
+    for (i = 0; i < MAX_REDIRECTS; i++) {
+        const ne_uri *u;
+
+        if ((ret = ne_proppatch(session, path, ops)) != NE_REDIRECT)
+            return ret;
+
+        if (!(u = ne_redirect_location(session)))
+            break;
+
+        if (!session_is_local(u))
+            break;
+
+        if (debug)
+            fprintf(stderr, "REDIRECT FROM '%s' to '%s'\n", path, u->path);
+        
+        path = u->path;
+    }
+
+    return ret;
+}
+
+
 static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is_dir) {
     const char *rt, *e, *gcl, *glm, *cd;
     const ne_propname resourcetype = { "DAV:", "resourcetype" };
@@ -134,8 +206,7 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
     st->st_atime = time(NULL);
     st->st_mtime = glm ? ne_rfc1123_parse(glm) : 0;
     st->st_ctime = cd ? ne_iso8601_parse(cd) : 0;
-
-
+    
     st->st_blocks = (st->st_size+511)/512;
     /*fprintf(stderr, "a: %u; m: %u; c: %u\n", st->st_atime, st->st_mtime, st->st_ctime);*/
 
@@ -147,7 +218,9 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
 
 static char *strip_trailing_slash(char *fn, int *is_dir) {
     size_t l = strlen(fn);
-    assert(fn && is_dir);
+    assert(fn);
+    assert(is_dir);
+    assert(l > 0);
     
     if ((*is_dir = (fn[l-1] == '/')))
         fn[l-1] = 0;
@@ -176,7 +249,7 @@ static void getdir_propfind_callback(void *userdata, const char *href, const ne_
             t = fn;
 
         dir_cache_add(f->root, t, is_dir);
-        f->filler(f->h, h = ne_path_unescape(t), is_dir ? DT_DIR : DT_REG);
+        f->filler(f->buf, h = ne_path_unescape(t), NULL, 0);
         free(h);
     }
 
@@ -184,23 +257,31 @@ static void getdir_propfind_callback(void *userdata, const char *href, const ne_
     stat_cache_set(fn, &st);
 }
 
-static void getdir_cache_callback(const char *root, const char *fn, int is_dir, void *user) {
+static void getdir_cache_callback(
+        const char *root,
+        const char *fn,
+        int is_dir,
+        void *user) {
+    
     struct fill_info *f = user;
-    assert(f);
     char path[PATH_MAX];
-    struct stat st;
     char *h;
 
+    assert(f);
+    
     snprintf(path, sizeof(path), "%s/%s", !strcmp(root, "/") ? "" : root, fn);
     
-    if (get_stat(path, &st) < 0)
-        return;
-    
-    f->filler(f->h, h = ne_path_unescape(fn), is_dir ? DT_DIR : DT_REG);
+    f->filler(f->buf, h = ne_path_unescape(fn), NULL, 0);
     free(h);
 }
 
-static int dav_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler) {
+static int dav_readdir(
+        const char *path,
+        void *buf,
+        fuse_fill_dir_t filler,
+        off_t offset,
+        struct fuse_file_info *fi) {
+    
     struct fill_info f;
     ne_session *session;
 
@@ -209,21 +290,24 @@ static int dav_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler) {
     if (debug)
         fprintf(stderr, "getdir(%s)\n", path);
 
-    f.h = h;
+    f.buf = buf;
     f.filler = filler;
     f.root = path;
 
+    filler(buf, ".", NULL, 0);
+    filler(buf, "..", NULL, 0);
+    
     if (dir_cache_enumerate(path, getdir_cache_callback, &f) < 0) {
 
         if (debug)
             fprintf(stderr, "DIR-CACHE-MISS\n");
         
-        if (!(session = session_get())) 
+        if (!(session = session_get(1))) 
             return -EIO;
 
         dir_cache_begin(path);
         
-        if (ne_simple_propfind(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
+        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
             dir_cache_finish(path, 2);
             fprintf(stderr, "PROPFIND failed: %s\n", ne_get_error(session));
             return -ENOENT;
@@ -231,9 +315,6 @@ static int dav_getdir(const char *path, fuse_dirh_t h, fuse_dirfil_t filler) {
 
         dir_cache_finish(path, 1);
     }
-
-    filler(h, ".", DT_DIR);
-    filler(h, "..", DT_DIR);
 
     return 0;
 }
@@ -256,7 +337,7 @@ static void getattr_propfind_callback(void *userdata, const char *href, const ne
 static int get_stat(const char *path, struct stat *stbuf) {
     ne_session *session;
 
-    if (!(session = session_get())) 
+    if (!(session = session_get(1))) 
         return -EIO;
 
     if (stat_cache_get(path, stbuf) == 0) {
@@ -264,8 +345,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
     } else {
         if (debug)
             fprintf(stderr, "STAT-CACHE-MISS\n");
-        
-        if (ne_simple_propfind(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
+
+        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_invalidate(path);
             fprintf(stderr, "PROPFIND failed: %s\n", ne_get_error(session));
             return -ENOENT;
@@ -292,7 +373,7 @@ static int dav_unlink(const char *path) {
     if (debug)
         fprintf(stderr, "unlink(%s)\n", path);
 
-    if (!(session = session_get())) 
+    if (!(session = session_get(1))) 
         return -EIO;
 
     if ((r = get_stat(path, &st)) < 0)
@@ -313,6 +394,7 @@ static int dav_unlink(const char *path) {
 }
 
 static int dav_rmdir(const char *path) {
+    char fn[PATH_MAX];
     int r;
     struct stat st;
     ne_session *session;
@@ -322,7 +404,7 @@ static int dav_rmdir(const char *path) {
     if (debug)
         fprintf(stderr, "rmdir(%s)\n", path);
 
-    if (!(session = session_get())) 
+    if (!(session = session_get(1))) 
         return -EIO;
 
     if ((r = get_stat(path, &st)) < 0)
@@ -330,8 +412,10 @@ static int dav_rmdir(const char *path) {
 
     if (!S_ISDIR(st.st_mode))
         return -ENOTDIR;
+
+    snprintf(fn, sizeof(fn), "%s/", path);
     
-    if (ne_delete(session, path)) {
+    if (ne_delete(session, fn)) {
         fprintf(stderr, "DELETE failed: %s\n", ne_get_error(session));
         return -ENOENT;
     }
@@ -351,7 +435,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     if (debug)
         fprintf(stderr, "mkdir(%s)\n", path);
 
-    if (!(session = session_get())) 
+    if (!(session = session_get(1))) 
         return -EIO;
 
     snprintf(fn, sizeof(fn), "%s/", path);
@@ -370,18 +454,29 @@ static int dav_mkdir(const char *path, mode_t mode) {
 static int dav_rename(const char *from, const char *to) {
     ne_session *session;
     int r = 0;
+    struct stat st;
+    char fn[PATH_MAX], *_from;
 
-    from = strdup(path_cvt(from));
+    from = _from = strdup(path_cvt(from));
+    assert(from);
     to = path_cvt(to);
 
     if (debug)
         fprintf(stderr, "rename(%s, %s)\n", from, to);
 
-    if (!(session = session_get())) {
+    if (!(session = session_get(1))) {
         r = -EIO;
         goto finish;
     }
 
+    if ((r = get_stat(from, &st)) < 0)
+        goto finish;
+
+    if (S_ISDIR(st.st_mode)) {
+        snprintf(fn, sizeof(fn), "%s/", from);
+        from = fn;
+    }
+    
     if (ne_move(session, 1, from, to)) {
         fprintf(stderr, "MOVE failed: %s\n", ne_get_error(session));
         r = -ENOENT;
@@ -396,12 +491,12 @@ static int dav_rename(const char *from, const char *to) {
 
 finish:
 
-    free((char*) from);
+    free(_from);
     
     return r;
 }
 
-static int dav_release(const char *path, int flags) {
+static int dav_release(const char *path, struct fuse_file_info *info) {
     void *f = NULL;
     int r = 0;
     ne_session *session;
@@ -411,7 +506,7 @@ static int dav_release(const char *path, int flags) {
     if (debug)
         fprintf(stderr, "release(%s)\n", path);
 
-    if (!(session = session_get())) {
+    if (!(session = session_get(1))) {
         r = -EIO;
         goto finish;
     }
@@ -434,7 +529,7 @@ finish:
     return r;
 }
 
-static int dav_fsync(const char *path, int isdatasync) {
+static int dav_fsync(const char *path, int isdatasync, struct fuse_file_info *info) {
     void *f = NULL;
     int r = 0;
     ne_session *session;
@@ -443,7 +538,7 @@ static int dav_fsync(const char *path, int isdatasync) {
     if (debug)
         fprintf(stderr, "fsync(%s)\n", path);
 
-    if (!(session = session_get())) {
+    if (!(session = session_get(1))) {
         r = -EIO;
         goto finish;
     }
@@ -476,7 +571,7 @@ static int dav_mknod(const char *path, mode_t mode, dev_t rdev) {
     if (debug)
         fprintf(stderr, "mknod(%s)\n", path);
 
-    if (!(session = session_get())) 
+    if (!(session = session_get(1))) 
         return -EIO;
 
     if (!S_ISREG(mode))
@@ -502,14 +597,15 @@ static int dav_mknod(const char *path, mode_t mode, dev_t rdev) {
     return 0;
 }
 
-static int dav_open(const char *path, int flags) {
+static int dav_open(const char *path, struct fuse_file_info *info) {
     void *f;
 
     if (debug)
         fprintf(stderr, "open(%s)\n", path);
 
     path = path_cvt(path);
-    if (!(f = file_cache_open(path, flags)))
+
+    if (!(f = file_cache_open(path, info->flags)))
         return -errno;
 
     file_cache_unref(f);
@@ -517,11 +613,12 @@ static int dav_open(const char *path, int flags) {
     return 0;
 }
 
-static int dav_read(const char *path, char *buf, size_t size, off_t offset) {
+static int dav_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     void *f = NULL;
     ssize_t r;
  
     path = path_cvt(path);
+    
     if (debug)
         fprintf(stderr, "read(%s, %lu+%lu)\n", path, (unsigned long) offset, (unsigned long) size);
     
@@ -536,6 +633,8 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset) {
         goto finish;
     }
 
+    fprintf(stderr, "read: %i\n", r);
+
 finish:
     if (f)
         file_cache_unref(f);
@@ -543,11 +642,12 @@ finish:
     return r;
 }
 
-static int dav_write(const char *path, const char *buf, size_t size, off_t offset) {
+static int dav_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     void *f = NULL;
     ssize_t r;
 
     path = path_cvt(path);
+
     if (debug)
         fprintf(stderr, "write(%s, %lu+%lu)\n", path, (unsigned long) offset, (unsigned long) size);
 
@@ -576,10 +676,11 @@ static int dav_truncate(const char *path, off_t size) {
     ne_session *session;
     
     path = path_cvt(path);
+    
     if (debug)
         fprintf(stderr, "truncate(%s, %lu)\n", path, (unsigned long) size);
 
-    if (!(session = session_get()))
+    if (!(session = session_get(1)))
         r = -EIO;
         goto finish;
     
@@ -601,23 +702,466 @@ finish:
     return r;
 }
 
+static int dav_utime(const char *path, struct utimbuf *buf) {
+    ne_session *session;
+    const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
+    ne_proppatch_operation ops[2];
+    int r = 0;
+    char *date;
+    
+    assert(path);
+    assert(buf);
+
+    path = path_cvt(path);
+    
+    if (debug)
+        fprintf(stderr, "utime(%s, %lu, %lu)\n", path, (unsigned long) buf->actime, (unsigned long) buf->modtime);
+    
+    ops[0].name = &getlastmodified;
+    ops[0].type = ne_propset;
+    ops[0].value = date = ne_rfc1123_date(buf->modtime);
+    ops[1].name = NULL;
+
+    if (!(session = session_get(1))) {
+        r = -EIO;
+        goto finish;
+    }
+
+    if (proppatch_with_redirect(session, path, ops)) {
+        fprintf(stderr, "PROPPATCH failed: %s\n", ne_get_error(session));
+        r = -ENOTSUP;
+        goto finish;
+    }
+    
+    stat_cache_invalidate(path);
+
+finish:
+    free(date);
+    
+    return r;
+}
+
+static const char *fix_xattr(const char *name) {
+    assert(name);
+
+    if (!strcmp(name, MIME_XATTR))
+        return "user.webdav(DAV:;getcontenttype)";
+
+    return name;
+}
+
+struct listxattr_info {
+    char *list;
+    size_t space, size;
+};
+
+static int listxattr_iterator(
+        void *userdata,
+        const ne_propname *pname,
+        const char *value,
+        const ne_status *status) {
+
+    struct listxattr_info *l = userdata;
+    int n;
+    
+    assert(l);
+
+    if (!value || !pname)
+        return -1;
+
+    if (l->list) {
+        n = snprintf(l->list, l->space, "user.webdav(%s;%s)", pname->nspace, pname->name) + 1;
+        
+        if (n >= (int) l->space) {
+            l->size += l->space;
+            l->space = 0;
+            return 1;
+            
+        } else {
+            l->size += n;
+            l->space -= n;
+            
+            if (l->list)
+                l->list += n;
+            
+            return 0;
+        }
+    } else {
+        /* Calculate space */
+        
+        l->size += strlen(pname->nspace) + strlen(pname->name) + 15;
+        return 0;
+    }
+}
+
+static void listxattr_propfind_callback(void *userdata, const char *href, const ne_prop_result_set *results) {
+    struct listxattr_info *l = userdata;
+    ne_propset_iterate(results, listxattr_iterator, l);
+}
+
+static int dav_listxattr(
+        const char *path,
+        char *list,
+        size_t size) {
+    
+    ne_session *session;
+    struct listxattr_info l;
+    
+
+    assert(path);
+
+    path = path_cvt(path);
+
+    if (debug)
+        fprintf(stderr, "listxattr(%s, .., %lu)\n", path, (unsigned long) size);
+
+    if (list) {
+        l.list = list;
+        l.space = size-1;
+        l.size = 0;
+
+        if (l.space >= sizeof(MIME_XATTR)) {
+            memcpy(l.list, MIME_XATTR, sizeof(MIME_XATTR));
+            l.list += sizeof(MIME_XATTR);
+            l.space -= sizeof(MIME_XATTR);
+            l.size += sizeof(MIME_XATTR);
+        }
+        
+    } else {
+        l.list = NULL;
+        l.space = 0;
+        l.size = sizeof(MIME_XATTR);
+    }
+    
+    if (!(session = session_get(1))) 
+        return -EIO;
+
+    if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, NULL, listxattr_propfind_callback, &l) != NE_OK) {
+        fprintf(stderr, "PROPFIND failed: %s\n", ne_get_error(session));
+        return -EIO;
+    }
+
+    if (l.list) {
+        assert(l.space > 0);
+        *l.list = 0;
+    }
+
+    return l.size+1;
+}
+
+struct getxattr_info {
+    ne_propname propname;
+    char *value;
+    size_t space, size;
+};
+
+static int getxattr_iterator(
+        void *userdata,
+        const ne_propname *pname,
+        const char *value,
+        const ne_status *status) {
+
+    struct getxattr_info *g = userdata;
+    
+    assert(g);
+
+    if (!value || !pname)
+        return -1;
+
+    if (strcmp(pname->nspace, g->propname.nspace) ||
+        strcmp(pname->name, g->propname.name))
+        return 0;
+
+    if (g->value) {
+        size_t l;
+
+        l = strlen(value);
+
+        if (l > g->space)
+            l = g->space;
+
+        memcpy(g->value, value, l);
+        g->size = l;
+    } else {
+        /* Calculate space */
+        
+        g->size = strlen(value);
+        return 0;
+    }
+    
+    return 0;
+}
+
+static void getxattr_propfind_callback(void *userdata, const char *href, const ne_prop_result_set *results) {
+    struct getxattr_info *g = userdata;
+    ne_propset_iterate(results, getxattr_iterator, g);
+}
+
+static int parse_xattr(const char *name, char *dnspace, size_t dnspace_length, char *dname, size_t dname_length) {
+    char *e;
+    size_t k;
+    
+    assert(name);
+    assert(dnspace);
+    assert(dnspace_length);
+    assert(dname);
+    assert(dname_length);
+    
+    if (strncmp(name, "user.webdav(", 12) ||
+        name[strlen(name)-1] != ')' ||
+        !(e = strchr(name+12, ';')))
+        return -1;
+
+    if ((k = strcspn(name+12, ";")) > dnspace_length-1)
+        return -1;
+
+    memcpy(dnspace, name+12, k);
+    dnspace[k] = 0;
+
+    e++;
+    
+    if ((k = strlen(e)) > dname_length-1)
+        return -1;
+
+    assert(k > 0);
+    k--;
+
+    memcpy(dname, e, k);
+    dname[k] = 0;
+
+    return 0;
+}
+
+static int dav_getxattr(
+        const char *path,
+        const char *name,
+        char *value,
+        size_t size) {
+
+    ne_session *session;
+    struct getxattr_info g;
+    ne_propname props[2];
+    char dnspace[128], dname[128];
+        
+    assert(path);
+
+    path = path_cvt(path);
+    name = fix_xattr(name);
+
+    if (debug)
+        fprintf(stderr, "getxattr(%s, %s, .., %lu)\n", path, name, (unsigned long) size);
+
+    if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0)
+        return -ENOATTR;
+
+    props[0].nspace = dnspace;
+    props[0].name = dname;
+    props[1].nspace = NULL;
+    props[1].name = NULL;
+
+    if (value) {
+        g.value = value;
+        g.space = size;
+        g.size = (size_t) -1;
+    } else {
+        g.value = NULL;
+        g.space = 0;
+        g.size = (size_t) -1;
+    }
+
+    g.propname = props[0];
+    
+    if (!(session = session_get(1)))
+        return -EIO;
+
+    if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, props, getxattr_propfind_callback, &g) != NE_OK) {
+        fprintf(stderr, "PROPFIND failed: %s\n", ne_get_error(session));
+        return -EIO;
+    }
+
+    if (g.size == (size_t) -1)
+        return -ENOATTR;
+
+    return g.size;
+}
+
+static int dav_setxattr(
+        const char *path,
+        const char *name,
+        const char *value,
+        size_t size,
+        int flags) {
+
+    ne_session *session;
+    ne_propname propname;
+    ne_proppatch_operation ops[2];
+    int r = 0;
+    char dnspace[128], dname[128];
+    char *value_fixed = NULL;
+
+    assert(path);
+    assert(name);
+    assert(value);
+
+    path = path_cvt(path);
+    name = fix_xattr(name);
+    
+    if (debug)
+        fprintf(stderr, "setxattr(%s, %s)\n", path, name);
+
+    if (flags) {
+        r = ENOTSUP;
+        goto finish;
+    }
+    
+    if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
+        r = -ENOATTR;
+        goto finish;
+    }
+
+    propname.nspace = dnspace;
+    propname.name = dname;
+    
+    /* Add trailing NUL byte if required */
+    if (!memchr(value, 0, size)) {
+        value_fixed = malloc(size+1);
+        assert(value_fixed);
+        
+        memcpy(value_fixed, value, size);
+        value_fixed[size] = 0;
+
+        value = value_fixed;
+    }
+    
+    ops[0].name = &propname;
+    ops[0].type = ne_propset;
+    ops[0].value = value;
+    
+    ops[1].name = NULL;
+
+    if (!(session = session_get(1))) {
+        r = -EIO;
+        goto finish;
+    }
+                 
+    if (proppatch_with_redirect(session, path, ops)) {
+        fprintf(stderr, "PROPPATCH failed: %s\n", ne_get_error(session));
+        r = -ENOTSUP;
+        goto finish;
+    }
+    
+    stat_cache_invalidate(path);
+
+finish:
+    free(value_fixed);
+    
+    return r;
+}
+
+static int dav_removexattr(const char *path, const char *name) {
+    ne_session *session;
+    ne_propname propname;
+    ne_proppatch_operation ops[2];
+    int r = 0;
+    char dnspace[128], dname[128];
+
+    assert(path);
+    assert(name);
+
+    path = path_cvt(path);
+    name = fix_xattr(name);
+    
+    if (debug)
+        fprintf(stderr, "removexattr(%s, %s)\n", path, name);
+
+    if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
+        r = -ENOATTR;
+        goto finish;
+    }
+
+    propname.nspace = dnspace;
+    propname.name = dname;
+    
+    ops[0].name = &propname;
+    ops[0].type = ne_propremove;
+    ops[0].value = NULL;
+    
+    ops[1].name = NULL;
+
+    if (!(session = session_get(1))) {
+        r = -EIO;
+        goto finish;
+    }
+                 
+    if (proppatch_with_redirect(session, path, ops)) {
+        fprintf(stderr, "PROPPATCH failed: %s\n", ne_get_error(session));
+        r = -ENOTSUP;
+        goto finish;
+    }
+    
+    stat_cache_invalidate(path);
+
+finish:
+    
+    return r;
+}
+
+static int dav_chmod(const char *path, mode_t mode) {
+    ne_session *session;
+    const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
+    ne_proppatch_operation ops[2];
+    int r = 0;
+    
+    assert(path);
+
+    path = path_cvt(path);
+    
+    if (debug)
+        fprintf(stderr, "chmod(%s, %04o)\n", path, mode);
+    
+    ops[0].name = &executable;
+    ops[0].type = ne_propset;
+    ops[0].value = mode & 0111 ? "T" : "F";
+    ops[1].name = NULL;
+
+    if (!(session = session_get(1))) {
+        r = -EIO;
+        goto finish;
+    }
+
+    if (proppatch_with_redirect(session, path, ops)) {
+        fprintf(stderr, "PROPPATCH failed: %s\n", ne_get_error(session));
+        r = -ENOTSUP;
+        goto finish;
+    }
+    
+    stat_cache_invalidate(path);
+
+finish:
+    
+    return r;
+}
 
 static struct fuse_operations dav_oper = {
-    .getattr	= dav_getattr,
-    .getdir	= dav_getdir,
-    .mknod	= dav_mknod,
-    .mkdir	= dav_mkdir,
-    .unlink	= dav_unlink,
-    .rmdir	= dav_rmdir,
-    .rename	= dav_rename,
-/*    .chmod	= dav_chmod,*/
-    .truncate	= dav_truncate,
-/*    .utime	= dav_utime,*/
-    .open	= dav_open,
-    .read	= dav_read,
-    .write	= dav_write,
-    .release	= dav_release,
-    .fsync	= dav_fsync
+    .getattr	 = dav_getattr,
+    .readdir	 = dav_readdir,
+    .mknod	 = dav_mknod,
+    .mkdir	 = dav_mkdir,
+    .unlink	 = dav_unlink,
+    .rmdir	 = dav_rmdir,
+    .rename	 = dav_rename,
+    .chmod       = dav_chmod,
+    .truncate	 = dav_truncate,
+    .utime       = dav_utime,
+    .open	 = dav_open,
+    .read	 = dav_read,
+    .write	 = dav_write,
+    .release	 = dav_release,
+    .fsync	 = dav_fsync,
+    .setxattr    = dav_setxattr,
+    .getxattr    = dav_getxattr,
+    .listxattr   = dav_listxattr,
+    .removexattr = dav_removexattr,
 };
 
 static void usage(char *argv0) {
@@ -629,19 +1173,20 @@ static void usage(char *argv0) {
         e = argv0;
     
     fprintf(stderr,
-            "%s [-h] [-D] [-u USERNAME] [-p PASSWORD] URL MOUNTPOINT\n"
+            "%s [-h] [-D] [-u USERNAME] [-p PASSWORD] [-o OPTIONS] URL MOUNTPOINT\n"
             "\t-h Show this help\n"
             "\t-D Enable debug mode\n"
             "\t-u Username if required\n"
-            "\t-p Password if required\n",
+            "\t-p Password if required\n"
+            "\t-o Additional FUSE mount options\n",
             e);
 }
 
 static void exit_handler(int s) {
     static const char m[] = "*** Caught signal ***\n";
-    write(2, m, strlen(m));
     if(fuse != NULL)
         fuse_exit(fuse);
+    write(2, m, strlen(m));
 }
 
 static int setup_signal_handlers(void) {
@@ -669,14 +1214,127 @@ static int setup_signal_handlers(void) {
     return 0;
 }
 
+static int create_lock(void) {
+    ne_session *session;
+    char token[64], _owner[64], *owner;
+    char hn[32];
+    int i;
+    int ret;
+    
+    lock = ne_lock_create();
+    assert(lock);
+
+    if (!(session = session_get(0)))
+        return -1;
+
+    if (!(owner = getenv("USER")))
+        if (!(owner = getenv("LOGNAME"))) {
+            snprintf(_owner, sizeof(_owner), "%lu", (unsigned long) getuid());
+            owner = owner;
+        }
+
+    gethostname(hn, sizeof(hn)-1);
+    hn[sizeof(hn)-1] = 0;
+    
+    snprintf(token, sizeof(token), "%s.%lu.%lu", hn, (unsigned long) getpid(), (unsigned long) time(NULL));
+
+    ne_fill_server_uri(session, &lock->uri);
+    
+    lock->uri.path = strdup(base_directory);
+    lock->depth = NE_DEPTH_INFINITE;
+    lock->timeout = LOCK_TIMEOUT+2;
+    lock->owner = strdup(owner);
+/*     lock->token = strdup(token); */
+
+    for (i = 0; i < MAX_REDIRECTS; i++) {
+        const ne_uri *u;
+
+        if ((ret = ne_lock(session, lock)) != NE_REDIRECT)
+            break;
+
+        if (!(u = ne_redirect_location(session)))
+            break;
+
+        if (!session_is_local(u))
+            break;
+
+        if (debug)
+            fprintf(stderr, "REDIRECT FROM '%s' to '%s'\n", lock->uri.path, u->path);
+
+        free(lock->uri.path);
+        lock->uri.path = strdup(u->path);
+    }
+
+    if (ret) {
+        fprintf(stderr, "LOCK failed: %s\n", ne_get_error(session));
+        ne_lock_destroy(lock);
+        lock = NULL;
+        return -1;
+    }
+
+    lock_store = ne_lockstore_create();
+    assert(lock_store);
+    
+    ne_lockstore_add(lock_store, lock);
+    
+    return 0;
+}
+
+static void *lock_thread_func(__unused void *p) {
+    ne_session *session;
+
+    if (debug)
+        fprintf(stderr, "lock_thread entering\n");
+
+    if (!(session = session_get(1)))
+        return NULL;
+
+    assert(lock);
+
+    while (!lock_thread_exit) {
+        lock->timeout = LOCK_TIMEOUT;
+
+
+        
+        if (ne_lock_refresh(session, lock)) {
+            fprintf(stderr, "LOCK refresh failed: %s\n", ne_get_error(session));
+            break;
+        }
+
+        if (lock_thread_exit)
+            break;
+
+        sleep(LOCK_TIMEOUT);
+    }
+    
+    if (debug)
+        fprintf(stderr, "lock_thread exiting\n");
+
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     int c;
-    char *u=NULL, *p = NULL;
+    char *u = NULL, *p = NULL, *o = NULL;
     int fuse_fd = -1;
     int ret = 1;
     char mountpoint[PATH_MAX];
-    static const char *mount_args[] = { "-n",  NULL, "-l", "-c", NULL };
-
+    pthread_t lock_thread;
+    int lock_thread_running = 0;
+    int enable_locking = 0;
+    
+    static char *mount_args_strings[] = {
+        NULL,  /* path*/
+        NULL,  /* -o */
+        NULL,
+        NULL};
+    
+    struct fuse_args mount_args = {
+        .argc = 1,
+        .argv = mount_args_strings,
+        .allocated = 0
+    };
+    
     if (ne_sock_init()) {
         fprintf(stderr, "Failed to initialize libneon.\n");
         goto finish;
@@ -692,7 +1350,7 @@ int main(int argc, char *argv[]) {
     if (setup_signal_handlers() < 0)
         goto finish;
     
-    while ((c = getopt(argc, argv, "hu:p:D")) != -1) {
+    while ((c = getopt(argc, argv, "hu:p:Do:L")) != -1) {
 
         switch(c) {
             case 'u':
@@ -706,7 +1364,15 @@ int main(int argc, char *argv[]) {
             case 'D':
                 debug = !debug;
                 break;
-                    
+
+            case 'o':
+                o = optarg;
+                break;
+
+            case 'L':
+                enable_locking = 1;
+                break;
+                
             case 'h':
             default:
                 usage(argv[0]);
@@ -732,23 +1398,48 @@ int main(int argc, char *argv[]) {
         free(pwd);
     }
 
-    mount_args[1] = argv[optind];
+    mount_args_strings[0] = argv[optind];
+
+    if (o) {
+        mount_args_strings[1] = "-o";
+        mount_args_strings[2] = o;
+        mount_args.argc += 2;
+    }
     
-    if ((fuse_fd = fuse_mount(mountpoint, mount_args)) < 0) {
+    if ((fuse_fd = fuse_mount(mountpoint, &mount_args)) < 0) {
         fprintf(stderr, "Failed to mount FUSE file system.\n");
         goto finish;
     }
 
-    if (!(fuse = fuse_new(fuse_fd, 0, &dav_oper))) {
+    if (!(fuse = fuse_new(fuse_fd, &mount_args, &dav_oper, sizeof(dav_oper)))) {
         fprintf(stderr, "Failed to create FUSE object.\n");
         goto finish;
     }
     
-    fuse_loop_mt(fuse);
+    if (enable_locking && create_lock() >= 0) {
+        if (pthread_create(&lock_thread, NULL, lock_thread_func, NULL) < 0) {
+            fprintf(stderr, "pthread_create(): %s\n", strerror(errno));
+            goto finish;
+        }
+        
+        lock_thread_running = 1;
+    }
+    
+    fuse_loop(fuse);
+
+    if (debug)
+        fprintf(stderr, "Exiting cleanly.\n");
     
     ret = 0;
     
 finish:
+    
+    if (lock_thread_running) {
+        lock_thread_exit = 1;
+        pthread_kill(lock_thread, SIGPIPE);
+        pthread_join(lock_thread, NULL);
+        ne_lockstore_destroy(lock_store);
+    }
 
     if (fuse)
         fuse_destroy(fuse);

@@ -23,4 +23,10 @@
 
 extern int debug;
 
+#ifdef __GNUC__
+#define __unused __attribute__ ((unused))
+#else
+#define __unused
+#endif
+
 #endif

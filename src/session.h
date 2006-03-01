@@ -22,11 +22,15 @@
 ***/
 
 #include <ne_session.h>
+#include <ne_locks.h>
 
-ne_session *session_get(void);
+ne_session *session_get(int with_lock);
 int session_set_uri(const char *s, const char*u, const char*p);
 void session_free(void);
 
-extern const char *base_directory;
+int session_is_local(const ne_uri *u);
+
+extern char *base_directory;
+extern ne_uri uri;
 
 #endif

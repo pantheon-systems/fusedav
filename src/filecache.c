@@ -43,9 +43,9 @@
 #include <ne_basic.h>
 
 #include "filecache.h"
+#include "statcache.h"
 #include "fusedav.h"
 #include "session.h"
-#include "statcache.h"
 
 struct file_info {
     char *filename;
@@ -68,7 +68,7 @@ struct file_info {
 static struct file_info *files = NULL;
 static pthread_mutex_t files_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-int file_cache_sync_unlocked(struct file_info *fi);
+static int file_cache_sync_unlocked(struct file_info *fi);
 
 void* file_cache_get(const char *path) {
     struct file_info *f, *r = NULL;
@@ -160,19 +160,19 @@ int file_cache_close(void *f) {
 void* file_cache_open(const char *path, int flags) {
     struct file_info *fi;
     char tempfile[PATH_MAX];
-    char *length = NULL;
+    const char *length = NULL;
     ne_request *req = NULL;
     ne_session *session;
+
+    if (!(session = session_get(1))) {
+        errno = EIO;
+        goto fail;
+    }
 
     if ((fi = file_cache_get(path))) {
         if (flags & O_RDONLY || flags & O_RDWR) fi->readable = 1;
         if (flags & O_WRONLY || flags & O_RDWR) fi->writable = 1;
         return fi;
-    }
-
-    if (!(session = session_get())) {
-        errno = -EIO;
-        return NULL;
     }
 
     fi = malloc(sizeof(struct file_info));
@@ -189,24 +189,19 @@ void* file_cache_open(const char *path, int flags) {
     req = ne_request_create(session, "HEAD", path);
     assert(req);
 
-    ne_add_response_header_handler(req, "Content-Length", ne_duplicate_header, &length);
-    
     if (ne_request_dispatch(req) != NE_OK) {
         fprintf(stderr, "HEAD failed: %s\n", ne_get_error(session));
         errno = ENOENT;
         goto fail;
     }
 
-    if (!length) {
-        fprintf(stderr, "HEAD did not return content length.\n");
-        errno = EPROTO;
-        goto fail;
-    }
-
-    fi->server_length = fi->length = atoi(length);
+    if (!(length = ne_get_response_header(req, "Content-Length")))
+        /* dirty hack, since Apache doesn't send the file size if the file is empty */
+        fi->server_length = fi->length = 0; 
+    else
+        fi->server_length = fi->length = atoi(length);
 
     ne_request_destroy(req);
-    free(length);
     
     if (flags & O_RDONLY || flags & O_RDWR) fi->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) fi->writable = 1;
@@ -227,9 +222,6 @@ fail:
     if (req)
         ne_request_destroy(req);
 
-    if (length)
-        free(length);
-
     if (fi) {
         if (fi->fd >= 0)
             close(fi->fd);
@@ -242,10 +234,11 @@ fail:
 
 static int load_up_to_unlocked(struct file_info *fi, off_t l) {
     ne_content_range range;
-    assert(fi);
     ne_session *session;
 
-    if (!(session = session_get())) {
+    assert(fi);
+
+    if (!(session = session_get(1))) {
         errno = EIO;
         return -1;
     }
@@ -261,8 +254,9 @@ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
 
     range.start = fi->present;
     range.end = l-1;
+    range.total = 0;
     
-    if (ne_get_range(session, fi->filename, &range, fi->fd)) {
+    if (ne_get_range(session, fi->filename, &range, fi->fd) != NE_OK) {
         fprintf(stderr, "GET failed: %s\n", ne_get_error(session));
         errno = ENOENT;
         return -1;
@@ -320,8 +314,6 @@ int file_cache_write(void *f, const char *buf, size_t size, off_t offset) {
 
     fi->modified = 1;
 
-    r = 0;
-
 finish:
     pthread_mutex_unlock(&fi->mutex);
     
@@ -330,8 +322,9 @@ finish:
 
 int file_cache_truncate(void *f, off_t s) {
     struct file_info *fi = f;
-    assert(fi);
     int r;
+
+    assert(fi);
 
     pthread_mutex_lock(&fi->mutex);
 
@@ -346,13 +339,9 @@ int file_cache_truncate(void *f, off_t s) {
 int file_cache_sync_unlocked(struct file_info *fi) {
     int r = -1;
     ne_session *session;
+
     assert(fi);
-
-    if (!(session = session_get())) {
-        errno = EIO;
-        goto finish;
-    }
-
+    
     if (!fi->writable) {
         errno = EBADF;
         goto finish;
@@ -369,6 +358,10 @@ int file_cache_sync_unlocked(struct file_info *fi) {
     if (lseek(fi->fd, 0, SEEK_SET) == (off_t)-1)
         goto finish;
 
+    if (!(session = session_get(1))) {
+        errno = EIO;
+        goto finish;
+    }
     
     if (ne_put(session, fi->filename, fi->fd)) {
         fprintf(stderr, "PUT failed: %s\n", ne_get_error(session));
@@ -419,4 +412,12 @@ int file_cache_close_all(void) {
     pthread_mutex_unlock(&files_mutex);
 
     return r;
+}
+
+off_t file_cache_get_size(void *f) {
+    struct file_info *fi = f;
+
+    assert(fi);
+
+    return fi->length;
 }

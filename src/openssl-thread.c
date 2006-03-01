@@ -25,9 +25,12 @@
 #include <pthread.h>
 #include <openssl/crypto.h>
 
+#include "fusedav.h"
+#include "openssl-thread.h"
+
 static pthread_mutex_t *mutexes;
                                                                                                                                                                          
-static void pthreads_locking_callback(int mode, int n, const char *file, int line) {
+static void pthreads_locking_callback(int mode, int n, __unused const char *file, __unused int line) {
     if (mode & CRYPTO_LOCK)
         pthread_mutex_lock(mutexes+n);
     else
