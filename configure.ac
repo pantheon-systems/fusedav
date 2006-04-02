@@ -23,7 +23,7 @@ AC_PREREQ(2.59)
 AC_INIT([fusedav],[0.2],[mzshfrqni (at) 0pointer (dot) de])
 AC_CONFIG_SRCDIR([src/fusedav.c])
 AC_CONFIG_HEADERS([config.h])
-AM_INIT_AUTOMAKE([foreign -Wall])
+AM_INIT_AUTOMAKE([foreign 1.9 -Wall])
 AC_REVISION($Id$)
 
 AC_SUBST(PACKAGE_URL, [http://0pointer.de/lennart/projects/fusedav/])
@@ -105,7 +105,7 @@ AC_STRUCT_ST_BLOCKS
 
 # Checks for library functions.
 AC_FUNC_MALLOC
-AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr])
+AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr memchr strchr strcspn])
 
 AC_CHECK_LIB([pthread], [pthread_create])
 

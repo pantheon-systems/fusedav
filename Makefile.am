@@ -20,7 +20,7 @@ EXTRA_DIST=bootstrap.sh README LICENSE
 SUBDIRS=src doc
 
 MAINTAINERCLEANFILES = README
-noinst_DATA = README
+noinst_DATA = README LICENSE
 
 README:
 	rm -f README
@@ -32,7 +32,7 @@ homepage: all dist
 	mkdir -p $$HOME/homepage/private/projects/fusedav
 	cp *.tar.gz $$HOME/homepage/private/projects/fusedav
 	cp doc/README.html doc/style.css $$HOME/homepage/private/projects/fusedav
-	cp $$HOME/homepage/private/projects/fusedav/README.html $$HOME/homepage/private/projects/fusedav/index.html
+	ln -sf $$HOME/homepage/private/projects/fusedav/README.html $$HOME/homepage/private/projects/fusedav/index.html
 
 distcleancheck:
 	@:
