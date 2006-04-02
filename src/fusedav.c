@@ -228,7 +228,7 @@ static char *strip_trailing_slash(char *fn, int *is_dir) {
     return fn;
 }
 
-static void getdir_propfind_callback(void *userdata, const char *href, const ne_prop_result_set *results) {
+static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
     struct fill_info *f = userdata;
     struct stat st;
     char fn[PATH_MAX], *t;
@@ -236,7 +236,7 @@ static void getdir_propfind_callback(void *userdata, const char *href, const ne_
 
     assert(f);
 
-    strncpy(fn, href, sizeof(fn));
+    strncpy(fn, u->path, sizeof(fn));
     fn[sizeof(fn)-1] = 0;
     strip_trailing_slash(fn, &is_dir);
 
@@ -318,14 +318,14 @@ static int dav_readdir(
     return 0;
 }
 
-static void getattr_propfind_callback(void *userdata, const char *href, const ne_prop_result_set *results) {
+static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
     struct stat *st = (struct stat*) userdata;
     char fn[PATH_MAX];
     int is_dir;
 
     assert(st);
 
-    strncpy(fn, href, sizeof(fn));
+    strncpy(fn, u->path, sizeof(fn));
     fn[sizeof(fn)-1] = 0;
     strip_trailing_slash(fn, &is_dir);
     
@@ -791,7 +791,7 @@ static int listxattr_iterator(
     }
 }
 
-static void listxattr_propfind_callback(void *userdata, __unused const char *href, const ne_prop_result_set *results) {
+static void listxattr_propfind_callback(void *userdata, __unused const ne_uri *u, const ne_prop_result_set *results) {
     struct listxattr_info *l = userdata;
     ne_propset_iterate(results, listxattr_iterator, l);
 }
@@ -889,7 +889,7 @@ static int getxattr_iterator(
     return 0;
 }
 
-static void getxattr_propfind_callback(void *userdata, __unused const char *href, const ne_prop_result_set *results) {
+static void getxattr_propfind_callback(void *userdata, __unused const ne_uri *u, const ne_prop_result_set *results) {
     struct getxattr_info *g = userdata;
     ne_propset_iterate(results, getxattr_iterator, g);
 }
