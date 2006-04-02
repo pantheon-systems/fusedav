@@ -52,7 +52,6 @@
 #include "statcache.h"
 #include "filecache.h"
 #include "session.h"
-#include "openssl-thread.h"
 #include "fusedav.h"
 
 const ne_propname query_properties[] = {
@@ -1386,8 +1385,13 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    openssl_thread_setup();
-
+    if (!ne_has_support(NE_FEATURE_SSL) ||
+        !ne_has_support(NE_FEATURE_TS_SSL) ||
+        !ne_has_support(NE_FEATURE_LFS)) {
+        fprintf(stderr, "fusedav requires libneon built with SSL, SSL thread safety and LFS enabled.\n");
+        goto finish;
+    }
+        
     mask = umask(0);
     umask(mask);
 
@@ -1508,7 +1512,6 @@ finish:
     file_cache_close_all();
     cache_free();
     session_free();
-    openssl_thread_cleanup();
     
     return ret;
 }
