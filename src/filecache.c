@@ -232,24 +232,9 @@ fail:
     return NULL;
 }
 
-#ifdef FIXNEON64
-
-/* We assume that off_t is 64 bit, neon assumes it is 32 bit wide. we
- * need to work around this somehow */
-
-typedef struct {
-    uint32_t start, end, total;
-} ne_content_range64;
-
-#endif
-
 static int load_up_to_unlocked(struct file_info *fi, off_t l) {
 
-#ifdef FIXNEON64
     ne_content_range64 range;
-#else
-    ne_content_range range;
-#endif
     ne_session *session;
 
     assert(fi);
@@ -265,14 +250,6 @@ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
     if (l <= fi->present)
         return 0;
 
-#ifdef FIXNEON64
-    if (l > UINT_MAX) {
-        /* neon doesn't support 64bit ne_get_range right now */
-        errno = EIO;
-        return -1;
-    }
-#endif
-
     if (lseek(fi->fd, fi->present, SEEK_SET) != fi->present)
         return -1;
     
@@ -280,7 +257,7 @@ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
     range.end = l-1;
     range.total = 0;
     
-    if (ne_get_range(session, fi->filename, (ne_content_range*) &range, fi->fd) != NE_OK) {
+    if (ne_get_range64(session, fi->filename, &range, fi->fd) != NE_OK) {
         fprintf(stderr, "GET failed: %s\n", ne_get_error(session));
         errno = ENOENT;
         return -1;
