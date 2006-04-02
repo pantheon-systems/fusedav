@@ -10,13 +10,13 @@
   <body>
     <h1><a name="top">fusedav @PACKAGE_VERSION@</a></h1>
 
-    <p><i>Copyright 2004 Lennart Poettering &lt;@PACKAGE_BUGREPORT@&gt;</i></p>
+    <p><i>Copyright 2004,2006 Lennart Poettering &lt;@PACKAGE_BUGREPORT@&gt;</i></p>
 
     <ul class="toc">
       <li><a href="#license">License</a></li>
       <li><a href="#news">News</a></li>
       <li><a href="#overview">Overview</a></li>
-      <li><a href="#status">Status</a></li>
+      <li><a href="#status">Current Status</a></li>
       <li><a href="#documentation">Documentation</a></li>
       <li><a href="#requirements">Requirements</a></li>
       <li><a href="#installation">Installation</a></li>
@@ -42,6 +42,9 @@
 
     <h2><a name="news">News</a></h2>
 
+    <div class="news-date">Sun Apr 2 2006: </div> <p class="news-text"><a
+    href="@PACKAGE_URL@fusedav-0.2.tar.gz">Version 0.2</a> released, changes include: update for current NEON (0.26 required) and FUSE (2.5 required); locking support; proper redirection support; export WebDAV properties as Linux EAs</p>
+
     <div class="news-date">Tue Mar 30 2004: </div> <p class="news-text"><a
     href="@PACKAGE_URL@fusedav-0.1.tar.gz">Version 0.1</a> released, initial release</p>
 
@@ -49,12 +52,12 @@
 
     <p><tt>fusedav</tt> is a Linux userspace file system driver for mounting
     <a href="http://www.webdav.org/">WebDAV</a> shares. It makes use
-    of <a href="http://sourceforge.net/projects/avf/">FUSE</a> as userspace file system
+    of <a href="http://fuse.sourceforge.net/">FUSE</a> as userspace file system
     API and <a href="http://www.webdav.org/neon/">neon</a> as WebDAV API.</p>
 
-    <h2><a name="status">Status</a></h2>
+    <h2><a name="status">Current Status</a></h2>
 
-    <p>Version @PACKAGE_VERSION@ works fine. There is no support for modifying file dates an access rights yet.</p>
+    <p>Version @PACKAGE_VERSION@ works fine.</p>
     
     <h2><a name="documentation">Documentation</a></h2>
 
@@ -67,12 +70,15 @@
     <h2><a name="requirements">Requirements</a></h2>
 
     <p><tt>fusedav</tt> was developed and tested on Debian GNU/Linux
-    "testing" from March 2004, it should work on most other Linux
+    "testing" from April 2006, it should work on most other Linux
     distributions since it uses GNU autoconf for source code
     configuration.</p>
 
-    <p><tt>fusedav</tt> requires the <a href="http://www.webdav.org/neon/">neon</a> and <a href="http://sourceforge.net/projects/avf/">FUSE</a> development
-    library files for compilation.</p>
+    <p><tt>fusedav</tt> requires the <a
+    href="http://www.webdav.org/neon/">neon</a> (0.26 minimum - 0.25
+    does not suffice!) and <a
+    href="http://fuse.sourceforge.net/">FUSE</a> (2.5 minimum)
+    development library files for compilation.</p>
 
     <h2><a name="installation">Installation</a></h2>
 
@@ -86,18 +92,22 @@
 
     <p>Milos Szeredi for developing FUSE and some useful hints for its usage</p>
 
+    <p>Sebastien Estienne for some packaging work</p>
+
     <h2><a name="download">Download</a></h2>
 
     <p>The newest release is always available from <a href="@PACKAGE_URL@">@PACKAGE_URL@</a></p>
 
     <p>The current release is <a href="@PACKAGE_URL@fusedav-@PACKAGE_VERSION@.tar.gz">@PACKAGE_VERSION@</a></p>
 
-    <p>Get <tt>fusedav</tt>'s development sources from the <a href="http://subversion.tigris.org/">Subversion</a> <a href="https://seth.intheinter.net:8081/svn/fusedav/">repository</a>.</p>
+    <p>Get <tt>fusedav</tt>'s development sources from the <a href="http://subversion.tigris.org/">Subversion</a> <a href="svn://svn.0pointer.net/fusedav/">repository</a> (<a href="http://0pointer.net/cgi-bin/viewcvs.cgi/?root=fusedav">viewcvs</a>): </p>
+
+    <pre>svn checkout svn://svn.0pointer.net/fusedav/trunk fusedav</pre>
 
     <p>If you want to be notified whenever I release a new version of this software use the subscription feature of <a href="http://freshmeat.net/projects/fusedav/">Freshmeat</a>.</p>
 
     <hr/>
-    <address class="grey">Lennart Poettering &lt;@PACKAGE_BUGREPORT@&gt;, March 2004</address>
+    <address class="grey">Lennart Poettering &lt;@PACKAGE_BUGREPORT@&gt;, April 2006</address>
     <div class="grey"><i>$Id$</i></div>
 
   </body>
