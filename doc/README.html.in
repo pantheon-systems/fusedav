@@ -76,7 +76,7 @@
 
     <p><tt>fusedav</tt> requires the <a
     href="http://www.webdav.org/neon/">neon</a> (0.26 minimum - 0.25
-    does not suffice!) and <a
+    does not suffice!) built with thread-safe SSL and LFS support, and <a
     href="http://fuse.sourceforge.net/">FUSE</a> (2.5 minimum)
     development library files for compilation.</p>
 
