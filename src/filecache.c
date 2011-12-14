@@ -50,7 +50,7 @@
 struct file_info {
     char *filename;
     int fd;
-    off_t server_length, length, present;
+    ne_off_t server_length, length, present;
     
     int readable;
     int writable;
@@ -232,7 +232,7 @@ fail:
     return NULL;
 }
 
-static int load_up_to_unlocked(struct file_info *fi, off_t l) {
+static int load_up_to_unlocked(struct file_info *fi, ne_off_t l) {
 
     ne_content_range range;
     ne_session *session;
@@ -267,7 +267,7 @@ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
     return 0;
 }
 
-int file_cache_read(void *f, char *buf, size_t size, off_t offset) {
+int file_cache_read(void *f, char *buf, size_t size, ne_off_t offset) {
     struct file_info *fi = f;
     ssize_t r = -1;
     
@@ -288,7 +288,7 @@ finish:
     return r;
 }
 
-int file_cache_write(void *f, const char *buf, size_t size, off_t offset) {
+int file_cache_write(void *f, const char *buf, size_t size, ne_off_t offset) {
     struct file_info *fi = f;
     ssize_t r = -1;
 
@@ -321,7 +321,7 @@ finish:
     return r;
 }
 
-int file_cache_truncate(void *f, off_t s) {
+int file_cache_truncate(void *f, ne_off_t s) {
     struct file_info *fi = f;
     int r;
 
@@ -353,10 +353,10 @@ int file_cache_sync_unlocked(struct file_info *fi) {
         goto finish;
     }
     
-    if (load_up_to_unlocked(fi, (off_t) -1) < 0)
+    if (load_up_to_unlocked(fi, (ne_off_t) -1) < 0)
         goto finish;
 
-    if (lseek(fi->fd, 0, SEEK_SET) == (off_t)-1)
+    if (lseek(fi->fd, 0, SEEK_SET) == (ne_off_t)-1)
         goto finish;
 
     if (!(session = session_get(1))) {
@@ -415,7 +415,7 @@ int file_cache_close_all(void) {
     return r;
 }
 
-off_t file_cache_get_size(void *f) {
+ne_off_t file_cache_get_size(void *f) {
     struct file_info *fi = f;
 
     assert(fi);

@@ -277,7 +277,7 @@ static int dav_readdir(
         const char *path,
         void *buf,
         fuse_fill_dir_t filler,
-        __unused off_t offset,
+        __unused ne_off_t offset,
         __unused struct fuse_file_info *fi) {
     
     struct fill_info f;
@@ -611,7 +611,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     return 0;
 }
 
-static int dav_read(const char *path, char *buf, size_t size, off_t offset, __unused struct fuse_file_info *info) {
+static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, __unused struct fuse_file_info *info) {
     void *f = NULL;
     ssize_t r;
  
@@ -638,7 +638,7 @@ finish:
     return r;
 }
 
-static int dav_write(const char *path, const char *buf, size_t size, off_t offset, __unused struct fuse_file_info *info) {
+static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, __unused struct fuse_file_info *info) {
     void *f = NULL;
     ssize_t r;
 
@@ -666,7 +666,7 @@ finish:
 }
 
 
-static int dav_truncate(const char *path, off_t size) {
+static int dav_truncate(const char *path, ne_off_t size) {
     void *f = NULL;
     int r = 0;
     ne_session *session;
