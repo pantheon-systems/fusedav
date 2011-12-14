@@ -7,12 +7,12 @@
   under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   fusedav is distributed in the hope that it will be useful, but WITHOUT
   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
   License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with fusedav; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
@@ -51,6 +51,8 @@ static int b_uri = 0;
 
 char *username = NULL;
 static char *password = NULL;
+char *client_certificate = NULL;
+char *ca_certificate = NULL;
 char *base_directory = NULL;
 
 static pthread_mutex_t credential_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -74,7 +76,7 @@ static char* ask_user(const char *p, int hidden) {
             }
         }
     }
-    
+
     fprintf(stderr, "%s: ", p);
     r = fgets(q, sizeof(q), stdin);
     l = strlen(q);
@@ -86,7 +88,7 @@ static char* ask_user(const char *p, int hidden) {
         tcsetattr(fileno(stdin), TCSANOW, &t);
         fprintf(stderr, "\n");
     }
-    
+
     return r ? strdup(r) : NULL;
 }
 
@@ -96,7 +98,7 @@ static int ssl_verify_cb(__unused void *userdata, __unused int failures, __unuse
 
 static int ne_auth_creds_cb(__unused void *userdata, const char *realm, int attempt, char *u, char *p) {
     int r = -1;
-    
+
     pthread_mutex_lock(&credential_mutex);
 
     if (attempt) {
@@ -108,10 +110,10 @@ static int ne_auth_creds_cb(__unused void *userdata, const char *realm, int atte
 
     if (!username || !password)
         fprintf(stderr, "Realm '%s' requires authentication.\n", realm);
-    
+
     if (!username)
         username = ask_user("Username", 0);
-    
+
     if (username && !password)
         password = ask_user("Password", 1);
 
@@ -135,10 +137,38 @@ static ne_session *session_open(int with_lock) {
         return NULL;
 
     scheme = uri.scheme ? uri.scheme : "http";
-    
+
     if (!(session = ne_session_create(scheme, uri.host, uri.port ? uri.port : ne_uri_defaultport(scheme)))) {
         fprintf(stderr, "Failed to create session\n");
         return NULL;
+    }
+
+    if (ca_certificate) {
+        ne_ssl_certificate *ne_ca_cert = ne_ssl_cert_read(ca_certificate);
+        if (ne_ca_cert) {
+            ne_ssl_trust_cert(session, ne_ca_cert);
+            ne_ssl_cert_free(ne_ca_cert);
+        }
+        else {
+            fprintf(stderr, "Could not load CA certificate: %s\n", ca_certificate);
+            return NULL;
+        }
+    }
+
+    if (client_certificate) {
+        ne_ssl_client_cert *ne_client_cert = ne_ssl_clicert_read(client_certificate);
+        if (ne_client_cert == NULL) {
+           fprintf(stderr, "Could not load client certificate: %s\n", client_certificate);
+           return NULL;
+        } else if (ne_ssl_clicert_encrypted(ne_client_cert)) {
+           char *password = "pantheon"; // @TODO: Make configurable.
+           if (ne_ssl_clicert_decrypt(ne_client_cert, password)) {
+              fprintf(stderr, "Could not decrypt the client certificate: %s\n", client_certificate);
+              return NULL;
+           }
+        }
+        ne_ssl_set_clicert(session, ne_client_cert);
+        ne_ssl_clicert_free(ne_client_cert);
     }
 
     ne_ssl_set_verify(session, ssl_verify_cb, NULL);
@@ -147,7 +177,7 @@ static ne_session *session_open(int with_lock) {
 
     if (with_lock && lock_store)
         ne_lockstore_register(lock_store, session);
-    
+
     return session;
 }
 
@@ -163,7 +193,7 @@ static void session_tsd_key_init(void) {
 
 ne_session *session_get(int with_lock) {
     ne_session *session;
-    
+
     pthread_once(&session_once, session_tsd_key_init);
 
     if ((session = pthread_getspecific(session_tsd_key)))
@@ -175,12 +205,14 @@ ne_session *session_get(int with_lock) {
     return session;
 }
 
-int session_set_uri(const char *s, const char *u, const char *p) {
+int session_set_uri(const char *s, const char *u, const char *p, const char *client_cert, const char *ca_cert) {
     int l;
-        
+
     assert(!b_uri);
     assert(!username);
     assert(!password);
+    assert(!client_certificate);
+    assert(!ca_certificate);
 
     if (ne_uri_parse(s, &uri)) {
         fprintf(stderr, "Invalid URI <%s>\n", s);
@@ -205,10 +237,16 @@ int session_set_uri(const char *s, const char *u, const char *p) {
     if (p)
         password = strdup(p);
 
+    if (client_cert)
+        client_certificate = strdup(client_cert);
+
+    if (ca_cert)
+        ca_certificate = strdup(ca_cert);
+
     return 0;
-    
+
 finish:
-    
+
     if (b_uri) {
         ne_uri_free(&uri);
         b_uri = 0;
@@ -226,8 +264,11 @@ void session_free(void) {
 
     free((char*) username);
     free((char*) password);
+    free((char*) client_certificate);
+    free((char*) ca_certificate);
     free((char*) base_directory);
 
+    client_certificate = ca_certificate = NULL;
     username = password = base_directory = NULL;
 }
 

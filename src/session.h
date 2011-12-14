@@ -25,7 +25,7 @@
 #include <ne_locks.h>
 
 ne_session *session_get(int with_lock);
-int session_set_uri(const char *s, const char*u, const char*p);
+int session_set_uri(const char *s, const char*u, const char*p, const char *client_cert, const char *ca_cert);
 void session_free(void);
 
 int session_is_local(const ne_uri *u);

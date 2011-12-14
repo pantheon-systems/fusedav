@@ -1169,11 +1169,13 @@ static void usage(char *argv0) {
         e = argv0;
     
     fprintf(stderr,
-            "%s [-hDL] [-t SECS] [-u USERNAME] [-p PASSWORD] [-o OPTIONS] URL MOUNTPOINT\n"
+            "%s [-hDL] [-t SECS] [-u USERNAME] [-p PASSWORD] [-c CERT] [-a CACERT] [-o OPTIONS] URL MOUNTPOINT\n"
             "\t-h Show this help\n"
             "\t-D Enable debug mode\n"
             "\t-u Username if required\n"
             "\t-p Password if required\n"
+            "\t-c Client certificate (PKCS#12) if required\n"
+            "\t-a CA certificate (PEM) if required\n"
             "\t-o Additional FUSE mount options\n"
             "\t-L Locking the repository during mount\n"
             "\t-t Set lock timeout\n",
@@ -1360,7 +1362,7 @@ static void *lock_thread_func(__unused void *p) {
 
 int main(int argc, char *argv[]) {
     int c;
-    char *u = NULL, *p = NULL, *o = NULL;
+    char *u = NULL, *p = NULL, *client_cert = NULL, *ca_cert = NULL, *o = NULL;
     int fuse_fd = -1;
     int ret = 1;
     char mountpoint[PATH_MAX];
@@ -1408,7 +1410,7 @@ int main(int argc, char *argv[]) {
     if (setup_signal_handlers() < 0)
         goto finish;
     
-    while ((c = getopt(argc, argv, "hu:p:Do:Lt:")) != -1) {
+    while ((c = getopt(argc, argv, "hu:p:c:a:Do:Lt:")) != -1) {
 
         switch(c) {
             case 'u':
@@ -1417,6 +1419,14 @@ int main(int argc, char *argv[]) {
                 
             case 'p':
                 p = optarg;
+                break;
+
+            case 'c':
+                client_cert = optarg;
+                break;
+
+            case 'a':
+                ca_cert = optarg;
                 break;
                 
             case 'D':
@@ -1453,7 +1463,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if (session_set_uri(argv[optind], u, p) < 0) {
+    if (session_set_uri(argv[optind], u, p, client_cert, ca_cert) < 0) {
         usage(argv[0]);
         goto finish;
     }
