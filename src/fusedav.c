@@ -1367,6 +1367,7 @@ int main(int argc, char *argv[]) {
     pthread_t lock_thread;
     int lock_thread_running = 0;
     int enable_locking = 0;
+    int fail = 0;
     
     static char *mount_args_strings[] = {
         NULL,  /* path*/
@@ -1379,16 +1380,23 @@ int main(int argc, char *argv[]) {
         .argv = mount_args_strings,
         .allocated = 0
     };
-    
+
     if (ne_sock_init()) {
         fprintf(stderr, "Failed to initialize libneon.\n");
-        goto finish;
+        ++fail;
     }
 
-    if (!ne_has_support(NE_FEATURE_SSL) ||
-        !ne_has_support(NE_FEATURE_TS_SSL) ||
-        !ne_has_support(NE_FEATURE_LFS)) {
-        fprintf(stderr, "fusedav requires libneon built with SSL, SSL thread safety and LFS enabled.\n");
+    if (!ne_has_support(NE_FEATURE_SSL)) {
+        fprintf(stderr, "fusedav requires libneon built with SSL.\n");
+        ++fail;
+    }
+
+    if (!ne_has_support(NE_FEATURE_TS_SSL)) {
+        fprintf(stderr, "fusedav requires libneon built with TS_SSL.\n");
+        ++fail;
+    }
+
+    if (fail) {
         goto finish;
     }
         
