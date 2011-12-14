@@ -234,7 +234,7 @@ fail:
 
 static int load_up_to_unlocked(struct file_info *fi, off_t l) {
 
-    ne_content_range64 range;
+    ne_content_range range;
     ne_session *session;
 
     assert(fi);
@@ -257,7 +257,7 @@ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
     range.end = l-1;
     range.total = 0;
     
-    if (ne_get_range64(session, fi->filename, &range, fi->fd) != NE_OK) {
+    if (ne_get_range(session, fi->filename, &range, fi->fd) != NE_OK) {
         fprintf(stderr, "GET failed: %s\n", ne_get_error(session));
         errno = ENOENT;
         return -1;
