@@ -40,6 +40,8 @@
 #include <ne_dates.h>
 #include <ne_redirect.h>
 
+#include <systemd/sd-journal.h>
+
 #include "session.h"
 #include "fusedav.h"
 
@@ -102,7 +104,7 @@ static int ne_auth_creds_cb(__unused void *userdata, const char *realm, int atte
     pthread_mutex_lock(&credential_mutex);
 
     if (attempt) {
-        fprintf(stderr, "Authentication failure!\n");
+        sd_journal_print(LOG_WARNING, "Authentication failure!\n");
         free((void*) username);
         free((void*) password);
         username = password = NULL;
@@ -139,7 +141,7 @@ static ne_session *session_open(int with_lock) {
     scheme = uri.scheme ? uri.scheme : "http";
 
     if (!(session = ne_session_create(scheme, uri.host, uri.port ? uri.port : ne_uri_defaultport(scheme)))) {
-        fprintf(stderr, "Failed to create session\n");
+        sd_journal_print(LOG_ERR, "Failed to create session\n");
         return NULL;
     }
 
@@ -150,7 +152,7 @@ static ne_session *session_open(int with_lock) {
             ne_ssl_cert_free(ne_ca_cert);
         }
         else {
-            fprintf(stderr, "Could not load CA certificate: %s\n", ca_certificate);
+            sd_journal_print(LOG_CRIT, "Could not load CA certificate: %s\n", ca_certificate);
             return NULL;
         }
     }
@@ -158,12 +160,12 @@ static ne_session *session_open(int with_lock) {
     if (client_certificate) {
         ne_ssl_client_cert *ne_client_cert = ne_ssl_clicert_read(client_certificate);
         if (ne_client_cert == NULL) {
-           fprintf(stderr, "Could not load client certificate: %s\n", client_certificate);
+           sd_journal_print(LOG_CRIT, "Could not load client certificate: %s\n", client_certificate);
            return NULL;
         } else if (ne_ssl_clicert_encrypted(ne_client_cert)) {
            const char *certificate_password = "pantheon"; // @TODO: Make configurable.
            if (ne_ssl_clicert_decrypt(ne_client_cert, certificate_password)) {
-              fprintf(stderr, "Could not decrypt the client certificate: %s\n", client_certificate);
+              sd_journal_print(LOG_CRIT, "Could not decrypt the client certificate: %s\n", client_certificate);
               return NULL;
            }
         }
@@ -215,14 +217,14 @@ int session_set_uri(const char *s, const char *u, const char *p, const char *cli
     assert(!ca_certificate);
 
     if (ne_uri_parse(s, &uri)) {
-        fprintf(stderr, "Invalid URI <%s>\n", s);
+        sd_journal_print(LOG_CRIT, "Invalid URI <%s>\n", s);
         goto finish;
     }
 
     b_uri = 1;
 
     if (!uri.host) {
-        fprintf(stderr, "Missing host part in URI <%s>\n", s);
+        sd_journal_print(LOG_CRIT, "Missing host part in URI <%s>\n", s);
         goto finish;
     }
 

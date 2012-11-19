@@ -36,6 +36,8 @@
 
 #include <ne_uri.h>
 
+#include <systemd/sd-journal.h>
+
 #define CACHE_SIZE 2049
 #define CACHE_TIMEOUT 60
 
@@ -84,7 +86,7 @@ int stat_cache_get(const char *fn, struct stat *st) {
     void *f;
 
     if (debug)
-        fprintf(stderr, "CGET: %s\n", fn);
+        sd_journal_print(LOG_DEBUG, "CGET: %s\n", fn);
     
     assert(cache);
     
@@ -119,7 +121,7 @@ void stat_cache_set(const char *fn, const struct stat*st) {
     struct cache_entry *ce;
 
     if (debug)
-        fprintf(stderr, "CSET: %s\n", fn);
+        sd_journal_print(LOG_DEBUG, "CSET: %s\n", fn);
     assert(cache);
     
     h = calc_hash(fn);
@@ -390,4 +392,3 @@ void cache_alloc(void) {
     assert(cache);
     memset(cache, 0, sizeof(struct cache_entry)*CACHE_SIZE);
 }
-

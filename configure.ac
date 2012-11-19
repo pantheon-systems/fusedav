@@ -107,6 +107,7 @@ AC_FUNC_MALLOC
 AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr memchr strchr strcspn])
 
 AC_CHECK_LIB([pthread], [pthread_create])
+AC_CHECK_LIB([systemd-journal], [sd_journal_send])
 AC_CHECK_LIB([yaml], [yaml_parser_initialize])
 
 PKG_CHECK_MODULES(NEON, [ neon >= 0.27 ])
