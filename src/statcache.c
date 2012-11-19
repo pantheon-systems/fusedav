@@ -116,7 +116,7 @@ int stat_cache_get(const char *fn, struct stat *st) {
     return r;
 }
 
-void stat_cache_set(const char *fn, const struct stat*st) {
+void stat_cache_set(const char *fn, const struct stat *st) {
     uint32_t h;
     struct cache_entry *ce;
 

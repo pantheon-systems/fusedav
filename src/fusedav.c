@@ -97,6 +97,7 @@ struct fusedav_config {
     bool lock_on_mount;
     bool debug;
     bool nodaemon;
+    bool noattributes;
 };
 
 enum {
@@ -116,6 +117,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
      FUSEDAV_OPT("debug",                          debug, true),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
+     FUSEDAV_OPT("noattributes",                   noattributes, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -378,6 +380,22 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     stat_cache_set(fn, st);
 }
 
+static int print_stat(struct stat *stbuf) {
+    if (debug) {
+        sd_journal_print(LOG_DEBUG, "stat.st_mode=%o", stbuf->st_mode);
+        sd_journal_print(LOG_DEBUG, "stat.st_nlink=%ld", stbuf->st_nlink);
+        sd_journal_print(LOG_DEBUG, "stat.st_uid=%d", stbuf->st_uid);
+        sd_journal_print(LOG_DEBUG, "stat.st_gid=%d", stbuf->st_gid);
+        sd_journal_print(LOG_DEBUG, "stat.st_size=%ld", stbuf->st_size);
+        sd_journal_print(LOG_DEBUG, "stat.st_blksize=%ld", stbuf->st_blksize);
+        sd_journal_print(LOG_DEBUG, "stat.st_blocks=%ld", stbuf->st_blocks);
+        sd_journal_print(LOG_DEBUG, "stat.st_atime=%ld", stbuf->st_atime);
+        sd_journal_print(LOG_DEBUG, "stat.st_mtime=%ld", stbuf->st_mtime);
+        sd_journal_print(LOG_DEBUG, "stat.st_ctime=%ld", stbuf->st_ctime);
+    }
+    return 0;
+}
+
 static int get_stat(const char *path, struct stat *stbuf) {
     ne_session *session;
 
@@ -385,6 +403,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return -EIO;
 
     if (stat_cache_get(path, stbuf) == 0) {
+        print_stat(stbuf);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     } else {
         if (debug)
@@ -392,9 +411,10 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_invalidate(path);
-            sd_journal_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
+            sd_journal_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
             return -ENOENT;
         }
+        print_stat(stbuf);
 
         return 0;
     }
@@ -610,6 +630,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     char tempfile[PATH_MAX];
     int fd;
     ne_session *session;
+    struct stat st;
 
     path = path_cvt(path);
     if (debug)
@@ -635,8 +656,21 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
     close(fd);
 
-    stat_cache_invalidate(path);
-    dir_cache_invalidate_parent(path);
+    // Prepopulate stat cache.
+    st.st_mode = 040775;  // @TODO: Set to a configurable default.
+    st.st_nlink = 3;
+    st.st_size = 0;
+    st.st_atime = time(NULL);
+    st.st_mtime = st.st_atime;
+    st.st_ctime = st.st_mtime;
+    st.st_blksize = 0;
+    st.st_blocks = 8;
+    st.st_uid = getuid();
+    st.st_gid = getgid();
+    stat_cache_set(path, &st);
+
+    //stat_cache_invalidate(path);
+    dir_cache_invalidate_parent(path); // @TODO: Prepopulate this, too.
 
     return 0;
 }
@@ -744,24 +778,30 @@ finish:
     return r;
 }
 
-static int dav_utime(const char *path, struct utimbuf *buf) {
+static int dav_utimens(const char *path, const struct timespec tv[2]) {
     ne_session *session;
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
     ne_proppatch_operation ops[2];
     int r = 0;
     char *date;
+    struct fusedav_config *config = fuse_get_context()->private_data;
+
+    if (config->noattributes) {
+        if (debug)
+            sd_journal_print(LOG_DEBUG, "Skipping attribute setting.");
+        return r;
+    }
 
     assert(path);
-    assert(buf);
 
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "utime(%s, %lu, %lu)", path, (unsigned long) buf->actime, (unsigned long) buf->modtime);
+        sd_journal_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
-    ops[0].value = date = ne_rfc1123_date(buf->modtime);
+    ops[0].value = date = ne_rfc1123_date(tv[1].tv_sec);
     ops[1].name = NULL;
 
     if (!(session = session_get(1))) {
@@ -775,7 +815,7 @@ static int dav_utime(const char *path, struct utimbuf *buf) {
         goto finish;
     }
 
-    stat_cache_invalidate(path);
+    stat_cache_invalidate(path);  // @TODO: Update the stat cache instead.
 
 finish:
     free(date);
@@ -1194,7 +1234,7 @@ static struct fuse_operations dav_oper = {
     .rename      = dav_rename,
     .chmod       = dav_chmod,
     .truncate    = dav_truncate,
-    .utime       = dav_utime,
+    .utimens     = dav_utimens,
     .open        = dav_open,
     .read        = dav_read,
     .write       = dav_write,
@@ -1431,16 +1471,17 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    -o lock_on_mount\n"
                 "    -o debug\n"
                 "    -o nodaemon\n"
+                "    -o noattributes\n"
                 "\n"
                 , outargs->argv[0]);
         fuse_opt_add_arg(outargs, "-ho");
-        fuse_main(outargs->argc, outargs->argv, &dav_oper, NULL);
+        fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
         exit(1);
     
     case KEY_VERSION:
         fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
         fuse_opt_add_arg(outargs, "--version");
-        fuse_main(outargs->argc, outargs->argv, &dav_oper, NULL);
+        fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
         exit(0);
     }
     return 1;
@@ -1522,7 +1563,7 @@ int main(int argc, char *argv[]) {
     if (debug)
         sd_journal_print(LOG_DEBUG, "Mounted the FUSE file system.");
 
-    if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), NULL))) {
+    if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), &conf))) {
         sd_journal_print(LOG_CRIT, "Failed to create FUSE object.");
         goto finish;
     }
