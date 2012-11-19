@@ -104,7 +104,6 @@ enum {
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
 
 static struct fuse_opt fusedav_opts[] = {
-     FUSEDAV_OPT("%s",                             uri, 0),
      FUSEDAV_OPT("username=%s",                    username, 0),
      FUSEDAV_OPT("password=%s",                    password, 0),
      FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
@@ -117,6 +116,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSE_OPT_KEY("--version",      KEY_VERSION),
      FUSE_OPT_KEY("-h",             KEY_HELP),
      FUSE_OPT_KEY("--help",         KEY_HELP),
+     FUSE_OPT_KEY("-?",             KEY_HELP),
      FUSE_OPT_END
 };
 
@@ -1396,8 +1396,17 @@ int file_exists_or_set_null(char **path) {
     return 0;
 }
 
-static int fusedav_opt_proc(__unused void *data, __unused const char *arg, int key, struct fuse_args *outargs) {
+static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
+    struct fusedav_config *config = data;
+    
     switch (key) {
+    case FUSE_OPT_KEY_NONOPT:
+        if (!config->uri) {
+            config->uri = strdup(arg);
+            return 0;
+        }
+        break;
+
     case KEY_HELP:
         fprintf(stderr,
                 "usage: %s uri mountpoint [options]\n"
@@ -1476,6 +1485,11 @@ int main(int argc, char *argv[]) {
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         fprintf(stderr, "FUSE could not parse the command line.\n");
+        goto finish;
+    }
+
+    if (!conf.uri) {
+        fprintf(stderr, "Missing the required URI argument.\n");
         goto finish;
     }
 
