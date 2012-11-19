@@ -94,6 +94,7 @@ struct fusedav_config {
     int  lock_timeout;
     bool lock_on_mount;
     bool debug;
+    bool nodaemon;
 };
 
 enum {
@@ -112,6 +113,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
      FUSEDAV_OPT("debug",                          debug, true),
+     FUSEDAV_OPT("nodaemon",                       nodaemon, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -1426,6 +1428,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    -o lock_timeout=NUM\n"
                 "    -o lock_on_mount\n"
                 "    -o debug\n"
+                "    -o nodaemon\n"
                 "\n"
                 , outargs->argv[0]);
         fuse_opt_add_arg(outargs, "-ho");
@@ -1536,6 +1539,19 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Acquired lock.\n");
     }
 
+    if (conf.nodaemon) {
+        if (debug)
+            fprintf(stderr, "Running in foreground (skipping daemonization).\n");
+    }
+    else {
+        if (debug)
+            fprintf(stderr, "Attempting to daemonize.\n");
+        if (fuse_daemonize(/* run in foreground */ 0) < 0) {
+            fprintf(stderr, "Failed to daemonize.\n");
+            goto finish;
+        }
+    }
+
     if (debug)
         fprintf(stderr, "Entering main FUSE loop.\n");
     if (fuse_loop_mt(fuse) < 0) {
@@ -1560,9 +1576,6 @@ finish:
             fprintf(stderr, "Freed lock.\n");
     }
 
-    //if (fuse)
-    //    fuse_destroy(fuse);
-
     fprintf(stderr, "3\n");
 
     if (ch != NULL) {
@@ -1572,6 +1585,11 @@ finish:
     }
     if (debug)
         fprintf(stderr, "Unmounted.\n");
+
+    if (fuse)
+        fuse_destroy(fuse);
+    if (debug)
+        fprintf(stderr, "Destroyed FUSE object.\n");
 
     fuse_opt_free_args(&args);
     if (debug)
