@@ -19,7 +19,7 @@
 # along with fusedav; if not, write to the Free Software Foundation,
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 
-AC_PREREQ(2.59)
+AC_PREREQ([2.68])
 AC_INIT([fusedav],[0.2],[mzshfrqni (at) 0pointer (dot) de])
 AC_CONFIG_SRCDIR([src/fusedav.c])
 AC_CONFIG_HEADERS([config.h])
@@ -33,7 +33,7 @@ if type -p stow > /dev/null && test -d /usr/local/stow ; then
    ac_default_prefix="/usr/local/stow/${PACKAGE_NAME}-${PACKAGE_VERSION}"
 fi
 
-AC_GNU_SOURCE
+AC_USE_SYSTEM_EXTENSIONS
 
 # Checks for programs.
 AC_PROG_CC
@@ -62,8 +62,7 @@ if test "x$GCC" = "xyes" ; then
         AC_MSG_CHECKING([checking whether rtnetlink.h can be included with -std=c99])
         OLDCFLAGS="$CFLAGS"
         CFLAGS="-std=c99"
-        AC_TRY_COMPILE([#include <linux/rtnetlink.h>], [],
-            use_stdc99=yes, use_stdc99=no)
+        AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <linux/rtnetlink.h>]], [[]])],[use_stdc99=yes],[use_stdc99=no])
 
         if test x"$use_stdc99" = xyes; then
             DESIRED_FLAGS="-std=c99 $DESIRED_FLAGS"
