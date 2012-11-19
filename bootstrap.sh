@@ -17,7 +17,7 @@
 # along with fusedav; if not, write to the Free Software Foundation,
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 
-VERSION=1.9
+VERSION=1.11
 
 run_versioned() {
     local P
@@ -26,13 +26,13 @@ run_versioned() {
     V=$(echo "$2" | sed -e 's,\.,,g')
     
     if [ -e "`which $1$V`" ] ; then
-    	P="$1$V" 
+        P="$1$V" 
     else
-	if [ -e "`which $1-$2`" ] ; then
-	    P="$1-$2" 
-	else
-	    P="$1"
-	fi
+    if [ -e "`which $1-$2`" ] ; then
+        P="$1-$2" 
+    else
+        P="$1"
+    fi
     fi
 
     shift 2
@@ -49,8 +49,8 @@ else
     rm -f config.cache
 
     run_versioned aclocal "$VERSION"
-    run_versioned autoconf 2.59 -Wall
-    run_versioned autoheader 2.59
+    run_versioned autoconf 2.68 -Wall
+    run_versioned autoheader 2.68
     run_versioned automake "$VERSION" -a -c --foreign
 
     if test "x$NOCONFIGURE" = "x"; then

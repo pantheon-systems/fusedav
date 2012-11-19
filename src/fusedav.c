@@ -27,6 +27,8 @@
 #include <time.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stddef.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -77,10 +79,48 @@ int lock_timeout = 60;
 
 #define MAX_REDIRECTS 10
 
+#define UNUSED(p) if(p){}
+
 struct fill_info {
     void *buf;
     fuse_fill_dir_t filler;
     const char *root;
+};
+
+struct fusedav_config {
+    char *uri;
+    char *username;
+    char *password;
+    char *ca_certificate;
+    char *client_certificate;
+    char *client_certificate_password;
+    int  lock_timeout;
+    bool lock_on_mount;
+
+};
+
+enum {
+     KEY_HELP,
+     KEY_VERSION,
+};
+
+#define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
+
+static struct fuse_opt fusedav_opts[] = {
+     FUSEDAV_OPT("%s",                             uri, 0),
+     FUSEDAV_OPT("username=%s",                    username, 0),
+     FUSEDAV_OPT("password=%s",                    password, 0),
+     FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
+     FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
+     FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
+     FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
+     FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
+
+     FUSE_OPT_KEY("-V",             KEY_VERSION),
+     FUSE_OPT_KEY("--version",      KEY_VERSION),
+     FUSE_OPT_KEY("-h",             KEY_HELP),
+     FUSE_OPT_KEY("--help",         KEY_HELP),
+     FUSE_OPT_END
 };
 
 static int get_stat(const char *path, struct stat *stbuf);
@@ -1164,28 +1204,6 @@ static struct fuse_operations dav_oper = {
     .removexattr = dav_removexattr,
 };
 
-static void usage(char *argv0) {
-    char *e;
-
-    if ((e = strrchr(argv0, '/')))
-        e++;
-    else
-        e = argv0;
-
-    fprintf(stderr,
-            "%s [-hDL] [-t SECS] [-u USERNAME] [-p PASSWORD] [-c CERT] [-a CACERT] [-o OPTIONS] URL MOUNTPOINT\n"
-            "\t-h Show this help\n"
-            "\t-D Enable debug mode\n"
-            "\t-u Username if required\n"
-            "\t-p Password if required\n"
-            "\t-c Client certificate (PKCS#12) if required\n"
-            "\t-a CA certificate (PEM) if required\n"
-            "\t-o Additional FUSE mount options\n"
-            "\t-L Locking the repository during mount\n"
-            "\t-t Set lock timeout\n",
-            e);
-}
-
 static void exit_handler(__unused int sig) {
     static const char m[] = "*** Caught signal ***\n";
     if(fuse != NULL)
@@ -1366,7 +1384,7 @@ static void *lock_thread_func(__unused void *p) {
 
 int file_exists_or_set_null(char **path) {
     FILE *file;
-    
+
     if ((file = fopen(*path, "r"))) {
         fclose(file);
         //if (debug)
@@ -1380,28 +1398,55 @@ int file_exists_or_set_null(char **path) {
     return 0;
 }
 
+static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
+    UNUSED(data);
+    UNUSED(arg);
+    
+    switch (key) {
+    case KEY_HELP:
+        fprintf(stderr,
+                "usage: %s uri mountpoint [options]\n"
+                "\n"
+                "general options:\n"
+                "    -o opt,[opt...]  mount options\n"
+                "    -h   --help      print help\n"
+                "    -V   --version   print version\n"
+                "\n"
+                "fusedav mount options:\n"
+                "    -o username=STRING\n"
+                "    -o password=STRING\n"
+                "    -o ca_certificate=PATH\n"
+                "    -o client_certificate=PATH\n"
+                "    -o client_certificate_password=STRING\n"
+                "    -o lock_timeout=NUM\n"
+                "    -o lock_on_mount\n"
+                "\n"
+                , outargs->argv[0]);
+        fuse_opt_add_arg(outargs, "-ho");
+        fuse_main(outargs->argc, outargs->argv, &dav_oper, NULL);
+        exit(1);
+    
+    case KEY_VERSION:
+        fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
+        fuse_opt_add_arg(outargs, "--version");
+        fuse_main(outargs->argc, outargs->argv, &dav_oper, NULL);
+        exit(0);
+    }
+    return 1;
+}
+
 int main(int argc, char *argv[]) {
-    int c;
-    char *u = NULL, *p = NULL, *client_cert = NULL, *ca_cert = NULL, *o = NULL;
+    struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+    struct fusedav_config conf;
+    struct fuse_chan *ch;
+    char *mountpoint;
+
     int fuse_fd = -1;
     int ret = 1;
-    char mountpoint[PATH_MAX];
     pthread_t lock_thread;
     int lock_thread_running = 0;
     int enable_locking = 0;
     int fail = 0;
-
-    static char *mount_args_strings[] = {
-        NULL,  /* path*/
-        NULL,  /* -o */
-        NULL,
-        NULL};
-
-    struct fuse_args mount_args = {
-        .argc = 1,
-        .argv = mount_args_strings,
-        .allocated = 0
-    };
 
     if (ne_sock_init()) {
         fprintf(stderr, "Failed to initialize libneon.\n");
@@ -1430,93 +1475,29 @@ int main(int argc, char *argv[]) {
     if (setup_signal_handlers() < 0)
         goto finish;
 
-    // Look for certificates in the default locations.
-    asprintf(&client_cert, "%s/.fusedav/client.p12", getenv("HOME"));
-    file_exists_or_set_null(&client_cert);
-    asprintf(&ca_cert, "%s/.fusedav/ca.pem", getenv("HOME"));
-    file_exists_or_set_null(&ca_cert);
+    memset(&conf, 0, sizeof(conf));
 
-    while ((c = getopt(argc, argv, "hu:p:c:a:Do:Lt:")) != -1) {
-
-        switch(c) {
-            case 'u':
-                u = optarg;
-                break;
-
-            case 'p':
-                p = optarg;
-                break;
-
-            case 'c':
-                client_cert = optarg;
-                break;
-
-            case 'a':
-                ca_cert = optarg;
-                break;
-
-            case 'D':
-                debug = !debug;
-                break;
-
-            case 'o':
-                o = optarg;
-                break;
-
-            case 'L':
-                enable_locking = 1;
-                break;
-
-            case 't':
-                if ((lock_timeout = atoi(optarg)) < 0) {
-                    fprintf(stderr, "Invalid lock timeout '%s'\n", optarg);
-                    goto finish;
-                }
-                break;
-
-            case 'h':
-                ret = 0;
-
-                /* fall through */
-            default:
-                usage(argv[0]);
-                goto finish;
-        }
-    }
-
-    if (optind != argc-2) {
-        usage(argv[0]);
+    if (!fuse_opt_parse(&args, &conf, fusedav_opts, fusedav_opt_proc) < 0) {
+        fprintf(stderr, "FUSE could not parse options.\n");
         goto finish;
     }
 
-    if (session_set_uri(argv[optind], u, p, client_cert, ca_cert) < 0) {
-        usage(argv[0]);
+    if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
+        fprintf(stderr, "FUSE could not parse the command line.\n");
         goto finish;
     }
 
-    if (argv[optind+1][0] == '/')
-        snprintf(mountpoint, sizeof(mountpoint), "%s", argv[optind+1]);
-    else {
-        char *pwd = get_current_dir_name();
-        snprintf(mountpoint, sizeof(mountpoint), "%s/%s", pwd, argv[optind+1]);
-        free(pwd);
+    if (session_set_uri(conf.uri, conf.username, conf.password, conf.client_certificate, conf.ca_certificate) < 0) {
+        fprintf(stderr, "Failed to initialize the session URI.\n");
+        goto finish;
     }
 
-    mount_args_strings[0] = argv[optind];
-
-    if (o) {
-        // Allocate new string to avoid using a const for a non-const value.
-        asprintf(&mount_args_strings[1], "-o");
-        mount_args_strings[2] = o;
-        mount_args.argc += 2;
-    }
-
-    if ((fuse_fd = fuse_mount(mountpoint, &mount_args)) < 0) {
+    if (!(ch = fuse_mount(mountpoint, &args))) {
         fprintf(stderr, "Failed to mount FUSE file system.\n");
         goto finish;
     }
 
-    if (!(fuse = fuse_new(fuse_fd, &mount_args, &dav_oper, sizeof(dav_oper)))) {
+    if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), NULL))) {
         fprintf(stderr, "Failed to create FUSE object.\n");
         goto finish;
     }
@@ -1552,7 +1533,7 @@ finish:
         fuse_destroy(fuse);
 
     if (fuse_fd >= 0)
-        fuse_unmount(mountpoint);
+        fuse_unmount(mountpoint, ch);
 
     file_cache_close_all();
     cache_free();

@@ -23,7 +23,7 @@ AC_PREREQ([2.68])
 AC_INIT([fusedav],[0.2],[david (at) davidstrauss (dot) net])
 AC_CONFIG_SRCDIR([src/fusedav.c])
 AC_CONFIG_HEADERS([config.h])
-AM_INIT_AUTOMAKE([foreign 1.9 -Wall])
+AM_INIT_AUTOMAKE([foreign 1.11 -Wall])
 AC_REVISION($Id$)
 
 AC_SUBST(PACKAGE_URL, [https://github.com/pantheon-systems/fusedav])
@@ -110,7 +110,7 @@ AC_CHECK_LIB([pthread], [pthread_create])
 AC_CHECK_LIB([yaml], [yaml_parser_initialize])
 
 PKG_CHECK_MODULES(NEON, [ neon >= 0.27 ])
-PKG_CHECK_MODULES(FUSE, [ fuse >= 2.5 ])
+PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 
 # LYNX documentation generation
 AC_ARG_ENABLE(lynx,

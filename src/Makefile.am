@@ -23,5 +23,5 @@ fusedav_SOURCES=fusedav.c fusedav.h \
 				filecache.c filecache.h \
 				session.c session.h
 
-fusedav_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS) $(FUSE_CFLAGS) -DFUSE_USE_VERSION=25
+fusedav_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS) $(FUSE_CFLAGS) -DFUSE_USE_VERSION=26
 fusedav_LDADD = -lpthread $(NEON_LIBS) $(FUSE_LIBS)
