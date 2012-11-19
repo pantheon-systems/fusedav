@@ -1440,12 +1440,9 @@ int main(int argc, char *argv[]) {
     struct fusedav_config conf;
     struct fuse_chan *ch;
     char *mountpoint;
-
-    int fuse_fd = -1;
     int ret = 1;
     pthread_t lock_thread;
     int lock_thread_running = 0;
-    int enable_locking = 0;
     int fail = 0;
 
     if (ne_sock_init()) {
@@ -1502,7 +1499,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if (enable_locking && create_lock() >= 0) {
+    if (conf.lock_on_mount && create_lock() >= 0) {
         int r;
         if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, NULL)) < 0) {
             fprintf(stderr, "pthread_create(): %s\n", strerror(r));
@@ -1532,7 +1529,7 @@ finish:
     if (fuse)
         fuse_destroy(fuse);
 
-    if (fuse_fd >= 0)
+    if (ch != NULL)
         fuse_unmount(mountpoint, ch);
 
     file_cache_close_all();
