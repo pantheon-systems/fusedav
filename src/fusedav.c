@@ -7,12 +7,12 @@
   under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   fusedav is distributed in the hope that it will be useful, but WITHOUT
   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
   License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with fusedav; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
@@ -46,6 +46,8 @@
 #include <ne_dates.h>
 #include <ne_redirect.h>
 #include <ne_uri.h>
+
+#include <yaml.h>
 
 #include <fuse.h>
 
@@ -95,7 +97,7 @@ static const char *path_cvt(const char *path) {
     int l;
 
     pthread_once(&path_cvt_once, path_cvt_tsd_key_init);
-    
+
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
         free(r);
 
@@ -110,7 +112,7 @@ static const char *path_cvt(const char *path) {
     free(t);
 
     pthread_setspecific(path_cvt_tsd_key, r);
-    
+
     return r;
 }
 
@@ -123,7 +125,7 @@ static int simple_propfind_with_redirect(
         void *userdata) {
 
     int i, ret;
-    
+
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
 
@@ -138,7 +140,7 @@ static int simple_propfind_with_redirect(
 
         if (debug)
             fprintf(stderr, "REDIRECT FROM '%s' to '%s'\n", path, u->path);
-        
+
         path = u->path;
     }
 
@@ -149,9 +151,9 @@ static int proppatch_with_redirect(
         ne_session *session,
         const char *path,
         const ne_proppatch_operation *ops) {
-    
+
     int i, ret;
-    
+
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
 
@@ -166,7 +168,7 @@ static int proppatch_with_redirect(
 
         if (debug)
             fprintf(stderr, "REDIRECT FROM '%s' to '%s'\n", path, u->path);
-        
+
         path = u->path;
     }
 
@@ -181,7 +183,7 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
     const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
     const ne_propname creationdate = { "DAV:", "creationdate" };
-        
+
     assert(st && results);
 
     rt = ne_propset_value(results, &resourcetype);
@@ -191,7 +193,7 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
     cd = ne_propset_value(results, &creationdate);
 
     memset(st, 0, sizeof(struct stat));
-    
+
     if (is_dir) {
         st->st_mode = S_IFDIR | 0777;
         st->st_nlink = 3;            /* find will ignore this directory if nlin <= and st_size == 0 */
@@ -205,12 +207,12 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
     st->st_atime = time(NULL);
     st->st_mtime = glm ? ne_rfc1123_parse(glm) : 0;
     st->st_ctime = cd ? ne_iso8601_parse(cd) : 0;
-    
+
     st->st_blocks = (st->st_size+511)/512;
     /*fprintf(stderr, "a: %u; m: %u; c: %u\n", st->st_atime, st->st_mtime, st->st_ctime);*/
 
     st->st_mode &= ~mask;
-    
+
     st->st_uid = getuid();
     st->st_gid = getgid();
 }
@@ -220,7 +222,7 @@ static char *strip_trailing_slash(char *fn, int *is_dir) {
     assert(fn);
     assert(is_dir);
     assert(l > 0);
-    
+
     if ((*is_dir = (fn[l-1] == '/')))
         fn[l-1] = 0;
 
@@ -241,7 +243,7 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
 
     if (strcmp(fn, f->root) && fn[0]) {
         char *h;
-        
+
         if ((t = strrchr(fn, '/')))
             t++;
         else
@@ -260,15 +262,15 @@ static void getdir_cache_callback(
         const char *root,
         const char *fn,
         void *user) {
-    
+
     struct fill_info *f = user;
     char path[PATH_MAX];
     char *h;
 
     assert(f);
-    
+
     snprintf(path, sizeof(path), "%s/%s", !strcmp(root, "/") ? "" : root, fn);
-    
+
     f->filler(f->buf, h = ne_path_unescape(fn), NULL, 0);
     free(h);
 }
@@ -279,7 +281,7 @@ static int dav_readdir(
         fuse_fill_dir_t filler,
         __unused ne_off_t offset,
         __unused struct fuse_file_info *fi) {
-    
+
     struct fill_info f;
     ne_session *session;
 
@@ -294,17 +296,17 @@ static int dav_readdir(
 
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
-    
+
     if (dir_cache_enumerate(path, getdir_cache_callback, &f) < 0) {
 
         if (debug)
             fprintf(stderr, "DIR-CACHE-MISS\n");
-        
-        if (!(session = session_get(1))) 
+
+        if (!(session = session_get(1)))
             return -EIO;
 
         dir_cache_begin(path);
-        
+
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
             dir_cache_finish(path, 2);
             fprintf(stderr, "PROPFIND failed: %s\n", ne_get_error(session));
@@ -327,7 +329,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     strncpy(fn, u->path, sizeof(fn));
     fn[sizeof(fn)-1] = 0;
     strip_trailing_slash(fn, &is_dir);
-    
+
     fill_stat(st, results, is_dir);
     stat_cache_set(fn, st);
 }
@@ -335,7 +337,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
 static int get_stat(const char *path, struct stat *stbuf) {
     ne_session *session;
 
-    if (!(session = session_get(1))) 
+    if (!(session = session_get(1)))
         return -EIO;
 
     if (stat_cache_get(path, stbuf) == 0) {
@@ -371,7 +373,7 @@ static int dav_unlink(const char *path) {
     if (debug)
         fprintf(stderr, "unlink(%s)\n", path);
 
-    if (!(session = session_get(1))) 
+    if (!(session = session_get(1)))
         return -EIO;
 
     if ((r = get_stat(path, &st)) < 0)
@@ -379,7 +381,7 @@ static int dav_unlink(const char *path) {
 
     if (!S_ISREG(st.st_mode))
         return -EISDIR;
-    
+
     if (ne_delete(session, path)) {
         fprintf(stderr, "DELETE failed: %s\n", ne_get_error(session));
         return -ENOENT;
@@ -387,7 +389,7 @@ static int dav_unlink(const char *path) {
 
     stat_cache_invalidate(path);
     dir_cache_invalidate_parent(path);
-    
+
     return 0;
 }
 
@@ -402,7 +404,7 @@ static int dav_rmdir(const char *path) {
     if (debug)
         fprintf(stderr, "rmdir(%s)\n", path);
 
-    if (!(session = session_get(1))) 
+    if (!(session = session_get(1)))
         return -EIO;
 
     if ((r = get_stat(path, &st)) < 0)
@@ -412,7 +414,7 @@ static int dav_rmdir(const char *path) {
         return -ENOTDIR;
 
     snprintf(fn, sizeof(fn), "%s/", path);
-    
+
     if (ne_delete(session, fn)) {
         fprintf(stderr, "DELETE failed: %s\n", ne_get_error(session));
         return -ENOENT;
@@ -433,11 +435,11 @@ static int dav_mkdir(const char *path, __unused mode_t mode) {
     if (debug)
         fprintf(stderr, "mkdir(%s)\n", path);
 
-    if (!(session = session_get(1))) 
+    if (!(session = session_get(1)))
         return -EIO;
 
     snprintf(fn, sizeof(fn), "%s/", path);
-    
+
     if (ne_mkcol(session, fn)) {
         fprintf(stderr, "MKCOL failed: %s\n", ne_get_error(session));
         return -ENOENT;
@@ -445,7 +447,7 @@ static int dav_mkdir(const char *path, __unused mode_t mode) {
 
     stat_cache_invalidate(path);
     dir_cache_invalidate_parent(path);
-    
+
     return 0;
 }
 
@@ -474,13 +476,13 @@ static int dav_rename(const char *from, const char *to) {
         snprintf(fn, sizeof(fn), "%s/", from);
         from = fn;
     }
-    
+
     if (ne_move(session, 1, from, to)) {
         fprintf(stderr, "MOVE failed: %s\n", ne_get_error(session));
         r = -ENOENT;
         goto finish;
     }
-    
+
     stat_cache_invalidate(from);
     stat_cache_invalidate(to);
 
@@ -490,7 +492,7 @@ static int dav_rename(const char *from, const char *to) {
 finish:
 
     free(_from);
-    
+
     return r;
 }
 
@@ -508,7 +510,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         r = -EIO;
         goto finish;
     }
-    
+
     if (!(f = file_cache_get(path))) {
         fprintf(stderr, "release() called for closed file\n");
         r = -EFAULT;
@@ -523,7 +525,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 finish:
     if (f)
         file_cache_unref(f);
-    
+
     return r;
 }
 
@@ -553,7 +555,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
     }
 
 finish:
-    
+
     if (f)
         file_cache_unref(f);
 
@@ -569,7 +571,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     if (debug)
         fprintf(stderr, "mknod(%s)\n", path);
 
-    if (!(session = session_get(1))) 
+    if (!(session = session_get(1)))
         return -EIO;
 
     if (!S_ISREG(mode))
@@ -578,9 +580,9 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     snprintf(tempfile, sizeof(tempfile), "%s/fusedav-empty-XXXXXX", "/tmp");
     if ((fd = mkstemp(tempfile)) < 0)
         return -errno;
-    
+
     unlink(tempfile);
-    
+
     if (ne_put(session, path, fd)) {
         fprintf(stderr, "mknod:PUT failed: %s\n", ne_get_error(session));
         close(fd);
@@ -614,12 +616,12 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
 static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, __unused struct fuse_file_info *info) {
     void *f = NULL;
     ssize_t r;
- 
+
     path = path_cvt(path);
-    
+
     if (debug)
         fprintf(stderr, "read(%s, %lu+%lu)\n", path, (unsigned long) offset, (unsigned long) size);
-    
+
     if (!(f = file_cache_get(path))) {
         fprintf(stderr, "read() called for closed file\n");
         r = -EFAULT;
@@ -634,7 +636,7 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, _
 finish:
     if (f)
         file_cache_unref(f);
-    
+
     return r;
 }
 
@@ -657,11 +659,11 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
         r = -errno;
         goto finish;
     }
-    
+
 finish:
     if (f)
         file_cache_unref(f);
-    
+
     return r;
 }
 
@@ -670,16 +672,16 @@ static int dav_truncate(const char *path, ne_off_t size) {
     void *f = NULL;
     int r = 0;
     ne_session *session;
-    
+
     path = path_cvt(path);
-    
+
     if (debug)
         fprintf(stderr, "truncate(%s, %lu)\n", path, (unsigned long) size);
 
     if (!(session = session_get(1)))
         r = -EIO;
         goto finish;
-    
+
     if (!(f = file_cache_get(path))) {
         fprintf(stderr, "truncate() called for closed file\n");
         r = -EFAULT;
@@ -694,7 +696,7 @@ static int dav_truncate(const char *path, ne_off_t size) {
 finish:
     if (f)
         file_cache_unref(f);
-    
+
     return r;
 }
 
@@ -704,15 +706,15 @@ static int dav_utime(const char *path, struct utimbuf *buf) {
     ne_proppatch_operation ops[2];
     int r = 0;
     char *date;
-    
+
     assert(path);
     assert(buf);
 
     path = path_cvt(path);
-    
+
     if (debug)
         fprintf(stderr, "utime(%s, %lu, %lu)\n", path, (unsigned long) buf->actime, (unsigned long) buf->modtime);
-    
+
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
     ops[0].value = date = ne_rfc1123_date(buf->modtime);
@@ -728,12 +730,12 @@ static int dav_utime(const char *path, struct utimbuf *buf) {
         r = -ENOTSUP;
         goto finish;
     }
-    
+
     stat_cache_invalidate(path);
 
 finish:
     free(date);
-    
+
     return r;
 }
 
@@ -759,7 +761,7 @@ static int listxattr_iterator(
 
     struct listxattr_info *l = userdata;
     int n;
-    
+
     assert(l);
 
     if (!value || !pname)
@@ -767,24 +769,24 @@ static int listxattr_iterator(
 
     if (l->list) {
         n = snprintf(l->list, l->space, "user.webdav(%s;%s)", pname->nspace, pname->name) + 1;
-        
+
         if (n >= (int) l->space) {
             l->size += l->space;
             l->space = 0;
             return 1;
-            
+
         } else {
             l->size += n;
             l->space -= n;
-            
+
             if (l->list)
                 l->list += n;
-            
+
             return 0;
         }
     } else {
         /* Calculate space */
-        
+
         l->size += strlen(pname->nspace) + strlen(pname->name) + 15;
         return 0;
     }
@@ -799,10 +801,10 @@ static int dav_listxattr(
         const char *path,
         char *list,
         size_t size) {
-    
+
     ne_session *session;
     struct listxattr_info l;
-    
+
 
     assert(path);
 
@@ -822,14 +824,14 @@ static int dav_listxattr(
             l.space -= sizeof(MIME_XATTR);
             l.size += sizeof(MIME_XATTR);
         }
-        
+
     } else {
         l.list = NULL;
         l.space = 0;
         l.size = sizeof(MIME_XATTR);
     }
-    
-    if (!(session = session_get(1))) 
+
+    if (!(session = session_get(1)))
         return -EIO;
 
     if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, NULL, listxattr_propfind_callback, &l) != NE_OK) {
@@ -858,7 +860,7 @@ static int getxattr_iterator(
         __unused const ne_status *status) {
 
     struct getxattr_info *g = userdata;
-    
+
     assert(g);
 
     if (!value || !pname)
@@ -880,11 +882,11 @@ static int getxattr_iterator(
         g->size = l;
     } else {
         /* Calculate space */
-        
+
         g->size = strlen(value);
         return 0;
     }
-    
+
     return 0;
 }
 
@@ -896,13 +898,13 @@ static void getxattr_propfind_callback(void *userdata, __unused const ne_uri *u,
 static int parse_xattr(const char *name, char *dnspace, size_t dnspace_length, char *dname, size_t dname_length) {
     char *e;
     size_t k;
-    
+
     assert(name);
     assert(dnspace);
     assert(dnspace_length);
     assert(dname);
     assert(dname_length);
-    
+
     if (strncmp(name, "user.webdav(", 12) ||
         name[strlen(name)-1] != ')' ||
         !(e = strchr(name+12, ';')))
@@ -915,7 +917,7 @@ static int parse_xattr(const char *name, char *dnspace, size_t dnspace_length, c
     dnspace[k] = 0;
 
     e++;
-    
+
     if ((k = strlen(e)) > dname_length-1)
         return -1;
 
@@ -938,7 +940,7 @@ static int dav_getxattr(
     struct getxattr_info g;
     ne_propname props[2];
     char dnspace[128], dname[128];
-        
+
     assert(path);
 
     path = path_cvt(path);
@@ -966,7 +968,7 @@ static int dav_getxattr(
     }
 
     g.propname = props[0];
-    
+
     if (!(session = session_get(1)))
         return -EIO;
 
@@ -1001,7 +1003,7 @@ static int dav_setxattr(
 
     path = path_cvt(path);
     name = fix_xattr(name);
-    
+
     if (debug)
         fprintf(stderr, "setxattr(%s, %s)\n", path, name);
 
@@ -1009,7 +1011,7 @@ static int dav_setxattr(
         r = ENOTSUP;
         goto finish;
     }
-    
+
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
         r = -ENOATTR;
         goto finish;
@@ -1017,40 +1019,40 @@ static int dav_setxattr(
 
     propname.nspace = dnspace;
     propname.name = dname;
-    
+
     /* Add trailing NUL byte if required */
     if (!memchr(value, 0, size)) {
         value_fixed = malloc(size+1);
         assert(value_fixed);
-        
+
         memcpy(value_fixed, value, size);
         value_fixed[size] = 0;
 
         value = value_fixed;
     }
-    
+
     ops[0].name = &propname;
     ops[0].type = ne_propset;
     ops[0].value = value;
-    
+
     ops[1].name = NULL;
 
     if (!(session = session_get(1))) {
         r = -EIO;
         goto finish;
     }
-                 
+
     if (proppatch_with_redirect(session, path, ops)) {
         fprintf(stderr, "PROPPATCH failed: %s\n", ne_get_error(session));
         r = -ENOTSUP;
         goto finish;
     }
-    
+
     stat_cache_invalidate(path);
 
 finish:
     free(value_fixed);
-    
+
     return r;
 }
 
@@ -1066,7 +1068,7 @@ static int dav_removexattr(const char *path, const char *name) {
 
     path = path_cvt(path);
     name = fix_xattr(name);
-    
+
     if (debug)
         fprintf(stderr, "removexattr(%s, %s)\n", path, name);
 
@@ -1077,28 +1079,28 @@ static int dav_removexattr(const char *path, const char *name) {
 
     propname.nspace = dnspace;
     propname.name = dname;
-    
+
     ops[0].name = &propname;
     ops[0].type = ne_propremove;
     ops[0].value = NULL;
-    
+
     ops[1].name = NULL;
 
     if (!(session = session_get(1))) {
         r = -EIO;
         goto finish;
     }
-                 
+
     if (proppatch_with_redirect(session, path, ops)) {
         fprintf(stderr, "PROPPATCH failed: %s\n", ne_get_error(session));
         r = -ENOTSUP;
         goto finish;
     }
-    
+
     stat_cache_invalidate(path);
 
 finish:
-    
+
     return r;
 }
 
@@ -1107,14 +1109,14 @@ static int dav_chmod(const char *path, mode_t mode) {
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     ne_proppatch_operation ops[2];
     int r = 0;
-    
+
     assert(path);
 
     path = path_cvt(path);
-    
+
     if (debug)
         fprintf(stderr, "chmod(%s, %04o)\n", path, mode);
-    
+
     ops[0].name = &executable;
     ops[0].type = ne_propset;
     ops[0].value = mode & 0111 ? "T" : "F";
@@ -1130,30 +1132,30 @@ static int dav_chmod(const char *path, mode_t mode) {
         r = -ENOTSUP;
         goto finish;
     }
-    
+
     stat_cache_invalidate(path);
 
 finish:
-    
+
     return r;
 }
 
 static struct fuse_operations dav_oper = {
-    .getattr	 = dav_getattr,
-    .readdir	 = dav_readdir,
-    .mknod	 = dav_mknod,
-    .mkdir	 = dav_mkdir,
-    .unlink	 = dav_unlink,
-    .rmdir	 = dav_rmdir,
-    .rename	 = dav_rename,
+    .getattr     = dav_getattr,
+    .readdir     = dav_readdir,
+    .mknod       = dav_mknod,
+    .mkdir       = dav_mkdir,
+    .unlink      = dav_unlink,
+    .rmdir       = dav_rmdir,
+    .rename      = dav_rename,
     .chmod       = dav_chmod,
-    .truncate	 = dav_truncate,
+    .truncate    = dav_truncate,
     .utime       = dav_utime,
-    .open	 = dav_open,
-    .read	 = dav_read,
-    .write	 = dav_write,
-    .release	 = dav_release,
-    .fsync	 = dav_fsync,
+    .open        = dav_open,
+    .read        = dav_read,
+    .write       = dav_write,
+    .release     = dav_release,
+    .fsync       = dav_fsync,
     .setxattr    = dav_setxattr,
     .getxattr    = dav_getxattr,
     .listxattr   = dav_listxattr,
@@ -1167,7 +1169,7 @@ static void usage(char *argv0) {
         e++;
     else
         e = argv0;
-    
+
     fprintf(stderr,
             "%s [-hDL] [-t SECS] [-u USERNAME] [-p PASSWORD] [-c CERT] [-a CACERT] [-o OPTIONS] URL MOUNTPOINT\n"
             "\t-h Show this help\n"
@@ -1194,21 +1196,21 @@ static void empty_handler(__unused int sig) {}
 static int setup_signal_handlers(void) {
     struct sigaction sa;
     sigset_t m;
-                                                                            
+
     sa.sa_handler = exit_handler;
     sigemptyset(&(sa.sa_mask));
     sa.sa_flags = 0;
-    
+
     if (sigaction(SIGHUP, &sa, NULL) == -1 ||
         sigaction(SIGINT, &sa, NULL) == -1 ||
         sigaction(SIGTERM, &sa, NULL) == -1) {
-                                                                                                        
+
         fprintf(stderr, "Cannot set exit signal handlers: %s\n", strerror(errno));
         return -1;
     }
-                                                                                                        
+
     sa.sa_handler = SIG_IGN;
-                                                                                                        
+
     if (sigaction(SIGPIPE, &sa, NULL) == -1) {
         fprintf(stderr, "Cannot set ignored signals: %s\n", strerror(errno));
         return -1;
@@ -1230,7 +1232,7 @@ static int setup_signal_handlers(void) {
     sigaddset(&m, SIGPIPE);
     sigaddset(&m, SIGUSR1);
     pthread_sigmask(SIG_SETMASK, &m, NULL);
-    
+
     return 0;
 }
 
@@ -1239,7 +1241,7 @@ static int create_lock(void) {
     char _owner[64], *owner;
     int i;
     int ret;
-    
+
     lock = ne_lock_create();
     assert(lock);
 
@@ -1254,7 +1256,7 @@ static int create_lock(void) {
             }
 
     ne_fill_server_uri(session, &lock->uri);
-    
+
     lock->uri.path = strdup(base_directory);
     lock->depth = NE_DEPTH_INFINITE;
     lock->timeout = lock_timeout;
@@ -1262,7 +1264,7 @@ static int create_lock(void) {
 
     if (debug)
         fprintf(stderr, "Acquiring lock...\n");
-    
+
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
 
@@ -1291,9 +1293,9 @@ static int create_lock(void) {
 
     lock_store = ne_lockstore_create();
     assert(lock_store);
-    
+
     ne_lockstore_add(lock_store, lock);
-    
+
     return 0;
 }
 
@@ -1333,7 +1335,7 @@ static void *lock_thread_func(__unused void *p) {
 
     while (!lock_thread_exit) {
         int r, t;
-        
+
         lock->timeout = lock_timeout;
 
         pthread_sigmask(SIG_BLOCK, &block, NULL);
@@ -1353,7 +1355,7 @@ static void *lock_thread_func(__unused void *p) {
             t = 1;
         sleep(t);
     }
-    
+
     if (debug)
         fprintf(stderr, "lock_thread exiting\n");
 
@@ -1370,13 +1372,13 @@ int main(int argc, char *argv[]) {
     int lock_thread_running = 0;
     int enable_locking = 0;
     int fail = 0;
-    
+
     static char *mount_args_strings[] = {
         NULL,  /* path*/
         NULL,  /* -o */
         NULL,
         NULL};
-    
+
     struct fuse_args mount_args = {
         .argc = 1,
         .argv = mount_args_strings,
@@ -1401,7 +1403,7 @@ int main(int argc, char *argv[]) {
     if (fail) {
         goto finish;
     }
-        
+
     mask = umask(0);
     umask(mask);
 
@@ -1409,14 +1411,14 @@ int main(int argc, char *argv[]) {
 
     if (setup_signal_handlers() < 0)
         goto finish;
-    
+
     while ((c = getopt(argc, argv, "hu:p:c:a:Do:Lt:")) != -1) {
 
         switch(c) {
             case 'u':
                 u = optarg;
                 break;
-                
+
             case 'p':
                 p = optarg;
                 break;
@@ -1428,7 +1430,7 @@ int main(int argc, char *argv[]) {
             case 'a':
                 ca_cert = optarg;
                 break;
-                
+
             case 'D':
                 debug = !debug;
                 break;
@@ -1447,7 +1449,7 @@ int main(int argc, char *argv[]) {
                     goto finish;
                 }
                 break;
-                
+
             case 'h':
                 ret = 0;
 
@@ -1483,7 +1485,7 @@ int main(int argc, char *argv[]) {
         mount_args_strings[2] = o;
         mount_args.argc += 2;
     }
-    
+
     if ((fuse_fd = fuse_mount(mountpoint, &mount_args)) < 0) {
         fprintf(stderr, "Failed to mount FUSE file system.\n");
         goto finish;
@@ -1493,26 +1495,26 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to create FUSE object.\n");
         goto finish;
     }
-    
+
     if (enable_locking && create_lock() >= 0) {
         int r;
         if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, NULL)) < 0) {
             fprintf(stderr, "pthread_create(): %s\n", strerror(r));
             goto finish;
         }
-        
+
         lock_thread_running = 1;
     }
-    
+
     fuse_loop_mt(fuse);
 
     if (debug)
         fprintf(stderr, "Exiting cleanly.\n");
-    
+
     ret = 0;
-    
+
 finish:
-    
+
     if (lock_thread_running) {
         lock_thread_exit = 1;
         pthread_kill(lock_thread, SIGUSR1);
@@ -1523,13 +1525,13 @@ finish:
 
     if (fuse)
         fuse_destroy(fuse);
-    
+
     if (fuse_fd >= 0)
         fuse_unmount(mountpoint);
-    
+
     file_cache_close_all();
     cache_free();
     session_free();
-    
+
     return ret;
 }
