@@ -26,7 +26,7 @@ AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign 1.9 -Wall])
 AC_REVISION($Id$)
 
-AC_SUBST(PACKAGE_URL, [http://0pointer.de/lennart/projects/fusedav/])
+AC_SUBST(PACKAGE_URL, [https://github.com/pantheon-systems/fusedav])
 
 if type -p stow > /dev/null && test -d /usr/local/stow ; then
    AC_MSG_NOTICE([*** Found /usr/local/stow: default install prefix set to /usr/local/stow/${PACKAGE_NAME}-${PACKAGE_VERSION} ***])
@@ -43,7 +43,7 @@ AC_PROG_LN_S
 AC_PROG_MAKE_SET
 
 test_gcc_flag() {
-    AC_LANG_CONFTEST([int main() {}])
+    AC_LANG_CONFTEST([AC_LANG_SOURCE([int main() {}])])
     $CC -c conftest.c $CFLAGS $@ > /dev/null 2> /dev/null
     ret=$?
     rm -f conftest.o
@@ -107,6 +107,7 @@ AC_FUNC_MALLOC
 AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr memchr strchr strcspn])
 
 AC_CHECK_LIB([pthread], [pthread_create])
+AC_CHECK_LIB([yaml], [yaml_parser_initialize])
 
 PKG_CHECK_MODULES(NEON, [ neon >= 0.27 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.5 ])
