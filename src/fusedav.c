@@ -84,6 +84,7 @@ struct fill_info {
 };
 
 static int get_stat(const char *path, struct stat *stbuf);
+int file_exists_or_set_null(char **path);
 
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
@@ -177,8 +178,9 @@ static int proppatch_with_redirect(
 
 
 static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is_dir) {
-    const char *rt, *e, *gcl, *glm, *cd;
-    const ne_propname resourcetype = { "DAV:", "resourcetype" };
+    const char *e, *gcl, *glm, *cd;
+    //const char *rt;
+    //const ne_propname resourcetype = { "DAV:", "resourcetype" };
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
@@ -186,7 +188,7 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
 
     assert(st && results);
 
-    rt = ne_propset_value(results, &resourcetype);
+    //rt = ne_propset_value(results, &resourcetype);
     e = ne_propset_value(results, &executable);
     gcl = ne_propset_value(results, &getcontentlength);
     glm = ne_propset_value(results, &getlastmodified);
@@ -1362,6 +1364,22 @@ static void *lock_thread_func(__unused void *p) {
     return NULL;
 }
 
+int file_exists_or_set_null(char **path) {
+    FILE *file;
+    
+    if ((file = fopen(*path, "r"))) {
+        fclose(file);
+        //if (debug)
+        fprintf(stderr, "file_exists_or_set_null(%s): found\n", *path);
+        return 0;
+    }
+    free(*path);
+    *path = NULL;
+    //if (debug)
+    fprintf(stderr, "file_exists_or_set_null(%s): not found\n", *path);
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     int c;
     char *u = NULL, *p = NULL, *client_cert = NULL, *ca_cert = NULL, *o = NULL;
@@ -1411,6 +1429,12 @@ int main(int argc, char *argv[]) {
 
     if (setup_signal_handlers() < 0)
         goto finish;
+
+    // Look for certificates in the default locations.
+    asprintf(&client_cert, "%s/.fusedav/client.p12", getenv("HOME"));
+    file_exists_or_set_null(&client_cert);
+    asprintf(&ca_cert, "%s/.fusedav/ca.pem", getenv("HOME"));
+    file_exists_or_set_null(&ca_cert);
 
     while ((c = getopt(argc, argv, "hu:p:c:a:Do:Lt:")) != -1) {
 
@@ -1481,7 +1505,8 @@ int main(int argc, char *argv[]) {
     mount_args_strings[0] = argv[optind];
 
     if (o) {
-        mount_args_strings[1] = (char*) "-o";
+        // Allocate new string to avoid using a const for a non-const value.
+        asprintf(&mount_args_strings[1], "-o");
         mount_args_strings[2] = o;
         mount_args.argc += 2;
     }

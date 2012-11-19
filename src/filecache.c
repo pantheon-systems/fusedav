@@ -7,12 +7,12 @@
   under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   fusedav is distributed in the hope that it will be useful, but WITHOUT
   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
   License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with fusedav; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
@@ -51,7 +51,7 @@ struct file_info {
     char *filename;
     int fd;
     ne_off_t server_length, length, present;
-    
+
     int readable;
     int writable;
 
@@ -74,9 +74,9 @@ void* file_cache_get(const char *path) {
     struct file_info *f, *r = NULL;
 
     pthread_mutex_lock(&files_mutex);
-    
+
     for (f = files; f; f = f->next) {
-        
+
         pthread_mutex_lock(&f->mutex);
         if (!f->dead && f->filename && !strcmp(path, f->filename)) {
             f->ref++;
@@ -87,7 +87,7 @@ void* file_cache_get(const char *path) {
         if (r)
             break;
     }
-    
+
     pthread_mutex_unlock(&files_mutex);
     return f;
 }
@@ -126,7 +126,7 @@ static void file_cache_unlink(struct file_info *fi) {
     assert(fi);
 
     pthread_mutex_lock(&files_mutex);
-    
+
     for (s = files, prev = NULL; s; s = s->next) {
         if (s == fi) {
             if (prev)
@@ -136,10 +136,10 @@ static void file_cache_unlink(struct file_info *fi) {
 
             break;
         }
-        
+
         prev = s;
     }
-    
+
     pthread_mutex_unlock(&files_mutex);
 }
 
@@ -197,24 +197,24 @@ void* file_cache_open(const char *path, int flags) {
 
     if (!(length = ne_get_response_header(req, "Content-Length")))
         /* dirty hack, since Apache doesn't send the file size if the file is empty */
-        fi->server_length = fi->length = 0; 
+        fi->server_length = fi->length = 0;
     else
         fi->server_length = fi->length = atoi(length);
 
     ne_request_destroy(req);
-    
+
     if (flags & O_RDONLY || flags & O_RDWR) fi->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) fi->writable = 1;
 
     pthread_mutex_init(&fi->mutex, NULL);
-    
+
     pthread_mutex_lock(&files_mutex);
     fi->next = files;
     files = fi;
     pthread_mutex_unlock(&files_mutex);
 
     fi->ref = 1;
-    
+
     return fi;
 
 fail:
@@ -228,7 +228,7 @@ fail:
         free(fi->filename);
         free(fi);
     }
-        
+
     return NULL;
 }
 
@@ -246,17 +246,17 @@ static int load_up_to_unlocked(struct file_info *fi, ne_off_t l) {
 
     if (l > fi->server_length)
         l = fi->server_length;
-    
+
     if (l <= fi->present)
         return 0;
 
     if (lseek(fi->fd, fi->present, SEEK_SET) != fi->present)
         return -1;
-    
+
     range.start = fi->present;
     range.end = l-1;
     range.total = 0;
-    
+
     if (ne_get_range(session, fi->filename, &range, fi->fd) != NE_OK) {
         fprintf(stderr, "GET failed: %s\n", ne_get_error(session));
         errno = ENOENT;
@@ -270,7 +270,7 @@ static int load_up_to_unlocked(struct file_info *fi, ne_off_t l) {
 int file_cache_read(void *f, char *buf, size_t size, ne_off_t offset) {
     struct file_info *fi = f;
     ssize_t r = -1;
-    
+
     assert(fi && buf && size);
 
     pthread_mutex_lock(&fi->mutex);
@@ -282,7 +282,7 @@ int file_cache_read(void *f, char *buf, size_t size, ne_off_t offset) {
         goto finish;
 
 finish:
-    
+
     pthread_mutex_unlock(&fi->mutex);
 
     return r;
@@ -303,21 +303,22 @@ int file_cache_write(void *f, const char *buf, size_t size, ne_off_t offset) {
 
     if (load_up_to_unlocked(fi, offset) < 0)
         goto finish;
-        
+
     if ((r = pwrite(fi->fd, buf, size, offset)) < 0)
         goto finish;
 
-    if (offset+size > fi->present)
+    // Type-cast to ne_off_t (usually a signed 64-bit integer) to avoid warnings.
+    if (offset+(ne_off_t) size > fi->present)
         fi->present = offset+size;
 
-    if (offset+size > fi->length)
+    if (offset+(ne_off_t) size > fi->length)
         fi->length = offset+size;
 
     fi->modified = 1;
 
 finish:
     pthread_mutex_unlock(&fi->mutex);
-    
+
     return r;
 }
 
@@ -342,7 +343,7 @@ int file_cache_sync_unlocked(struct file_info *fi) {
     ne_session *session;
 
     assert(fi);
-    
+
     if (!fi->writable) {
         errno = EBADF;
         goto finish;
@@ -352,7 +353,7 @@ int file_cache_sync_unlocked(struct file_info *fi) {
         r = 0;
         goto finish;
     }
-    
+
     if (load_up_to_unlocked(fi, (ne_off_t) -1) < 0)
         goto finish;
 
@@ -363,7 +364,7 @@ int file_cache_sync_unlocked(struct file_info *fi) {
         errno = EIO;
         goto finish;
     }
-    
+
     if (ne_put(session, fi->filename, fi->fd)) {
         fprintf(stderr, "PUT failed: %s\n", ne_get_error(session));
         errno = ENOENT;
@@ -376,7 +377,7 @@ int file_cache_sync_unlocked(struct file_info *fi) {
     r = 0;
 
 finish:
-    
+
     return r;
 }
 
@@ -388,7 +389,7 @@ int file_cache_sync(void *f) {
     pthread_mutex_lock(&fi->mutex);
     r = file_cache_sync_unlocked(fi);
     pthread_mutex_unlock(&fi->mutex);
-    
+
     return r;
 }
 
@@ -399,7 +400,7 @@ int file_cache_close_all(void) {
 
     while (files) {
         struct file_info *fi = files;
-        
+
         pthread_mutex_lock(&fi->mutex);
         fi->ref++;
         pthread_mutex_unlock(&fi->mutex);

@@ -161,8 +161,8 @@ static ne_session *session_open(int with_lock) {
            fprintf(stderr, "Could not load client certificate: %s\n", client_certificate);
            return NULL;
         } else if (ne_ssl_clicert_encrypted(ne_client_cert)) {
-           char *password = "pantheon"; // @TODO: Make configurable.
-           if (ne_ssl_clicert_decrypt(ne_client_cert, password)) {
+           const char *certificate_password = "pantheon"; // @TODO: Make configurable.
+           if (ne_ssl_clicert_decrypt(ne_client_cert, certificate_password)) {
               fprintf(stderr, "Could not decrypt the client certificate: %s\n", client_certificate);
               return NULL;
            }
@@ -281,4 +281,3 @@ int session_is_local(const ne_uri *u) {
         strcmp(u->host, uri.host) == 0 &&
         u->port == uri.port;
 }
-
