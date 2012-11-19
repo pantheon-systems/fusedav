@@ -111,7 +111,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
-     FUSEDAV_OPT("debug",                          debug, false),
+     FUSEDAV_OPT("debug",                          debug, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -1486,6 +1486,8 @@ int main(int argc, char *argv[]) {
     }
 
     debug = conf.debug;
+    if (debug)
+        fprintf(stderr, "Debug mode enabled.\n");
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         fprintf(stderr, "FUSE could not parse the command line.\n");
@@ -1531,6 +1533,8 @@ int main(int argc, char *argv[]) {
 
 finish:
 
+    fprintf(stderr, "1\n");
+
     if (lock_thread_running) {
         lock_thread_exit = 1;
         pthread_kill(lock_thread, SIGUSR1);
@@ -1539,13 +1543,29 @@ finish:
         ne_lockstore_destroy(lock_store);
     }
 
-    if (fuse)
-        fuse_destroy(fuse);
+    fprintf(stderr, "2\n");
 
-    if (ch != NULL)
+    //if (fuse)
+    //    fuse_destroy(fuse);
+
+    fprintf(stderr, "3\n");
+
+    if (ch != NULL) {
+        if (debug)
+            fprintf(stderr, "Unmounting: %s\n", mountpoint);
         fuse_unmount(mountpoint, ch);
+    }
+
+    fprintf(stderr, "4\n");
+
+    fuse_opt_free_args(&args);
+
+    fprintf(stderr, "5\n");
 
     file_cache_close_all();
+
+    fprintf(stderr, "6\n");
+    
     cache_free();
     session_free();
 
