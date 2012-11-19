@@ -93,7 +93,7 @@ struct fusedav_config {
     char *client_certificate_password;
     int  lock_timeout;
     bool lock_on_mount;
-
+    bool debug;
 };
 
 enum {
@@ -111,6 +111,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
+     FUSEDAV_OPT("debug",                          debug, false),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -1424,6 +1425,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    -o client_certificate_password=STRING\n"
                 "    -o lock_timeout=NUM\n"
                 "    -o lock_on_mount\n"
+                "    -o debug\n"
                 "\n"
                 , outargs->argv[0]);
         fuse_opt_add_arg(outargs, "-ho");
@@ -1482,6 +1484,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "FUSE could not parse options.\n");
         goto finish;
     }
+
+    debug = conf.debug;
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         fprintf(stderr, "FUSE could not parse the command line.\n");
