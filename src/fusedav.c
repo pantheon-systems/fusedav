@@ -1484,6 +1484,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "FUSE could not parse options.\n");
         goto finish;
     }
+    if (debug)
+        fprintf(stderr, "Parsed options.\n");
 
     debug = conf.debug;
     if (debug)
@@ -1493,6 +1495,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "FUSE could not parse the command line.\n");
         goto finish;
     }
+    if (debug)
+        fprintf(stderr, "Parsed command line.\n");
 
     if (!conf.uri) {
         fprintf(stderr, "Missing the required URI argument.\n");
@@ -1503,16 +1507,22 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to initialize the session URI.\n");
         goto finish;
     }
+    if (debug)
+        fprintf(stderr, "Set session URI and configuration.\n");
 
     if (!(ch = fuse_mount(mountpoint, &args))) {
         fprintf(stderr, "Failed to mount FUSE file system.\n");
         goto finish;
     }
+    if (debug)
+        fprintf(stderr, "Mounted the FUSE file system.\n");
 
     if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), NULL))) {
         fprintf(stderr, "Failed to create FUSE object.\n");
         goto finish;
     }
+    if (debug)
+        fprintf(stderr, "Created the FUSE object.\n");
 
     if (conf.lock_on_mount && create_lock(conf.lock_timeout) >= 0) {
         int r;
@@ -1522,9 +1532,16 @@ int main(int argc, char *argv[]) {
         }
 
         lock_thread_running = 1;
+        if (debug)
+            fprintf(stderr, "Acquired lock.\n");
     }
 
-    fuse_loop_mt(fuse);
+    if (debug)
+        fprintf(stderr, "Entering main FUSE loop.\n");
+    if (fuse_loop_mt(fuse) < 0) {
+        fprintf(stderr, "Error occurred while trying to enter main FUSE loop.\n");
+        goto finish;
+    }
 
     if (debug)
         fprintf(stderr, "Exiting cleanly.\n");
@@ -1532,18 +1549,16 @@ int main(int argc, char *argv[]) {
     ret = 0;
 
 finish:
-
-    fprintf(stderr, "1\n");
-
     if (lock_thread_running) {
         lock_thread_exit = 1;
         pthread_kill(lock_thread, SIGUSR1);
         pthread_join(lock_thread, NULL);
         remove_lock();
         ne_lockstore_destroy(lock_store);
-    }
 
-    fprintf(stderr, "2\n");
+        if (debug)
+            fprintf(stderr, "Freed lock.\n");
+    }
 
     //if (fuse)
     //    fuse_destroy(fuse);
@@ -1555,19 +1570,24 @@ finish:
             fprintf(stderr, "Unmounting: %s\n", mountpoint);
         fuse_unmount(mountpoint, ch);
     }
-
-    fprintf(stderr, "4\n");
+    if (debug)
+        fprintf(stderr, "Unmounted.\n");
 
     fuse_opt_free_args(&args);
-
-    fprintf(stderr, "5\n");
+    if (debug)
+        fprintf(stderr, "Freed arguments.\n");
 
     file_cache_close_all();
-
-    fprintf(stderr, "6\n");
+    if (debug)
+        fprintf(stderr, "Closed file cache.\n");
     
     cache_free();
+    if (debug)
+        fprintf(stderr, "Freed cache.\n");
+
     session_free();
+    if (debug)
+        fprintf(stderr, "Freed session.\n");
 
     return ret;
 }
