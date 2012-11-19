@@ -73,13 +73,10 @@ struct fuse* fuse = NULL;
 ne_lock_store *lock_store = NULL;
 struct ne_lock *lock = NULL;
 int lock_thread_exit = 0;
-int lock_timeout = 60;
 
 #define MIME_XATTR "user.mime_type"
 
 #define MAX_REDIRECTS 10
-
-#define UNUSED(p) if(p){}
 
 struct fill_info {
     void *buf;
@@ -1256,7 +1253,7 @@ static int setup_signal_handlers(void) {
     return 0;
 }
 
-static int create_lock(void) {
+static int create_lock(int lock_timeout) {
     ne_session *session;
     char _owner[64], *owner;
     int i;
@@ -1338,7 +1335,8 @@ static int remove_lock(void) {
     return 0;
 }
 
-static void *lock_thread_func(__unused void *p) {
+static void *lock_thread_func(void *p) {
+    struct fusedav_config *conf = p;
     ne_session *session;
     sigset_t block;
 
@@ -1356,7 +1354,7 @@ static void *lock_thread_func(__unused void *p) {
     while (!lock_thread_exit) {
         int r, t;
 
-        lock->timeout = lock_timeout;
+        lock->timeout = conf->lock_timeout;
 
         pthread_sigmask(SIG_BLOCK, &block, NULL);
         r = ne_lock_refresh(session, lock);
@@ -1370,7 +1368,7 @@ static void *lock_thread_func(__unused void *p) {
         if (lock_thread_exit)
             break;
 
-        t = lock_timeout/2;
+        t = conf->lock_timeout/2;
         if (t <= 0)
             t = 1;
         sleep(t);
@@ -1398,10 +1396,7 @@ int file_exists_or_set_null(char **path) {
     return 0;
 }
 
-static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
-    UNUSED(data);
-    UNUSED(arg);
-    
+static int fusedav_opt_proc(__unused void *data, __unused const char *arg, int key, struct fuse_args *outargs) {
     switch (key) {
     case KEY_HELP:
         fprintf(stderr,
@@ -1499,9 +1494,9 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if (conf.lock_on_mount && create_lock() >= 0) {
+    if (conf.lock_on_mount && create_lock(conf.lock_timeout) >= 0) {
         int r;
-        if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, NULL)) < 0) {
+        if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, &conf)) < 0) {
             fprintf(stderr, "pthread_create(): %s\n", strerror(r));
             goto finish;
         }
