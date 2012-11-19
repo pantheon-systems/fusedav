@@ -86,7 +86,7 @@ int stat_cache_get(const char *fn, struct stat *st) {
     void *f;
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "CGET: %s\n", fn);
+        sd_journal_print(LOG_DEBUG, "CGET: %s", fn);
     
     assert(cache);
     
@@ -121,7 +121,7 @@ void stat_cache_set(const char *fn, const struct stat*st) {
     struct cache_entry *ce;
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "CSET: %s\n", fn);
+        sd_journal_print(LOG_DEBUG, "CSET: %s", fn);
     assert(cache);
     
     h = calc_hash(fn);

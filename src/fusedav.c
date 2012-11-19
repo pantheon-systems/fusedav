@@ -182,7 +182,7 @@ static int simple_propfind_with_redirect(
             break;
 
         if (debug)
-            sd_journal_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'\n", path, u->path);
+            sd_journal_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
 
         path = u->path;
     }
@@ -210,7 +210,7 @@ static int proppatch_with_redirect(
             break;
 
         if (debug)
-            sd_journal_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'\n", path, u->path);
+            sd_journal_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
 
         path = u->path;
     }
@@ -253,7 +253,7 @@ static void fill_stat(struct stat* st, const ne_prop_result_set *results, int is
     st->st_ctime = cd ? ne_iso8601_parse(cd) : 0;
 
     st->st_blocks = (st->st_size+511)/512;
-    /*sd_journal_print(LOG_DEBUG, "a: %u; m: %u; c: %u\n", st->st_atime, st->st_mtime, st->st_ctime);*/
+    /*sd_journal_print(LOG_DEBUG, "a: %u; m: %u; c: %u", st->st_atime, st->st_mtime, st->st_ctime);*/
 
     st->st_mode &= ~mask;
 
@@ -332,7 +332,7 @@ static int dav_readdir(
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "getdir(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "getdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -344,7 +344,7 @@ static int dav_readdir(
     if (dir_cache_enumerate(path, getdir_cache_callback, &f) < 0) {
 
         if (debug)
-            sd_journal_print(LOG_DEBUG, "DIR-CACHE-MISS\n");
+            sd_journal_print(LOG_DEBUG, "DIR-CACHE-MISS");
 
         if (!(session = session_get(1)))
             return -EIO;
@@ -353,7 +353,7 @@ static int dav_readdir(
 
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
             dir_cache_finish(path, 2);
-            sd_journal_print(LOG_ERR, "PROPFIND failed: %s\n", ne_get_error(session));
+            sd_journal_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
             return -ENOENT;
         }
 
@@ -388,11 +388,11 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     } else {
         if (debug)
-            sd_journal_print(LOG_DEBUG, "STAT-CACHE-MISS\n");
+            sd_journal_print(LOG_DEBUG, "STAT-CACHE-MISS");
 
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_invalidate(path);
-            sd_journal_print(LOG_ERR, "PROPFIND failed: %s\n", ne_get_error(session));
+            sd_journal_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
             return -ENOENT;
         }
 
@@ -403,7 +403,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 static int dav_getattr(const char *path, struct stat *stbuf) {
     path = path_cvt(path);
     if (debug)
-        sd_journal_print(LOG_DEBUG, "getattr(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "getattr(%s)", path);
     return get_stat(path, stbuf);
 }
 
@@ -415,7 +415,7 @@ static int dav_unlink(const char *path) {
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "unlink(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "unlink(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -427,7 +427,7 @@ static int dav_unlink(const char *path) {
         return -EISDIR;
 
     if (ne_delete(session, path)) {
-        sd_journal_print(LOG_ERR, "DELETE failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
         return -ENOENT;
     }
 
@@ -446,7 +446,7 @@ static int dav_rmdir(const char *path) {
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "rmdir(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "rmdir(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -460,7 +460,7 @@ static int dav_rmdir(const char *path) {
     snprintf(fn, sizeof(fn), "%s/", path);
 
     if (ne_delete(session, fn)) {
-        sd_journal_print(LOG_ERR, "DELETE failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
         return -ENOENT;
     }
 
@@ -477,7 +477,7 @@ static int dav_mkdir(const char *path, __unused mode_t mode) {
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "mkdir(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "mkdir(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -485,7 +485,7 @@ static int dav_mkdir(const char *path, __unused mode_t mode) {
     snprintf(fn, sizeof(fn), "%s/", path);
 
     if (ne_mkcol(session, fn)) {
-        sd_journal_print(LOG_ERR, "MKCOL failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "MKCOL failed: %s", ne_get_error(session));
         return -ENOENT;
     }
 
@@ -506,7 +506,7 @@ static int dav_rename(const char *from, const char *to) {
     to = path_cvt(to);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "rename(%s, %s)\n", from, to);
+        sd_journal_print(LOG_DEBUG, "rename(%s, %s)", from, to);
 
     if (!(session = session_get(1))) {
         r = -EIO;
@@ -522,7 +522,7 @@ static int dav_rename(const char *from, const char *to) {
     }
 
     if (ne_move(session, 1, from, to)) {
-        sd_journal_print(LOG_ERR, "MOVE failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "MOVE failed: %s", ne_get_error(session));
         r = -ENOENT;
         goto finish;
     }
@@ -548,7 +548,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "release(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "release(%s)", path);
 
     if (!(session = session_get(1))) {
         r = -EIO;
@@ -556,7 +556,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     }
 
     if (!(f = file_cache_get(path))) {
-        sd_journal_print(LOG_DEBUG, "release() called for closed file\n");
+        sd_journal_print(LOG_DEBUG, "release() called for closed file");
         r = -EFAULT;
         goto finish;
     }
@@ -580,7 +580,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
 
     path = path_cvt(path);
     if (debug)
-        sd_journal_print(LOG_DEBUG, "fsync(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "fsync(%s)", path);
 
     if (!(session = session_get(1))) {
         r = -EIO;
@@ -588,7 +588,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
     }
 
     if (!(f = file_cache_get(path))) {
-        sd_journal_print(LOG_DEBUG, "fsync() called for closed file\n");
+        sd_journal_print(LOG_DEBUG, "fsync() called for closed file");
         r = -EFAULT;
         goto finish;
     }
@@ -613,7 +613,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
     path = path_cvt(path);
     if (debug)
-        sd_journal_print(LOG_DEBUG, "mknod(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "mknod(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -628,7 +628,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     unlink(tempfile);
 
     if (ne_put(session, path, fd)) {
-        sd_journal_print(LOG_ERR, "mknod:PUT failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "mknod:PUT failed: %s", ne_get_error(session));
         close(fd);
         return -EACCES;
     }
@@ -645,7 +645,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     void *f;
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "open(%s)\n", path);
+        sd_journal_print(LOG_DEBUG, "open(%s)", path);
 
     path = path_cvt(path);
 
@@ -664,10 +664,10 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, _
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "read(%s, %lu+%lu)\n", path, (unsigned long) offset, (unsigned long) size);
+        sd_journal_print(LOG_DEBUG, "read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if (!(f = file_cache_get(path))) {
-        sd_journal_print(LOG_WARNING, "read() called for closed file\n");
+        sd_journal_print(LOG_WARNING, "read() called for closed file");
         r = -EFAULT;
         goto finish;
     }
@@ -691,10 +691,10 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "write(%s, %lu+%lu)\n", path, (unsigned long) offset, (unsigned long) size);
+        sd_journal_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if (!(f = file_cache_get(path))) {
-        sd_journal_print(LOG_WARNING, "write() called for closed file\n");
+        sd_journal_print(LOG_WARNING, "write() called for closed file");
         r = -EFAULT;
         goto finish;
     }
@@ -720,14 +720,14 @@ static int dav_truncate(const char *path, ne_off_t size) {
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "truncate(%s, %lu)\n", path, (unsigned long) size);
+        sd_journal_print(LOG_DEBUG, "truncate(%s, %lu)", path, (unsigned long) size);
 
     if (!(session = session_get(1)))
         r = -EIO;
         goto finish;
 
     if (!(f = file_cache_get(path))) {
-        sd_journal_print(LOG_WARNING, "truncate() called for closed file\n");
+        sd_journal_print(LOG_WARNING, "truncate() called for closed file");
         r = -EFAULT;
         goto finish;
     }
@@ -757,7 +757,7 @@ static int dav_utime(const char *path, struct utimbuf *buf) {
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "utime(%s, %lu, %lu)\n", path, (unsigned long) buf->actime, (unsigned long) buf->modtime);
+        sd_journal_print(LOG_DEBUG, "utime(%s, %lu, %lu)", path, (unsigned long) buf->actime, (unsigned long) buf->modtime);
 
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
@@ -770,7 +770,7 @@ static int dav_utime(const char *path, struct utimbuf *buf) {
     }
 
     if (proppatch_with_redirect(session, path, ops)) {
-        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
         r = -ENOTSUP;
         goto finish;
     }
@@ -855,7 +855,7 @@ static int dav_listxattr(
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "listxattr(%s, .., %lu)\n", path, (unsigned long) size);
+        sd_journal_print(LOG_DEBUG, "listxattr(%s, .., %lu)", path, (unsigned long) size);
 
     if (list) {
         l.list = list;
@@ -879,7 +879,7 @@ static int dav_listxattr(
         return -EIO;
 
     if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, NULL, listxattr_propfind_callback, &l) != NE_OK) {
-        sd_journal_print(LOG_ERR, "PROPFIND failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
         return -EIO;
     }
 
@@ -991,7 +991,7 @@ static int dav_getxattr(
     name = fix_xattr(name);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)\n", path, name, (unsigned long) size);
+        sd_journal_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0)
         return -ENOATTR;
@@ -1017,7 +1017,7 @@ static int dav_getxattr(
         return -EIO;
 
     if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, props, getxattr_propfind_callback, &g) != NE_OK) {
-        sd_journal_print(LOG_ERR, "PROPFIND failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
         return -EIO;
     }
 
@@ -1049,7 +1049,7 @@ static int dav_setxattr(
     name = fix_xattr(name);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "setxattr(%s, %s)\n", path, name);
+        sd_journal_print(LOG_DEBUG, "setxattr(%s, %s)", path, name);
 
     if (flags) {
         r = ENOTSUP;
@@ -1087,7 +1087,7 @@ static int dav_setxattr(
     }
 
     if (proppatch_with_redirect(session, path, ops)) {
-        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
         r = -ENOTSUP;
         goto finish;
     }
@@ -1114,7 +1114,7 @@ static int dav_removexattr(const char *path, const char *name) {
     name = fix_xattr(name);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "removexattr(%s, %s)\n", path, name);
+        sd_journal_print(LOG_DEBUG, "removexattr(%s, %s)", path, name);
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
         r = -ENOATTR;
@@ -1136,7 +1136,7 @@ static int dav_removexattr(const char *path, const char *name) {
     }
 
     if (proppatch_with_redirect(session, path, ops)) {
-        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
         r = -ENOTSUP;
         goto finish;
     }
@@ -1159,7 +1159,7 @@ static int dav_chmod(const char *path, mode_t mode) {
     path = path_cvt(path);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "chmod(%s, %04o)\n", path, mode);
+        sd_journal_print(LOG_DEBUG, "chmod(%s, %04o)", path, mode);
 
     ops[0].name = &executable;
     ops[0].type = ne_propset;
@@ -1172,7 +1172,7 @@ static int dav_chmod(const char *path, mode_t mode) {
     }
 
     if (proppatch_with_redirect(session, path, ops)) {
-        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
         r = -ENOTSUP;
         goto finish;
     }
@@ -1227,14 +1227,14 @@ static int setup_signal_handlers(void) {
         sigaction(SIGINT, &sa, NULL) == -1 ||
         sigaction(SIGTERM, &sa, NULL) == -1) {
 
-        sd_journal_print(LOG_CRIT, "Cannot set exit signal handlers: %s\n", strerror(errno));
+        sd_journal_print(LOG_CRIT, "Cannot set exit signal handlers: %s", strerror(errno));
         return -1;
     }
 
     sa.sa_handler = SIG_IGN;
 
     if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        sd_journal_print(LOG_CRIT, "Cannot set ignored signals: %s\n", strerror(errno));
+        sd_journal_print(LOG_CRIT, "Cannot set ignored signals: %s", strerror(errno));
         return -1;
     }
 
@@ -1242,7 +1242,7 @@ static int setup_signal_handlers(void) {
     sa.sa_handler = empty_handler;
 
     if (sigaction(SIGUSR1, &sa, NULL) == -1) {
-        sd_journal_print(LOG_CRIT, "Cannot set user signals: %s\n", strerror(errno));
+        sd_journal_print(LOG_CRIT, "Cannot set user signals: %s", strerror(errno));
         return -1;
     }
 
@@ -1285,7 +1285,7 @@ static int create_lock(int lock_timeout) {
     lock->owner = strdup(owner);
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Acquiring lock...\n");
+        sd_journal_print(LOG_DEBUG, "Acquiring lock...");
 
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
@@ -1300,14 +1300,14 @@ static int create_lock(int lock_timeout) {
             break;
 
         if (debug)
-            sd_journal_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'\n", lock->uri.path, u->path);
+            sd_journal_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", lock->uri.path, u->path);
 
         free(lock->uri.path);
         lock->uri.path = strdup(u->path);
     }
 
     if (ret) {
-        sd_journal_print(LOG_ERR, "LOCK failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "LOCK failed: %s", ne_get_error(session));
         ne_lock_destroy(lock);
         lock = NULL;
         return -1;
@@ -1330,10 +1330,10 @@ static int remove_lock(void) {
         return -1;
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Removing lock...\n");
+        sd_journal_print(LOG_DEBUG, "Removing lock...");
 
     if (ne_unlock(session, lock)) {
-        sd_journal_print(LOG_ERR, "UNLOCK failed: %s\n", ne_get_error(session));
+        sd_journal_print(LOG_ERR, "UNLOCK failed: %s", ne_get_error(session));
         return -1;
     }
 
@@ -1346,7 +1346,7 @@ static void *lock_thread_func(void *p) {
     sigset_t block;
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "lock_thread entering\n");
+        sd_journal_print(LOG_DEBUG, "lock_thread entering");
 
     if (!(session = session_get(1)))
         return NULL;
@@ -1366,7 +1366,7 @@ static void *lock_thread_func(void *p) {
         pthread_sigmask(SIG_UNBLOCK, &block, NULL);
 
         if (r) {
-            sd_journal_print(LOG_ERR, "LOCK refresh failed: %s\n", ne_get_error(session));
+            sd_journal_print(LOG_ERR, "LOCK refresh failed: %s", ne_get_error(session));
             break;
         }
 
@@ -1380,7 +1380,7 @@ static void *lock_thread_func(void *p) {
     }
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "lock_thread exiting\n");
+        sd_journal_print(LOG_DEBUG, "lock_thread exiting");
 
     return NULL;
 }
@@ -1391,13 +1391,13 @@ int file_exists_or_set_null(char **path) {
     if ((file = fopen(*path, "r"))) {
         fclose(file);
         if (debug)
-            sd_journal_print(LOG_DEBUG, "file_exists_or_set_null(%s): found\n", *path);
+            sd_journal_print(LOG_DEBUG, "file_exists_or_set_null(%s): found", *path);
         return 0;
     }
     free(*path);
     *path = NULL;
     if (debug)
-        sd_journal_print(LOG_DEBUG, "file_exists_or_set_null(%s): not found\n", *path);
+        sd_journal_print(LOG_DEBUG, "file_exists_or_set_null(%s): not found", *path);
     return 0;
 }
 
@@ -1457,17 +1457,17 @@ int main(int argc, char *argv[]) {
     int fail = 0;
 
     if (ne_sock_init()) {
-        sd_journal_print(LOG_CRIT, "Failed to initialize libneon.\n");
+        sd_journal_print(LOG_CRIT, "Failed to initialize libneon.");
         ++fail;
     }
 
     if (!ne_has_support(NE_FEATURE_SSL)) {
-        sd_journal_print(LOG_CRIT, "fusedav requires libneon built with SSL.\n");
+        sd_journal_print(LOG_CRIT, "fusedav requires libneon built with SSL.");
         ++fail;
     }
 
     if (!ne_has_support(NE_FEATURE_TS_SSL)) {
-        sd_journal_print(LOG_CRIT, "fusedav requires libneon built with TS_SSL.\n");
+        sd_journal_print(LOG_CRIT, "fusedav requires libneon built with TS_SSL.");
         ++fail;
     }
 
@@ -1486,83 +1486,83 @@ int main(int argc, char *argv[]) {
     memset(&conf, 0, sizeof(conf));
 
     if (!fuse_opt_parse(&args, &conf, fusedav_opts, fusedav_opt_proc) < 0) {
-        sd_journal_print(LOG_CRIT, "FUSE could not parse options.\n");
+        sd_journal_print(LOG_CRIT, "FUSE could not parse options.");
         goto finish;
     }
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Parsed options.\n");
+        sd_journal_print(LOG_DEBUG, "Parsed options.");
 
     debug = conf.debug;
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Debug mode enabled.\n");
+        sd_journal_print(LOG_DEBUG, "Debug mode enabled.");
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
-        sd_journal_print(LOG_CRIT, "FUSE could not parse the command line.\n");
+        sd_journal_print(LOG_CRIT, "FUSE could not parse the command line.");
         goto finish;
     }
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Parsed command line.\n");
+        sd_journal_print(LOG_DEBUG, "Parsed command line.");
 
     if (!conf.uri) {
-        sd_journal_print(LOG_CRIT, "Missing the required URI argument.\n");
+        sd_journal_print(LOG_CRIT, "Missing the required URI argument.");
         goto finish;
     }
 
     if (session_set_uri(conf.uri, conf.username, conf.password, conf.client_certificate, conf.ca_certificate) < 0) {
-        sd_journal_print(LOG_CRIT, "Failed to initialize the session URI.\n");
+        sd_journal_print(LOG_CRIT, "Failed to initialize the session URI.");
         goto finish;
     }
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Set session URI and configuration.\n");
+        sd_journal_print(LOG_DEBUG, "Set session URI and configuration.");
 
     if (!(ch = fuse_mount(mountpoint, &args))) {
-        sd_journal_print(LOG_CRIT, "Failed to mount FUSE file system.\n");
+        sd_journal_print(LOG_CRIT, "Failed to mount FUSE file system.");
         goto finish;
     }
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Mounted the FUSE file system.\n");
+        sd_journal_print(LOG_DEBUG, "Mounted the FUSE file system.");
 
     if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), NULL))) {
-        sd_journal_print(LOG_CRIT, "Failed to create FUSE object.\n");
+        sd_journal_print(LOG_CRIT, "Failed to create FUSE object.");
         goto finish;
     }
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Created the FUSE object.\n");
+        sd_journal_print(LOG_DEBUG, "Created the FUSE object.");
 
     if (conf.lock_on_mount && create_lock(conf.lock_timeout) >= 0) {
         int r;
         if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, &conf)) < 0) {
-            sd_journal_print(LOG_CRIT, "pthread_create(): %s\n", strerror(r));
+            sd_journal_print(LOG_CRIT, "pthread_create(): %s", strerror(r));
             goto finish;
         }
 
         lock_thread_running = 1;
         if (debug)
-            sd_journal_print(LOG_DEBUG, "Acquired lock.\n");
+            sd_journal_print(LOG_DEBUG, "Acquired lock.");
     }
 
     if (conf.nodaemon) {
         if (debug)
-            sd_journal_print(LOG_DEBUG, "Running in foreground (skipping daemonization).\n");
+            sd_journal_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
     }
     else {
         if (debug)
-            sd_journal_print(LOG_DEBUG, "Attempting to daemonize.\n");
+            sd_journal_print(LOG_DEBUG, "Attempting to daemonize.");
         if (fuse_daemonize(/* run in foreground */ 0) < 0) {
-            sd_journal_print(LOG_CRIT, "Failed to daemonize.\n");
+            sd_journal_print(LOG_CRIT, "Failed to daemonize.");
             goto finish;
         }
     }
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Entering main FUSE loop.\n");
+        sd_journal_print(LOG_DEBUG, "Entering main FUSE loop.");
     if (fuse_loop_mt(fuse) < 0) {
-        sd_journal_print(LOG_CRIT, "Error occurred while trying to enter main FUSE loop.\n");
+        sd_journal_print(LOG_CRIT, "Error occurred while trying to enter main FUSE loop.");
         goto finish;
     }
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Exiting cleanly.\n");
+        sd_journal_print(LOG_DEBUG, "Exiting cleanly.");
 
     ret = 0;
 
@@ -1575,37 +1575,37 @@ finish:
         ne_lockstore_destroy(lock_store);
 
         if (debug)
-            sd_journal_print(LOG_DEBUG, "Freed lock.\n");
+            sd_journal_print(LOG_DEBUG, "Freed lock.");
     }
 
     if (ch != NULL) {
         if (debug)
-            sd_journal_print(LOG_DEBUG, "Unmounting: %s\n", mountpoint);
+            sd_journal_print(LOG_DEBUG, "Unmounting: %s", mountpoint);
         fuse_unmount(mountpoint, ch);
     }
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Unmounted.\n");
+        sd_journal_print(LOG_DEBUG, "Unmounted.");
 
     if (fuse)
         fuse_destroy(fuse);
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Destroyed FUSE object.\n");
+        sd_journal_print(LOG_DEBUG, "Destroyed FUSE object.");
 
     fuse_opt_free_args(&args);
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Freed arguments.\n");
+        sd_journal_print(LOG_DEBUG, "Freed arguments.");
 
     file_cache_close_all();
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Closed file cache.\n");
+        sd_journal_print(LOG_DEBUG, "Closed file cache.");
     
     cache_free();
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Freed cache.\n");
+        sd_journal_print(LOG_DEBUG, "Freed cache.");
 
     session_free();
     if (debug)
-        sd_journal_print(LOG_DEBUG, "Freed session.\n");
+        sd_journal_print(LOG_DEBUG, "Freed session.");
 
     return ret;
 }
