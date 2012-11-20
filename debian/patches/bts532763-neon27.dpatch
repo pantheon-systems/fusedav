@@ -1,0 +1,42 @@
+#! /bin/sh /usr/share/dpatch/dpatch-run
+## bts532763-neon27.dpatch by Sebastian Harl <tokkee@debian.org>
+##
+## DP: Added support for neon27.
+
+@DPATCH@
+
+diff a/src/filecache.c b/src/filecache.c
+--- a/src/filecache.c
++++ b/src/filecache.c
+@@ -233,8 +233,13 @@ fail:
+ }
+ 
+ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
+-
++#ifndef ne_get_range64
++#define NE_GET_RANGE ne_get_range
++    ne_content_range range;
++#else
++#define NE_GET_RANGE ne_get_range64
+     ne_content_range64 range;
++#endif
+     ne_session *session;
+ 
+     assert(fi);
+@@ -257,7 +262,7 @@ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
+     range.end = l-1;
+     range.total = 0;
+     
+-    if (ne_get_range64(session, fi->filename, &range, fi->fd) != NE_OK) {
++    if (NE_GET_RANGE(session, fi->filename, &range, fi->fd) != NE_OK) {
+         fprintf(stderr, "GET failed: %s\n", ne_get_error(session));
+         errno = ENOENT;
+         return -1;
+@@ -265,6 +270,7 @@ static int load_up_to_unlocked(struct file_info *fi, off_t l) {
+ 
+     fi->present = l;
+     return 0;
++#undef NE_GET_RANGE
+ }
+ 
+ int file_cache_read(void *f, char *buf, size_t size, off_t offset) {

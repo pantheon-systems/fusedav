@@ -1,3 +1,45 @@
+fusedav (0.2-3.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix installability on kfreebsd-*.  (Closes: #634678)
+
+ -- Robert Millan <rmh@debian.org>  Fri, 02 Dec 2011 19:31:10 +0000
+
+fusedav (0.2-3) unstable; urgency=low
+
+  * debian/control:
+    - Updated to standards-version 3.8.4 -- no changes.
+    - Build-depend on libneon27-gnutls-dev rather than libneon26-gnutls-dev.
+    - Let fusedav depend on ${misc:Depends} as suggested by debhelper.
+  * debian/rules:
+    - Use 'filter' rather than 'findstring' to make sure to match words rather
+      than substrings.
+  * debian/patches:
+    - Added bts532763-neon27, adding support for neon27; thanks to Andreas
+      Metzler for reporting this (Closes: #532763).
+    - Simplified ne_lfs -- check for NE_FEATURE_LFS only if ne_off_t is not
+      large enough for LFS; any other checks/defines are no longer required
+      for neon27.
+  * debian/README.source:
+    - Added generic instructions for dpatch.
+
+ -- Sebastian Harl <tokkee@debian.org>  Fri, 04 Jun 2010 16:28:53 +0200
+
+fusedav (0.2-2) unstable; urgency=low
+
+  * Fix ne_lfs.dpatch to work on 32bit systems as well (Closes: #428744).
+
+ -- Sebastian Harl <sh@tokkee.org>  Thu, 14 Jun 2007 19:41:36 +0100
+
+fusedav (0.2-1) unstable; urgency=low
+
+  * Initial release (Closes: #379147).
+  * Added manpage (fusedav.1).
+  * Added ne_lfs.dpatch: Fix the use of neon's built-in large file support on
+    64bit architectures.
+
+ -- Sebastian Harl <sh@tokkee.org>  Tue, 23 Jan 2007 15:47:24 +0100
+
 fusedav (0.2-1) unstable; urgency=low
 
   * Initial Release (Closes: #000000)

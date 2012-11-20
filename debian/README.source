@@ -1,0 +1,4 @@
+This package uses dpatch to manage all modifications to the upstream source.
+See /usr/share/doc/dpatch/README.source.gz for instructions how to generate
+the patched source, add a new modification, and remove an existing one.
+
