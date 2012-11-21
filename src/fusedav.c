@@ -49,10 +49,10 @@
 #include <ne_redirect.h>
 #include <ne_uri.h>
 
-#include <yaml.h>
-
 #include <fuse.h>
 
+#include <yaml.h>
+#include <leveldb/c.h>
 #include <systemd/sd-journal.h>
 
 #include "statcache.h"
@@ -98,6 +98,8 @@ struct fusedav_config {
     bool debug;
     bool nodaemon;
     bool noattributes;
+    char *cache_path;
+    leveldb_t *cache;
 };
 
 enum {
@@ -115,6 +117,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
+     FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("debug",                          debug, true),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("noattributes",                   noattributes, true),
@@ -129,6 +132,7 @@ static struct fuse_opt fusedav_opts[] = {
 
 static int get_stat(const char *path, struct stat *stbuf);
 int file_exists_or_set_null(char **path);
+int initialize_cache(struct fusedav_config *config);
 
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
@@ -355,7 +359,7 @@ static int dav_readdir(
 
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
             dir_cache_finish(path, 2);
-            sd_journal_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
+            sd_journal_print(LOG_WARNING, "PROPFIND failed: %s", ne_get_error(session));
             return -ENOENT;
         }
 
@@ -1487,9 +1491,45 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     return 1;
 }
 
+
+
+int initialize_cache(struct fusedav_config *config) {
+    char *error = NULL;
+    leveldb_cache_t *cache;
+    leveldb_options_t *options;
+    
+    // Check that a directory is set.
+    if (!config->cache_path) {
+        // @TODO: Use a mkdtemp-based path.
+        sd_journal_print(LOG_WARNING, "No cache path specified.");
+        return -EINVAL;
+    }
+
+    options = leveldb_options_create();
+
+    // Initialize LevelDB's own cache.
+    cache = leveldb_cache_create_lru(100 * 1024);
+    leveldb_options_set_cache(options, cache);
+
+    // Create the database if missing.
+    leveldb_options_set_create_if_missing(options, true);
+    leveldb_options_set_error_if_exists(options, false);
+
+    // Use a fusedav logger.
+    leveldb_options_set_info_log(options, NULL);
+
+    config->cache = leveldb_open(options, config->cache_path, &error);
+    if (error) {
+        sd_journal_print(LOG_ERR, "ERROR opening db: %s", error);
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
-    struct fusedav_config conf;
+    struct fusedav_config config;
     struct fuse_chan *ch;
     char *mountpoint;
     int ret = 1;
@@ -1524,18 +1564,26 @@ int main(int argc, char *argv[]) {
     if (setup_signal_handlers() < 0)
         goto finish;
 
-    memset(&conf, 0, sizeof(conf));
+    memset(&config, 0, sizeof(config));
 
-    if (!fuse_opt_parse(&args, &conf, fusedav_opts, fusedav_opt_proc) < 0) {
+    // Parse options.
+    if (!fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         sd_journal_print(LOG_CRIT, "FUSE could not parse options.");
         goto finish;
     }
+
+    // Apply debug mode.
+    debug = config.debug;
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "Debug mode enabled.");
+
     if (debug)
         sd_journal_print(LOG_DEBUG, "Parsed options.");
 
-    debug = conf.debug;
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "Debug mode enabled.");
+    if (initialize_cache(&config) < 0) {
+        sd_journal_print(LOG_CRIT, "Failed to initialize cache.");
+        goto finish;
+    }
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         sd_journal_print(LOG_CRIT, "FUSE could not parse the command line.");
@@ -1544,12 +1592,12 @@ int main(int argc, char *argv[]) {
     if (debug)
         sd_journal_print(LOG_DEBUG, "Parsed command line.");
 
-    if (!conf.uri) {
+    if (!config.uri) {
         sd_journal_print(LOG_CRIT, "Missing the required URI argument.");
         goto finish;
     }
 
-    if (session_set_uri(conf.uri, conf.username, conf.password, conf.client_certificate, conf.ca_certificate) < 0) {
+    if (session_set_uri(config.uri, config.username, config.password, config.client_certificate, config.ca_certificate) < 0) {
         sd_journal_print(LOG_CRIT, "Failed to initialize the session URI.");
         goto finish;
     }
@@ -1563,16 +1611,16 @@ int main(int argc, char *argv[]) {
     if (debug)
         sd_journal_print(LOG_DEBUG, "Mounted the FUSE file system.");
 
-    if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), &conf))) {
+    if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), &config))) {
         sd_journal_print(LOG_CRIT, "Failed to create FUSE object.");
         goto finish;
     }
     if (debug)
         sd_journal_print(LOG_DEBUG, "Created the FUSE object.");
 
-    if (conf.lock_on_mount && create_lock(conf.lock_timeout) >= 0) {
+    if (config.lock_on_mount && create_lock(config.lock_timeout) >= 0) {
         int r;
-        if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, &conf)) < 0) {
+        if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, &config)) < 0) {
             sd_journal_print(LOG_CRIT, "pthread_create(): %s", strerror(r));
             goto finish;
         }
@@ -1582,7 +1630,7 @@ int main(int argc, char *argv[]) {
             sd_journal_print(LOG_DEBUG, "Acquired lock.");
     }
 
-    if (conf.nodaemon) {
+    if (config.nodaemon) {
         if (debug)
             sd_journal_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
     }
