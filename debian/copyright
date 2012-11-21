@@ -1,3 +1,39 @@
+This package was debianized by Sebastian Harl <tokkee@debian.org> on
+Tue, 23 Jan 2007 15:47:24 +0100.
+
+It was downloaded from <http://0pointer.de/lennart/projects/fusedav/>.
+
+Upstream Author:
+	Lennart Poettering <mzshfrqni@0pointer.de>
+
+Copyright Holder:
+	Lennart Poettering <mzshfrqni@0pointer.de>
+
+License:
+
+	Copyright © 2006 Lennart Poettering <mzshfrqni@0pointer.de>
+
+	This package is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
+
+	This package is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this package; if not, write to the Free Software
+	Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301,
+	USA.
+
+On Debian systems, the complete text of the GNU General Public License
+can be found in `/usr/share/common-licenses/GPL'.
+
+The Debian packaging is © 2007-2010, Sebastian Harl <tokkee@debian.org> and
+is licensed under the GPL, see above.
+
 This package was debianized by Sebastien ESTIENNE <sebastien.estienne@gmail.com> on
 Tue, 28 Feb 2006 23:33:31 +0100
 

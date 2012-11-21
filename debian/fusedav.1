@@ -1,0 +1,59 @@
+.TH FUSEDAV 1 "August 24, 2006"
+
+.SH NAME
+fusedav \- mount WebDAV shares
+
+.SH SYNOPSIS
+\fBfusedav\fR [\fB-hDL\fR]
+        [\fB-t\fR \fIsecs\fR]
+        [\fB-u\fR \fIusername\fR] [\fB-p\fR \fIpassword\fR]
+        [\fB-o\fR \fIoptions\fR]
+        \fIURL mountpoint\fR
+
+.SH DESCRIPTION
+\fBfusedav\fR is a userspace filesystem driver that allows you to mount WebDAV
+shares. This way you can transparently edit and manage files on a remote
+server. As long as the \fBfusedav\fR process is running, the WebDAV share
+located at \fIURL\fR is accessible under \fImountpoint\fR.
+
+If username and password are required and you did not specify them on the
+command line you will be prompted as soon as you are trying to access the
+mounted share.
+
+.SH OPTIONS
+.TP
+\fB-h\fR
+Show summary of options.
+.TP
+\fB-D\fR
+Enable debug mode.
+.TP
+\fB-L\fR
+Lock the repository during mount. (Not properly supported on all servers, hence
+not enabled by default.)
+.TP
+\fB-t\fR \fIsecs\fR
+Set lock timeout to \fIsecs\fR seconds.
+.TP
+\fB-u\fR \fIusername\fR
+Use \fIusername\fR for authentication if required.
+.TP
+\fB-p\fR \fIpassword\fR
+Use \fIpassword\fR for authentication if required.
+.TP
+\fB-o\fR \fIoptions\fR
+Pass \fIoptions\fR as additional mount options to FUSE.
+.TP
+\fIURL\fR
+Location of the WebDAV share.
+.TP
+\fImountpoint\fR
+Local mountpoint of the WebDAV share.
+
+.SH AUTHOR
+\fBfusedav\fR was written by Lennart Poettering <mzshfrqni (at) 0pointer (dot)
+de>.
+.PP
+This manual page was written by Sebastian Harl <tokkee@debian.org>, for the
+Debian project (but may be used by others).
+

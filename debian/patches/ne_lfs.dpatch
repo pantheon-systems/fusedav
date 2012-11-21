@@ -1,0 +1,19 @@
+#! /bin/sh /usr/share/dpatch/dpatch-run
+## ne_lfs.dpatch by Sebastian Harl <tokkee@debian.org>
+##
+## DP: Check for NE_FEATURE_LFS only if ne_off_t is not large enough for LFS.
+
+@DPATCH@
+
+diff a/src/fusedav.c b/src/fusedav.c
+--- a/src/fusedav.c
++++ b/src/fusedav.c
+@@ -1387,7 +1387,7 @@ int main(int argc, char *argv[]) {
+ 
+     if (!ne_has_support(NE_FEATURE_SSL) ||
+         !ne_has_support(NE_FEATURE_TS_SSL) ||
+-        !ne_has_support(NE_FEATURE_LFS)) {
++        !((sizeof(ne_off_t) >= 8) || ne_has_support(NE_FEATURE_LFS))) {
+         fprintf(stderr, "fusedav requires libneon built with SSL, SSL thread safety and LFS enabled.\n");
+         goto finish;
+     }
