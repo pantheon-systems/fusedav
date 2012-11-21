@@ -132,7 +132,8 @@ static struct fuse_opt fusedav_opts[] = {
 
 static int get_stat(const char *path, struct stat *stbuf);
 int file_exists_or_set_null(char **path);
-int initialize_cache(struct fusedav_config *config);
+int open_cache(struct fusedav_config *config);
+int close_cache(struct fusedav_config *config);
 
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
@@ -1493,7 +1494,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
 
 
 
-int initialize_cache(struct fusedav_config *config) {
+int open_cache(struct fusedav_config *config) {
     char *error = NULL;
     leveldb_cache_t *cache;
     leveldb_options_t *options;
@@ -1524,6 +1525,11 @@ int initialize_cache(struct fusedav_config *config) {
         return -1;
     }
 
+    return 0;
+}
+
+int close_cache(struct fusedav_config *config) {
+    leveldb_close(config->cache);
     return 0;
 }
 
@@ -1580,8 +1586,8 @@ int main(int argc, char *argv[]) {
     if (debug)
         sd_journal_print(LOG_DEBUG, "Parsed options.");
 
-    if (initialize_cache(&config) < 0) {
-        sd_journal_print(LOG_CRIT, "Failed to initialize cache.");
+    if (open_cache(&config) < 0) {
+        sd_journal_print(LOG_CRIT, "Failed to open cache.");
         goto finish;
     }
 
@@ -1695,6 +1701,9 @@ finish:
     session_free();
     if (debug)
         sd_journal_print(LOG_DEBUG, "Freed session.");
+
+    if (close_cache(&config) < 0)
+        sd_journal_print(LOG_ERR, "Failed to close the cache.");
 
     return ret;
 }
