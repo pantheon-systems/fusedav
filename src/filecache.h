@@ -25,17 +25,19 @@
 
 #include <ne_session.h>
 
+#include "statcache.h"
+
 void* file_cache_open(const char *path, int flags);
 void* file_cache_get(const char *path);
-void file_cache_unref(void *f);
+void file_cache_unref(stat_cache_t *cache, void *f);
 
 int file_cache_close(void *f);
 
 int file_cache_read(void *f, char *buf, size_t size, ne_off_t offset);
 int file_cache_write(void *f, const char *buf, size_t size, ne_off_t offset);
 int file_cache_truncate(void *f, ne_off_t s);
-int file_cache_sync(void *f);
-int file_cache_close_all(void);
+int file_cache_sync(stat_cache_t *cache, void *f);
+int file_cache_close_all(stat_cache_t *cache);
 
 ne_off_t file_cache_get_size(void *f);
 

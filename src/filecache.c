@@ -70,7 +70,7 @@ struct file_info {
 static struct file_info *files = NULL;
 static pthread_mutex_t files_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static int file_cache_sync_unlocked(struct file_info *fi);
+static int file_cache_sync_unlocked(stat_cache_t *cache, struct file_info *fi);
 
 void* file_cache_get(const char *path) {
     struct file_info *f, *r = NULL;
@@ -106,7 +106,7 @@ static void file_cache_free_unlocked(struct file_info *fi) {
     free(fi);
 }
 
-void file_cache_unref(void *f) {
+void file_cache_unref(stat_cache_t *cache, void *f) {
     struct file_info *fi = f;
     assert(fi);
 
@@ -116,7 +116,7 @@ void file_cache_unref(void *f) {
     fi->ref--;
 
     if (!fi->ref && fi->dead) {
-        file_cache_sync_unlocked(fi);
+        file_cache_sync_unlocked(cache, fi);
         file_cache_free_unlocked(fi);
     }
 
@@ -340,7 +340,7 @@ int file_cache_truncate(void *f, ne_off_t s) {
     return r;
 }
 
-int file_cache_sync_unlocked(struct file_info *fi) {
+int file_cache_sync_unlocked(stat_cache_t *cache, struct file_info *fi) {
     int r = -1;
     ne_session *session;
 
@@ -373,8 +373,8 @@ int file_cache_sync_unlocked(struct file_info *fi) {
         goto finish;
     }
 
-    stat_cache_invalidate(fi->filename);
-    dir_cache_invalidate_parent(fi->filename);
+    stat_cache_delete(cache, fi->filename);
+    stat_cache_delete_parent(cache, fi->filename);
 
     r = 0;
 
@@ -383,19 +383,19 @@ finish:
     return r;
 }
 
-int file_cache_sync(void *f) {
+int file_cache_sync(stat_cache_t *cache, void *f) {
     struct file_info *fi = f;
     int r = -1;
     assert(fi);
 
     pthread_mutex_lock(&fi->mutex);
-    r = file_cache_sync_unlocked(fi);
+    r = file_cache_sync_unlocked(cache, fi);
     pthread_mutex_unlock(&fi->mutex);
 
     return r;
 }
 
-int file_cache_close_all(void) {
+int file_cache_close_all(stat_cache_t *cache) {
     int r = 0;
 
     pthread_mutex_lock(&files_mutex);
@@ -409,7 +409,7 @@ int file_cache_close_all(void) {
 
         pthread_mutex_unlock(&files_mutex);
         file_cache_close(fi);
-        file_cache_unref(fi);
+        file_cache_unref(cache, fi);
         pthread_mutex_lock(&files_mutex);
     }
 

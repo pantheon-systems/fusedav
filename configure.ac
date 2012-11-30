@@ -111,7 +111,8 @@ AC_CHECK_LIB([systemd-journal], [sd_journal_send])
 AC_CHECK_LIB([yaml], [yaml_parser_initialize])
 AC_CHECK_LIB([leveldb], [leveldb_open])
 
-PKG_CHECK_MODULES(NEON, [ neon >= 0.27 ])
+#PKG_CHECK_MODULES(LIBYAML, libyaml >= 1.2 )
+PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 
 # LYNX documentation generation

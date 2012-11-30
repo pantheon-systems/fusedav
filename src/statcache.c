@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /***
   This file is part of fusedav.
 
@@ -29,6 +27,7 @@
 #include <malloc.h>
 #include <pthread.h>
 #include <assert.h>
+#include <errno.h>
 
 #include "statcache.h"
 #include "filecache.h"
@@ -38,321 +37,163 @@
 
 #include <systemd/sd-journal.h>
 
-#define CACHE_SIZE 2049
 #define CACHE_TIMEOUT 60
 
-struct dir_entry {
-    struct dir_entry *next;
-    char filename[];
+struct stat_cache_entry {
+    const char *key;
+    const struct stat_cache_value *value;
 };
 
-struct cache_entry {
-    struct {
-        int valid;
-        uint32_t hash;
-        char *filename;
-        time_t dead;
-        struct stat st;
-    } stat_info;
-
-    struct {
-        int valid, filling, in_use, valid2;
-        uint32_t hash;
-        char *filename;
-        struct dir_entry *entries, *entries2;
-        time_t dead, dead2;
-    } dir_info;
-};
-
-static struct cache_entry *cache = NULL;
-static pthread_mutex_t stat_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t dir_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static uint32_t calc_hash(const char *s) {
-    uint32_t h = 0;
-
-    for (; *s; s++) {
-        h ^= * (const uint8_t*) s;
-        h = (h << 8) | (h  >> 24);
-    }
-
-    return h;
+static size_t stat_cache_value_size(const struct stat_cache_value *value) {
+    return sizeof(value) + strlen(value->remote_generation) + 1; // Include NULL for remote gen.
 }
 
-int stat_cache_get(const char *fn, struct stat *st) {
-    uint32_t h;
-    struct cache_entry *ce;
-    int r = -1;
+void stat_cache_value_free(struct stat_cache_value *value) {
+    leveldb_free(value);
+}
+
+int stat_cache_open(stat_cache_t **c, char *storage_path) {
+#ifdef HAVE_LIBLEVELDB
+    char *error = NULL;
+    leveldb_cache_t *ldb_cache;
+    leveldb_options_t *options;
+
+    // Check that a directory is set.
+    if (!storage_path) {
+        // @TODO: Use a mkdtemp-based path.
+        sd_journal_print(LOG_WARNING, "No cache path specified.");
+        return -EINVAL;
+    }
+
+    options = leveldb_options_create();
+
+    // Initialize LevelDB's own cache.
+    ldb_cache = leveldb_cache_create_lru(100 * 1048576); // 100MB
+    leveldb_options_set_cache(options, ldb_cache);
+
+    // Create the database if missing.
+    leveldb_options_set_create_if_missing(options, true);
+    leveldb_options_set_error_if_exists(options, false);
+
+    // Use a fusedav logger.
+    leveldb_options_set_info_log(options, NULL);
+
+    *c = leveldb_open(options, storage_path, &error);
+    if (error) {
+        sd_journal_print(LOG_ERR, "ERROR opening db: %s", error);
+        return -1;
+    }
+#endif
+    return 0;
+}
+
+int stat_cache_close(stat_cache_t *c) {
+#ifdef HAVE_LIBLEVELDB
+    if (c != NULL)
+        leveldb_close(c);
+#endif
+    return 0;
+}
+
+struct timespec stat_cache_now(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
+        sd_journal_print(LOG_ERR, "clock_gettime error: %d", -errno);
+        // @TODO: Something to do here?
+    }
+    return now;
+}
+
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *key) {
+    struct stat_cache_value *value = NULL;
+    leveldb_readoptions_t *options;
+    size_t vallen;
+    char *errptr = NULL;
     void *f;
+    struct timespec now;
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "CGET: %s", fn);
-    
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
+        sd_journal_print(LOG_DEBUG, "CGET: %s", key);
 
-    pthread_mutex_lock(&stat_cache_mutex);
-    
-    if (ce->stat_info.valid &&
-        ce->stat_info.filename &&
-        ce->stat_info.hash == h &&
-        !strcmp(ce->stat_info.filename, fn) &&
-        time(NULL) <= ce->stat_info.dead) {
-        
-        *st = ce->stat_info.st;
+    options = leveldb_readoptions_create();
+    value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key), &vallen, &errptr);
+    leveldb_readoptions_destroy(options);
 
-        if ((f = file_cache_get(fn))) {
-            st->st_size = file_cache_get_size(f);
-            file_cache_unref(f);
-        }
-
-        r = 0;
+    if (errptr != NULL) {
+        sd_journal_print(LOG_ERR, "leveldb_get error: %s", errptr);
+        free(errptr);
+        return NULL;
     }
 
-    pthread_mutex_unlock(&stat_cache_mutex);
+    if (!value) {
+        if (debug)
+            sd_journal_print(LOG_DEBUG, "stat_cache_get miss on key: %s", key);
+        return NULL;
+    }
+
+    now = stat_cache_now();
+
+    if (value->local_generation.tv_sec >= now.tv_sec - CACHE_TIMEOUT) {
+        // @TODO: Don't rely on file cache for this.
+        if ((f = file_cache_get(key))) {
+            value->st.st_size = file_cache_get_size(f);
+            file_cache_unref(cache, f);
+        }
+    }
+
+    return value;
+}
+
+int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache_value *value) {
+    leveldb_writeoptions_t *options;
+    char *errptr = NULL;
+    int r = 0;
+
+    assert(value);
+
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "CSET: %s", key);
+
+    if (clock_gettime(CLOCK_MONOTONIC, &value->local_generation) < 0) {
+        sd_journal_print(LOG_ERR, "clock_gettime error: %d", -errno);
+        r = -errno;
+    }
+
+    options = leveldb_writeoptions_create();
+    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, stat_cache_value_size(value), &errptr);
+    leveldb_writeoptions_destroy(options);
     
+    if (errptr != NULL) {
+        sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        free(errptr);
+        r = -1;
+    }
+
     return r;
 }
 
-void stat_cache_set(const char *fn, const struct stat *st) {
-    uint32_t h;
-    struct cache_entry *ce;
+int stat_cache_delete(stat_cache_t *cache, const char *key) {
+    leveldb_writeoptions_t *options;
+    int r = 0;
+    char *errptr = NULL;
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "CSET: %s", fn);
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
+    options = leveldb_writeoptions_create();
+    leveldb_delete(cache, options, key, strlen(key), &errptr);
+    leveldb_writeoptions_destroy(options);
 
-    pthread_mutex_lock(&stat_cache_mutex);
-
-    if (!ce->stat_info.filename || ce->stat_info.hash != h || strcmp(ce->stat_info.filename, fn)) {
-        free(ce->stat_info.filename);
-        ce->stat_info.filename = strdup(fn);
-        ce->stat_info.hash = h;
+    if (errptr != NULL) {
+        sd_journal_print(LOG_ERR, "leveldb_delete error: %s", errptr);
+        free(errptr);
+        r = -1;
     }
-        
-    ce->stat_info.st = *st;
-    ce->stat_info.dead = time(NULL)+CACHE_TIMEOUT;
-    ce->stat_info.valid = 1;
-
-    pthread_mutex_unlock(&stat_cache_mutex);
-}
-
-void stat_cache_invalidate(const char*fn) {
-    uint32_t h;
-    struct cache_entry *ce;
-
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-
-    pthread_mutex_lock(&stat_cache_mutex);
-
-    ce->stat_info.valid = 0;
-    free(ce->stat_info.filename);
-    ce->stat_info.filename = NULL;
-    
-    pthread_mutex_unlock(&stat_cache_mutex);
-}
-
-static void free_dir_entries(struct dir_entry *de) {
-
-    while (de) {
-        struct dir_entry *next = de->next;
-        free(de);
-        de = next;
-    }
-}
-
-
-void dir_cache_begin(const char *fn) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL, *de2 = NULL;
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-
-    if (!ce->dir_info.filling) {
-        
-        if (!ce->dir_info.filename || ce->dir_info.hash != h || strcmp(ce->dir_info.filename, fn)) {
-            free(ce->dir_info.filename);
-            ce->dir_info.filename = strdup(fn);
-            ce->dir_info.hash = h;
-
-            de = ce->dir_info.entries;
-            ce->dir_info.entries = NULL;
-            ce->dir_info.valid = 0;
-        }
-
-        de2 = ce->dir_info.entries2;
-        ce->dir_info.entries2 = NULL;
-        ce->dir_info.valid2 = 0;
-        ce->dir_info.filling = 1;
-    }
-    
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
-    free_dir_entries(de2);
-}
-
-void dir_cache_finish(const char *fn, int success) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL;
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.filling &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn)) {
-
-        assert(!ce->dir_info.valid2);
-
-        if (success) {
-            
-            ce->dir_info.valid2 = 1;
-            ce->dir_info.filling = 0;
-            ce->dir_info.dead2 = time(NULL)+CACHE_TIMEOUT;
-            
-            if (!ce->dir_info.in_use) {
-                de = ce->dir_info.entries;
-                ce->dir_info.entries = ce->dir_info.entries2;
-                ce->dir_info.entries2 = NULL;
-                ce->dir_info.dead = ce->dir_info.dead2;
-                ce->dir_info.valid2 = 0;
-                ce->dir_info.valid = 1;
-            }
-            
-        } else {
-            ce->dir_info.filling = 0;
-            de = ce->dir_info.entries2;
-            ce->dir_info.entries2 = NULL;
-        }
-    }
-
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
-}
-
-void dir_cache_add(const char *fn, const char *subdir) {
-    uint32_t h;
-    struct cache_entry *ce;
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.filling &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn)) {
-
-        struct dir_entry *n;
-
-        assert(!ce->dir_info.valid2);
-
-        n = malloc(sizeof(struct dir_entry) + strlen(subdir) + 1);
-        assert(n);
-
-        strcpy(n->filename, subdir);
-        
-        n->next = ce->dir_info.entries2;
-        ce->dir_info.entries2 = n;
-    }
-
-    pthread_mutex_unlock(&dir_cache_mutex);
-}
-
-int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *subdir, void *user), void *user) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL;
-    int r = -1;
-
-    assert(cache && f);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.valid &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn) &&
-        time(NULL) <= ce->dir_info.dead) {
-
-        ce->dir_info.in_use = 1;
-        pthread_mutex_unlock(&dir_cache_mutex);
-
-        for (de = ce->dir_info.entries; de; de = de->next)
-            f(fn, de->filename, user);
-
-        pthread_mutex_lock(&dir_cache_mutex);
-        ce->dir_info.in_use = 0;
-
-        if (ce->dir_info.valid2) {
-            de = ce->dir_info.entries;
-            ce->dir_info.entries = ce->dir_info.entries2;
-            ce->dir_info.entries2 = NULL;
-            ce->dir_info.dead = ce->dir_info.dead2;
-            ce->dir_info.valid2 = 0;
-            ce->dir_info.valid = 1;
-        }
-
-        r = 0;
-    }
-    
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
 
     return r;
-}   
-
-void dir_cache_invalidate(const char*fn) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL;
-    assert(cache && fn);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.valid &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn)) {
-
-        ce->dir_info.valid = 0;
-        de = ce->dir_info.entries;
-        ce->dir_info.entries = NULL;
-    }
-    
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
 }
 
-void dir_cache_invalidate_parent(const char *fn) {
+int stat_cache_delete_parent(stat_cache_t *cache, const char *key) {
     char *p;
 
-    if ((p = ne_path_parent(fn))) {
+    if ((p = ne_path_parent(key))) {
         int l = strlen(p);
 
         if (strcmp(p, "/") && l) {
@@ -360,35 +201,123 @@ void dir_cache_invalidate_parent(const char *fn) {
                 p[l-1] = 0;
         }
         
-        dir_cache_invalidate(p);
+        stat_cache_delete(cache, p);
         free(p);
     } else
-        dir_cache_invalidate(fn);
+        stat_cache_delete(cache, key);
+    return 0;
 }
 
-void cache_free(void) {
-    uint32_t h;
-    struct cache_entry *ce;
+static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
+    free(iter->key_prefix);
+    free(iter);
+}
 
-    if (!cache)
-        return;
+static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *key_prefix_arg) {
+    struct stat_cache_iterator *iter = NULL;
+    leveldb_readoptions_t *options;
 
-    for (h = 0, ce = cache; h < CACHE_SIZE; h++, ce++) {
-        free(ce->stat_info.filename);
-        free(ce->dir_info.filename);
-        free_dir_entries(ce->dir_info.entries);
-        free_dir_entries(ce->dir_info.entries2);
+    iter = malloc(sizeof(struct stat_cache_iterator));
+    iter->key_prefix = strdup(key_prefix_arg);
+    iter->key_prefix_len = strlen(iter->key_prefix);
+
+    sd_journal_print(LOG_DEBUG, "creating leveldb iterator");
+    options = leveldb_readoptions_create();
+    iter->ldb_iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
+
+    //sd_journal_print(LOG_DEBUG, "checking iterator validity");
+
+    //if (!leveldb_iter_valid(iter->ldb_iter)) {
+    //    sd_journal_print(LOG_ERR, "Initial LevelDB iterator is not valid.");
+    //    return NULL;
+    //}
+
+    sd_journal_print(LOG_DEBUG, "seeking");
+    leveldb_iter_seek(iter->ldb_iter, iter->key_prefix, iter->key_prefix_len);
+
+    return iter;
+}
+
+static struct stat_cache_entry *stat_cache_iter_pop(struct stat_cache_iterator *iter) {
+    struct stat_cache_entry *entry;
+    const struct stat_cache_value *value;
+    const char *key;
+    size_t klen, vlen;
+
+    assert(iter);
+
+    sd_journal_print(LOG_DEBUG, "checking iterator validity");
+
+    // If we've gone beyond the end of the dataset, quit.
+    if (!leveldb_iter_valid(iter->ldb_iter)) {
+        leveldb_iter_destroy(iter->ldb_iter);
+        return NULL;
     }
 
-    memset(cache, 0, sizeof(struct cache_entry)*CACHE_SIZE);
+    sd_journal_print(LOG_DEBUG, "fetching the key");
+
+    key = leveldb_iter_key(iter->ldb_iter, &klen);
+    sd_journal_print(LOG_DEBUG, "key: %s", key);
+
+    sd_journal_print(LOG_DEBUG, "fetched the key");
+
+    // If we've gone beyond the end of the prefix range, quit.
+    if (strncmp(key, iter->key_prefix, iter->key_prefix_len) != 0) {
+        leveldb_iter_destroy(iter->ldb_iter);
+        return NULL;
+    }
+
+    sd_journal_print(LOG_DEBUG, "fetching the value");
+
+    value = (const struct stat_cache_value *) leveldb_iter_value(iter->ldb_iter, &vlen);
+
+    entry = malloc(sizeof(struct stat_cache_entry));
+    entry->key = key;
+    entry->value = value;
+    leveldb_iter_next(iter->ldb_iter);
+    return entry;
 }
 
-void cache_alloc(void) {
-    
-    if (cache)
-        return;
+int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *key, const char *child_key, void *user), void *user) {
+    struct stat_cache_iterator *iter;
+    struct stat_cache_entry *entry;
+    bool found_entries = false;
 
-    cache = malloc(sizeof(struct cache_entry)*CACHE_SIZE);
-    assert(cache);
-    memset(cache, 0, sizeof(struct cache_entry)*CACHE_SIZE);
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", key_prefix);
+
+    iter = stat_cache_iter_init(cache, key_prefix);
+    sd_journal_print(LOG_DEBUG, "iterator initialized");
+
+    while (entry = stat_cache_iter_pop(iter)) {
+        f(entry->key, entry->key, user);
+        found_entries = true;
+        free(entry);
+    }
+    stat_cache_iterator_free(iter);
+    sd_journal_print(LOG_DEBUG, "done iterating");
+
+    if (!found_entries)
+        return -1;
+
+    return 0;
+}
+
+int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, struct timespec min_time) {
+    struct stat_cache_iterator *iter;
+    struct stat_cache_entry *entry;
+
+    iter = stat_cache_iter_init(cache, key_prefix);
+    entry = stat_cache_iter_pop(iter);
+    while (entry != NULL) {
+        if (memcmp(&min_time, &entry->value->local_generation, sizeof(struct timespec)) > 0) {
+            stat_cache_delete(cache, entry->key);
+        }
+        free(entry);
+        entry = stat_cache_iter_pop(iter);
+    }
+    stat_cache_iterator_free(iter);
+
+    return 0;
 }

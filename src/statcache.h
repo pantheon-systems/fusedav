@@ -1,8 +1,6 @@
 #ifndef foostatcachehfoo
 #define foostatcachehfoo
 
-/* $Id$ */
-
 /***
   This file is part of fusedav.
 
@@ -22,19 +20,35 @@
 ***/
 
 #include <sys/stat.h>
+#include <leveldb/c.h>
 
-int stat_cache_get(const char *fn, struct stat *st);
-void stat_cache_set(const char *fn, const struct stat *st);
-void stat_cache_invalidate(const char*fn);
+typedef leveldb_t stat_cache_t;
 
-void dir_cache_invalidate(const char*fn);
-void dir_cache_invalidate_parent(const char *fn);
-void dir_cache_begin(const char *fn);
-void dir_cache_finish(const char *fn, int success);
-void dir_cache_add(const char *fn, const char *subdir);
-int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *subdir, void *user), void *user);
+struct stat_cache_iterator {
+    leveldb_iterator_t *ldb_iter;
+    char *key_prefix;
+    size_t key_prefix_len;
+};
 
-void cache_free(void);
-void cache_alloc(void);
+struct stat_cache_value {
+    struct stat st;
+    struct timespec local_generation;
+    char *remote_generation;
+};
+
+int stat_cache_open(stat_cache_t **cache, char *storage_path);
+int stat_cache_close(stat_cache_t *cache);
+
+struct timespec stat_cache_now(void);
+
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *key);
+int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache_value *value);
+void stat_cache_value_free(struct stat_cache_value *value);
+
+int stat_cache_delete(stat_cache_t *cache, const char* key);
+int stat_cache_delete_parent(stat_cache_t *cache, const char *key);
+int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, struct timespec min_time);
+
+int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *key, const char *child_key, void *user), void *user);
 
 #endif
