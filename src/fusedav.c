@@ -86,6 +86,7 @@ struct fill_info {
     const char *root;
 };
 
+// Access with struct fusedav_config *config = fuse_get_context()->private_data;
 struct fusedav_config {
     char *uri;
     char *username;
@@ -98,6 +99,7 @@ struct fusedav_config {
     bool debug;
     bool nodaemon;
     bool noattributes;
+    char *cache_path;
 };
 
 enum {
@@ -115,6 +117,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
+     FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("debug",                          debug, true),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("noattributes",                   noattributes, true),
