@@ -38,6 +38,8 @@ struct stat_cache_value {
     char remote_generation[RGEN_LEN];
 };
 
+int print_stat(struct stat *stbuf, const char *title);
+
 int stat_cache_open(stat_cache_t **cache, char *storage_path);
 int stat_cache_close(stat_cache_t *cache);
 

@@ -381,42 +381,25 @@ static int dav_readdir(
 }
 
 static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
-    struct stat_cache_value value;
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat *st = (struct stat*) userdata;
+    struct stat_cache_value value;
     char fn[PATH_MAX];
     int is_dir;
 
     if (debug)
         sd_journal_print(LOG_DEBUG, "getattr_propfind_callback");
 
-    assert(userdata);
-
-    value.st = *(struct stat *) userdata;
+    assert(st);
 
     strncpy(fn, u->path, sizeof(fn));
-    fn[sizeof(fn) - 1] = 0;
+    fn[sizeof(fn)-1] = 0;
     strip_trailing_slash(fn, &is_dir);
 
-    sd_journal_print(LOG_DEBUG, "Path: %s", fn);
+    fill_stat(st, results, is_dir);
 
-    fill_stat(&value.st, results, is_dir);
+    value.st = *st;
     stat_cache_value_set(config->cache, fn, &value);
-}
-
-static int print_stat(struct stat *stbuf) {
-    if (debug) {
-        sd_journal_print(LOG_DEBUG, "stat.st_mode=%o", stbuf->st_mode);
-        sd_journal_print(LOG_DEBUG, "stat.st_nlink=%ld", stbuf->st_nlink);
-        sd_journal_print(LOG_DEBUG, "stat.st_uid=%d", stbuf->st_uid);
-        sd_journal_print(LOG_DEBUG, "stat.st_gid=%d", stbuf->st_gid);
-        sd_journal_print(LOG_DEBUG, "stat.st_size=%ld", stbuf->st_size);
-        sd_journal_print(LOG_DEBUG, "stat.st_blksize=%ld", stbuf->st_blksize);
-        sd_journal_print(LOG_DEBUG, "stat.st_blocks=%ld", stbuf->st_blocks);
-        sd_journal_print(LOG_DEBUG, "stat.st_atime=%ld", stbuf->st_atime);
-        sd_journal_print(LOG_DEBUG, "stat.st_mtime=%ld", stbuf->st_mtime);
-        sd_journal_print(LOG_DEBUG, "stat.st_ctime=%ld", stbuf->st_ctime);
-    }
-    return 0;
 }
 
 static int get_stat(const char *path, struct stat *stbuf) {
@@ -424,12 +407,15 @@ static int get_stat(const char *path, struct stat *stbuf) {
     ne_session *session;
     struct stat_cache_value *response;
 
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
+
     if (!(session = session_get(1)))
         return -EIO;
 
     if ((response = stat_cache_value_get(config->cache, path))) {
         *stbuf = response->st;
-        print_stat(stbuf);
+        print_stat(stbuf, "get_stat from cache");
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
@@ -441,7 +427,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
         sd_journal_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
         return -ENOENT;
     }
-    print_stat(stbuf);
+    print_stat(stbuf, "get_stat from simple_propfind_with_redirect");
 
     return 0;
 }

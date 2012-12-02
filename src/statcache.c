@@ -44,6 +44,23 @@ struct stat_cache_entry {
     const struct stat_cache_value *value;
 };
 
+int print_stat(struct stat *stbuf, const char *title) {
+    if (debug) {
+        sd_journal_print(LOG_DEBUG, "stat: %s", title);
+        sd_journal_print(LOG_DEBUG, "  .st_mode=%o", stbuf->st_mode);
+        sd_journal_print(LOG_DEBUG, "  .st_nlink=%ld", stbuf->st_nlink);
+        sd_journal_print(LOG_DEBUG, "  .st_uid=%d", stbuf->st_uid);
+        sd_journal_print(LOG_DEBUG, "  .st_gid=%d", stbuf->st_gid);
+        sd_journal_print(LOG_DEBUG, "  .st_size=%ld", stbuf->st_size);
+        sd_journal_print(LOG_DEBUG, "  .st_blksize=%ld", stbuf->st_blksize);
+        sd_journal_print(LOG_DEBUG, "  .st_blocks=%ld", stbuf->st_blocks);
+        sd_journal_print(LOG_DEBUG, "  .st_atime=%ld", stbuf->st_atime);
+        sd_journal_print(LOG_DEBUG, "  .st_mtime=%ld", stbuf->st_mtime);
+        sd_journal_print(LOG_DEBUG, "  .st_ctime=%ld", stbuf->st_ctime);
+    }
+    return 0;
+}
+
 void stat_cache_value_free(struct stat_cache_value *value) {
     leveldb_free(value);
 }
@@ -112,7 +129,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
         sd_journal_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
-    value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key), &vallen, &errptr);
+    value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
 
     if (errptr != NULL) {
@@ -149,6 +166,7 @@ int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache
 
     if (debug)
         sd_journal_print(LOG_DEBUG, "CSET: %s", key);
+        print_stat(&value->st, "CSET");
 
     if (clock_gettime(CLOCK_MONOTONIC, &value->local_generation) < 0) {
         sd_journal_print(LOG_ERR, "clock_gettime error: %d", -errno);
@@ -165,6 +183,10 @@ int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache
         r = -1;
     }
 
+    value = stat_cache_value_get(cache, key);
+    if (value == NULL)
+        sd_journal_print(LOG_ERR, "item just written not readable");
+
     return r;
 }
 
@@ -174,7 +196,7 @@ int stat_cache_delete(stat_cache_t *cache, const char *key) {
     char *errptr = NULL;
 
     options = leveldb_writeoptions_create();
-    leveldb_delete(cache, options, key, strlen(key), &errptr);
+    leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
     leveldb_writeoptions_destroy(options);
 
     if (errptr != NULL) {
@@ -215,7 +237,7 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
 
     iter = malloc(sizeof(struct stat_cache_iterator));
     iter->key_prefix = strdup(key_prefix_arg);
-    iter->key_prefix_len = strlen(iter->key_prefix);
+    iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
     sd_journal_print(LOG_DEBUG, "creating leveldb iterator");
     options = leveldb_readoptions_create();
