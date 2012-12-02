@@ -330,7 +330,7 @@ static void getdir_cache_callback(
 
     h = ne_path_unescape(fn);
 
-    sd_journal_print(LOG_DEBUG, "getdir_cache_callback fn: %s", h);
+    //sd_journal_print(LOG_DEBUG, "getdir_cache_callback fn: %s", h);
 
     f->filler(f->buf, h, NULL, 0);
     free(h);
@@ -413,14 +413,15 @@ static int get_stat(const char *path, struct stat *stbuf) {
     ne_session *session;
     struct stat_cache_value *response;
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
+    //if (debug)
+    //    sd_journal_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
 
     if ((response = stat_cache_value_get(config->cache, path))) {
         *stbuf = response->st;
+        free(response)
         //print_stat(stbuf, "get_stat from cache");
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
@@ -440,8 +441,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
 static int dav_getattr(const char *path, struct stat *stbuf) {
     path = path_cvt(path);
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "getattr(%s)", path);
+    //if (debug)
+    //    sd_journal_print(LOG_DEBUG, "getattr(%s)", path);
     return get_stat(path, stbuf);
 }
 
@@ -1063,8 +1064,8 @@ static int dav_getxattr(
     path = path_cvt(path);
     name = fix_xattr(name);
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
+    //if (debug)
+    //    sd_journal_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0)
         return -ENOATTR;

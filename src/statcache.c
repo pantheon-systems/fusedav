@@ -125,8 +125,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
     void *f;
     struct timespec now;
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "CGET: %s", key);
+    //if (debug)
+    //    sd_journal_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
@@ -282,7 +282,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     //sd_journal_print(LOG_DEBUG, "fetching the key");
 
     key = leveldb_iter_key(iter->ldb_iter, &klen);
-    sd_journal_print(LOG_DEBUG, "fetched key: %s", key);
+    //sd_journal_print(LOG_DEBUG, "fetched key: %s", key);
 
     //sd_journal_print(LOG_DEBUG, "fetched the key");
 
@@ -343,8 +343,8 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) 
     while ((entry = stat_cache_iter_current(iter))) {
         // Skip the callback for the entry that exactly matches the key prefix. 
         if (found_entries > 0) {
-            sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
-            sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
+            //sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
+            //sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
             f(key_prefix, entry->key + iter->key_prefix_len, user);
         }
         ++found_entries;
