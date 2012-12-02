@@ -144,6 +144,10 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
         return NULL;
     }
 
+    if (vallen != sizeof(struct stat_cache_value)) {
+        sd_journal_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+    }
+
     now = stat_cache_now();
 
     if (value->local_generation.tv_sec >= now.tv_sec - CACHE_TIMEOUT) {
@@ -153,6 +157,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
             file_cache_unref(cache, f);
         }
     }
+
+    print_stat(&value->st, "CGET");
 
     return value;
 }
@@ -174,7 +180,7 @@ int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache
     }
 
     options = leveldb_writeoptions_create();
-    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(value), &errptr);
+    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
     leveldb_writeoptions_destroy(options);
     
     if (errptr != NULL) {
@@ -300,7 +306,7 @@ static struct stat_cache_entry *stat_cache_iter_pop(struct stat_cache_iterator *
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *key, const char *child_key, void *user), void *user) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
-    bool found_entries = false;
+    unsigned found_entries = 0;
 
     if (debug)
         sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", key_prefix);
@@ -309,14 +315,17 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) 
     sd_journal_print(LOG_DEBUG, "iterator initialized");
 
     while (entry = stat_cache_iter_pop(iter)) {
-        f(entry->key, entry->key, user);
-        found_entries = true;
+        // Skip the callback for the entry that exactly matches the key prefix. 
+        if (found_entries > 0)
+            f(entry->key, entry->key, user);
+        ++found_entries;
         free(entry);
     }
     stat_cache_iterator_free(iter);
     sd_journal_print(LOG_DEBUG, "done iterating");
 
-    if (!found_entries)
+    // Ignore the entry that exactly matches the key prefix.
+    if (found_entries <= 1)
         return -1;
 
     return 0;
