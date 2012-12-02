@@ -22,6 +22,8 @@
 #include <sys/stat.h>
 #include <leveldb/c.h>
 
+#define RGEN_LEN 128
+
 typedef leveldb_t stat_cache_t;
 
 struct stat_cache_iterator {
@@ -33,7 +35,7 @@ struct stat_cache_iterator {
 struct stat_cache_value {
     struct stat st;
     struct timespec local_generation;
-    char *remote_generation;
+    char remote_generation[RGEN_LEN];
 };
 
 int stat_cache_open(stat_cache_t **cache, char *storage_path);

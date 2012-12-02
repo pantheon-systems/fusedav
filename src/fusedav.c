@@ -386,13 +386,18 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     char fn[PATH_MAX];
     int is_dir;
 
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "getattr_propfind_callback");
+
     assert(userdata);
 
     value.st = *(struct stat *) userdata;
 
     strncpy(fn, u->path, sizeof(fn));
-    fn[sizeof(fn)-1] = 0;
+    fn[sizeof(fn) - 1] = 0;
     strip_trailing_slash(fn, &is_dir);
+
+    sd_journal_print(LOG_DEBUG, "Path: %s", fn);
 
     fill_stat(&value.st, results, is_dir);
     stat_cache_value_set(config->cache, fn, &value);

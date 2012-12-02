@@ -44,10 +44,6 @@ struct stat_cache_entry {
     const struct stat_cache_value *value;
 };
 
-static size_t stat_cache_value_size(const struct stat_cache_value *value) {
-    return sizeof(value) + strlen(value->remote_generation) + 1; // Include NULL for remote gen.
-}
-
 void stat_cache_value_free(struct stat_cache_value *value) {
     leveldb_free(value);
 }
@@ -160,7 +156,7 @@ int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache
     }
 
     options = leveldb_writeoptions_create();
-    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, stat_cache_value_size(value), &errptr);
+    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(value), &errptr);
     leveldb_writeoptions_destroy(options);
     
     if (errptr != NULL) {
