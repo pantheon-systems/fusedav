@@ -306,7 +306,9 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
         free(cache_path);
         //dir_cache_add(f->root, t);
         
-        f->filler(f->buf, h = ne_path_unescape(t), NULL, 0);
+        h = ne_path_unescape(t);
+        sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
+        f->filler(f->buf, h, NULL, 0);
         free(h);
     }
 
@@ -326,7 +328,11 @@ static void getdir_cache_callback(
 
     snprintf(path, sizeof(path), "%s/%s", !strcmp(root, "/") ? "" : root, fn);
 
-    f->filler(f->buf, h = ne_path_unescape(fn), NULL, 0);
+    h = ne_path_unescape(fn);
+
+    sd_journal_print(LOG_DEBUG, "getdir_cache_callback fn: %s", h);
+
+    f->filler(f->buf, h, NULL, 0);
     free(h);
 }
 
@@ -415,7 +421,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     if ((response = stat_cache_value_get(config->cache, path))) {
         *stbuf = response->st;
-        print_stat(stbuf, "get_stat from cache");
+        //print_stat(stbuf, "get_stat from cache");
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
@@ -1277,6 +1283,7 @@ static struct fuse_operations dav_oper = {
     .write       = dav_write,
     .release     = dav_release,
     .fsync       = dav_fsync,
+// @TODO: Make optional.
     .setxattr    = dav_setxattr,
     .getxattr    = dav_getxattr,
     .listxattr   = dav_listxattr,

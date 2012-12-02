@@ -158,7 +158,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
         }
     }
 
-    print_stat(&value->st, "CGET");
+    //print_stat(&value->st, "CGET");
 
     return value;
 }
@@ -172,7 +172,7 @@ int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache
 
     if (debug)
         sd_journal_print(LOG_DEBUG, "CSET: %s", key);
-        print_stat(&value->st, "CSET");
+        //print_stat(&value->st, "CSET");
 
     if (clock_gettime(CLOCK_MONOTONIC, &value->local_generation) < 0) {
         sd_journal_print(LOG_ERR, "clock_gettime error: %d", -errno);
@@ -189,9 +189,9 @@ int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache
         r = -1;
     }
 
-    value = stat_cache_value_get(cache, key);
-    if (value == NULL)
-        sd_journal_print(LOG_ERR, "item just written not readable");
+    //value = stat_cache_value_get(cache, key);
+    //if (value == NULL)
+    //    sd_journal_print(LOG_ERR, "item just written not readable");
 
     return r;
 }
@@ -263,7 +263,7 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
     return iter;
 }
 
-static struct stat_cache_entry *stat_cache_iter_pop(struct stat_cache_iterator *iter) {
+static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterator *iter) {
     struct stat_cache_entry *entry;
     const struct stat_cache_value *value;
     const char *key;
@@ -271,36 +271,60 @@ static struct stat_cache_entry *stat_cache_iter_pop(struct stat_cache_iterator *
 
     assert(iter);
 
-    sd_journal_print(LOG_DEBUG, "checking iterator validity");
+    //sd_journal_print(LOG_DEBUG, "checking iterator validity");
 
     // If we've gone beyond the end of the dataset, quit.
     if (!leveldb_iter_valid(iter->ldb_iter)) {
         leveldb_iter_destroy(iter->ldb_iter);
-        return NULL;
+        return false;
     }
 
-    sd_journal_print(LOG_DEBUG, "fetching the key");
+    //sd_journal_print(LOG_DEBUG, "fetching the key");
 
     key = leveldb_iter_key(iter->ldb_iter, &klen);
-    sd_journal_print(LOG_DEBUG, "key: %s", key);
+    sd_journal_print(LOG_DEBUG, "fetched key: %s", key);
 
-    sd_journal_print(LOG_DEBUG, "fetched the key");
+    //sd_journal_print(LOG_DEBUG, "fetched the key");
 
     // If we've gone beyond the end of the prefix range, quit.
-    if (strncmp(key, iter->key_prefix, iter->key_prefix_len) != 0) {
+    // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
+    if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
+        sd_journal_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
         leveldb_iter_destroy(iter->ldb_iter);
         return NULL;
     }
 
-    sd_journal_print(LOG_DEBUG, "fetching the value");
+    //sd_journal_print(LOG_DEBUG, "fetching the value");
 
     value = (const struct stat_cache_value *) leveldb_iter_value(iter->ldb_iter, &vlen);
 
     entry = malloc(sizeof(struct stat_cache_entry));
     entry->key = key;
     entry->value = value;
-    leveldb_iter_next(iter->ldb_iter);
     return entry;
+}
+
+static void stat_cache_iter_next(struct stat_cache_iterator *iter) {
+    leveldb_iter_next(iter->ldb_iter);
+}
+
+static void stat_cache_list_all(stat_cache_t *cache, const char *start) {
+    leveldb_iterator_t *iter = NULL;
+    leveldb_readoptions_t *options;
+    size_t klen;
+
+    options = leveldb_readoptions_create();
+    iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
+
+    leveldb_iter_seek(iter, start, strlen(start) + 1);
+
+    while (leveldb_iter_valid(iter)) {
+        sd_journal_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
+        leveldb_iter_next(iter);
+    }
+
+    leveldb_iter_destroy(iter);
 }
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *key, const char *child_key, void *user), void *user) {
@@ -311,18 +335,24 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) 
     if (debug)
         sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", key_prefix);
 
+    //stat_cache_list_all(cache, key_prefix);
+
     iter = stat_cache_iter_init(cache, key_prefix);
     sd_journal_print(LOG_DEBUG, "iterator initialized");
 
-    while (entry = stat_cache_iter_pop(iter)) {
+    while ((entry = stat_cache_iter_current(iter))) {
         // Skip the callback for the entry that exactly matches the key prefix. 
-        if (found_entries > 0)
-            f(entry->key, entry->key, user);
+        if (found_entries > 0) {
+            sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
+            sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
+            f(key_prefix, entry->key + iter->key_prefix_len, user);
+        }
         ++found_entries;
         free(entry);
+        stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
-    sd_journal_print(LOG_DEBUG, "done iterating");
+    sd_journal_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
 
     // Ignore the entry that exactly matches the key prefix.
     if (found_entries <= 1)
@@ -336,13 +366,12 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, struct 
     struct stat_cache_entry *entry;
 
     iter = stat_cache_iter_init(cache, key_prefix);
-    entry = stat_cache_iter_pop(iter);
-    while (entry != NULL) {
+    while ((entry = stat_cache_iter_current(iter))) {
         if (memcmp(&min_time, &entry->value->local_generation, sizeof(struct timespec)) > 0) {
             stat_cache_delete(cache, entry->key);
         }
         free(entry);
-        entry = stat_cache_iter_pop(iter);
+        stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
 
