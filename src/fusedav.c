@@ -302,17 +302,17 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
             t = fn;
 
         asprintf(&cache_path, "%s/%s", f->root, t);
-        stat_cache_value_set(config->cache, cache_path, &value, false);
+        stat_cache_value_set(config->cache, cache_path, &value);
         free(cache_path);
         //dir_cache_add(f->root, t);
-        
+
         h = ne_path_unescape(t);
         //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
         f->filler(f->buf, h, NULL, 0);
         free(h);
     }
 
-    //stat_cache_value_set(config->cache, fn, &value, false);
+    //stat_cache_value_set(config->cache, fn, &value);
 }
 
 static void getdir_cache_callback(
@@ -347,6 +347,7 @@ static int dav_readdir(
     struct fill_info f;
     ne_session *session;
     unsigned int min_generation;
+    time_t timestamp;
 
     path = path_cvt(path);
 
@@ -360,10 +361,15 @@ static int dav_readdir(
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
-    if (stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f) < 0) {
+    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f) < 0);
+    if (ret < 0) {
 
-        if (debug)
-            sd_journal_print(LOG_DEBUG, "DIR-CACHE-MISS");
+        timestamp = time(NULL);
+
+        if (debug) {
+            if (ret == -STAT_CACHE_OLD_DATA) sd_journal_print(LOG_DEBUG, "DIR-CACHE-TOO-OLD");
+            else sd_journal_print(LOG_DEBUG, "DIR-CACHE-MISS");
+        }
 
         if (!(session = session_get(1)))
             return -EIO;
@@ -377,6 +383,7 @@ static int dav_readdir(
             return -ENOENT;
         }
 
+        stat_cache_updated_children(config->cache, path, timestamp);
         // @TODO: Restore.
         stat_cache_delete_older(config->cache, path, min_generation);
 
@@ -409,7 +416,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     fill_stat(st, results, is_dir);
 
     value.st = *st;
-    stat_cache_value_set(config->cache, fn, &value, false);
+    stat_cache_value_set(config->cache, fn, &value);
 }
 
 static int get_stat(const char *path, struct stat *stbuf) {
@@ -700,8 +707,8 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     st.st_gid = getgid();
 
     value.st = st;
-    
-    stat_cache_value_set(config->cache, path, &value, false);
+
+    stat_cache_value_set(config->cache, path, &value);
 
     //stat_cache_invalidate(path);
     stat_cache_delete_parent(config->cache, path); // @TODO: Prepopulate this, too.
@@ -1263,7 +1270,7 @@ static int dav_chmod(const char *path, mode_t mode) {
     value = stat_cache_value_get(config->cache, path);
     if (value != NULL) {
         value->st.st_mode = mode;
-        stat_cache_value_set(config->cache, path, value, false);
+        stat_cache_value_set(config->cache, path, value);
         free(value);
     }
 

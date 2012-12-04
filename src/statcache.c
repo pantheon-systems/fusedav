@@ -5,12 +5,12 @@
   under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   fusedav is distributed in the hope that it will be useful, but WITHOUT
   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
   License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with fusedav; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
@@ -211,13 +211,58 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     return value;
 }
 
-int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, bool updating_children) {
+int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp) {
     leveldb_writeoptions_t *options;
-    leveldb_readoptions_t *roptions;
-    struct stat_cache_value *oldvalue;
+    char *key = NULL;
+    char *errptr = NULL;
+    int r = 0;
+
+    asprintf(&key, "updated_children:%s", path);
+
+    options = leveldb_writeoptions_create();
+    leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
+    leveldb_writeoptions_destroy(options);
+
+    if (errptr != NULL) {
+        sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        free(errptr);
+        r = -1;
+    }
+
+    return r;
+}
+
+time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
+    leveldb_readoptions_t *options;
+    char *key = NULL;
+    char *errptr = NULL;
+    time_t *value = NULL;
+    time_t r;
+    size_t vallen;
+
+    asprintf(&key, "updated_children:%s", path);
+
+    options = leveldb_readoptions_create();
+    value = (time_t *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
+    leveldb_readoptions_destroy(options);
+
+    if (errptr != NULL) {
+        sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        free(errptr);
+        r = -1;
+    }
+
+    if (value == NULL) return 0;
+
+    r = *value;
+    free(value);
+    return r;
+}
+
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value) {
+    leveldb_writeoptions_t *options;
     char *errptr = NULL;
     char *key;
-    size_t vallen;
     int r = 0;
 
     assert(value);
@@ -229,41 +274,6 @@ int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cach
         //sd_journal_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
         //print_stat(&value->st, "CSET");
 
-    roptions = leveldb_readoptions_create();
-    oldvalue = (struct stat_cache_value *) leveldb_get(cache, roptions, key, strlen(key) + 1, &vallen, &errptr);
-    leveldb_readoptions_destroy(roptions);
-    if (oldvalue) {
-        sd_journal_print(LOG_DEBUG, "Setting item that is already set: %s", key);
-    }
-
-    // Only track the timestamp of child updates for directories.
-    /*
-    if (S_ISDIR(value->st.st_mode)) {
-        if (updating_children) {
-            value->local_children_generation = time(NULL);
-        }
-        else {
-            // @TODO: Lock this lookup/replacement.
-    
-            roptions = leveldb_readoptions_create();
-            oldvalue = (struct stat_cache_value *) leveldb_get(cache, roptions, key, strlen(key) + 1, &vallen, &errptr);
-            leveldb_readoptions_destroy(roptions);
-    
-            if (errptr != NULL) {
-                sd_journal_print(LOG_ERR, "leveldb_set error in old value lookup: %s", errptr);
-                free(errptr);
-                free(key);
-                r = -1;
-            }
-    
-            if (oldvalue)
-                value->local_children_generation = oldvalue->local_children_generation;
-            else
-                value->local_children_generation = 0;
-        }
-    }
-    */
-
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
     leveldb_writeoptions_destroy(options);
@@ -271,7 +281,7 @@ int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cach
     //sd_journal_print(LOG_DEBUG, "Setting key: %s", key);
 
     free(key);
-    
+
     if (errptr != NULL) {
         sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
@@ -312,7 +322,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
             if (p[l-1] == '/')
                 p[l-1] = 0;
         }
-        
+
         stat_cache_delete(cache, p);
         free(p);
     } else
@@ -426,7 +436,7 @@ static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
                 free(value);
             }
         }
-        
+
         leveldb_iter_next(iter);
     }
 
@@ -437,17 +447,27 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     unsigned found_entries = 0;
+    time_t timestamp;
+    time_t current_time;
 
     //if (debug)
     //    sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
 
-    stat_cache_list_all(cache, path_prefix);
+    // stat_cache_list_all(cache, path_prefix);
+    timestamp = stat_cache_read_updated_children(cache, path_prefix);
+
+    current_time = time(NULL);
+    if (current_time - timestamp > CACHE_TIMEOUT) {
+        sd_journal_print(LOG_DEBUG, "cache value too old: %s %u", path_prefix, timestamp);
+        return -STAT_CACHE_OLD_DATA;
+    }
 
     iter = stat_cache_iter_init(cache, path_prefix);
     //sd_journal_print(LOG_DEBUG, "iterator initialized");
 
+
     while ((entry = stat_cache_iter_current(iter))) {
-        // Skip the callback for the entry that exactly matches the key prefix. 
+        // Skip the callback for the entry that exactly matches the key prefix.
         if (found_entries > 0) {
             //sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
             //sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
@@ -462,7 +482,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 
     // Ignore the entry that exactly matches the key prefix.
     if (found_entries <= 1)
-        return -1;
+        return -STAT_CACHE_NO_DATA;
 
     return 0;
 }

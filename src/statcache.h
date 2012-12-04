@@ -8,12 +8,12 @@
   under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   fusedav is distributed in the hope that it will be useful, but WITHOUT
   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
   License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with fusedav; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
@@ -23,6 +23,8 @@
 #include <leveldb/c.h>
 
 #define RGEN_LEN 128
+#define STAT_CACHE_OLD_DATA 2
+#define STAT_CACHE_NO_DATA 1
 
 typedef leveldb_t stat_cache_t;
 
@@ -50,7 +52,9 @@ int stat_cache_close(stat_cache_t *cache);
 struct timespec stat_cache_now(void);
 
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);
-int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, bool updating_children);
+int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp);
+time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path);
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value);
 void stat_cache_value_free(struct stat_cache_value *value);
 
 int stat_cache_delete(stat_cache_t *cache, const char* path);
