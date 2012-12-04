@@ -28,6 +28,8 @@
 #include <pthread.h>
 #include <assert.h>
 #include <errno.h>
+#include <stdbool.h>
+#include <sys/stat.h>
 
 #include "statcache.h"
 #include "filecache.h"
@@ -39,10 +41,22 @@
 
 #define CACHE_TIMEOUT 60
 
+static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 struct stat_cache_entry {
     const char *key;
     const struct stat_cache_value *value;
 };
+
+// @TODO: Write this to LevelDB and restore on restart or use a <start time>.<counter> tuple.
+unsigned int stat_cache_get_local_generation(void) {
+    static unsigned int counter = 0;
+    unsigned int ret;
+    pthread_mutex_lock(&counter_mutex);
+    ret = ++counter;
+    pthread_mutex_unlock(&counter_mutex);
+    return ret;
+}
 
 int print_stat(struct stat *stbuf, const char *title) {
     if (debug) {
@@ -154,17 +168,18 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     size_t vallen;
     char *errptr = NULL;
     void *f;
-    struct timespec now;
 
     key = path2key(path, false);
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "CGET: %s", key);
+    //if (debug)
+    //    sd_journal_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
     free(key);
+
+    //sd_journal_print(LOG_DEBUG, "Mode: %04o", value->st.st_mode);
 
     if (errptr != NULL) {
         sd_journal_print(LOG_ERR, "leveldb_get error: %s", errptr);
@@ -174,22 +189,21 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
     if (!value) {
         if (debug)
-            sd_journal_print(LOG_DEBUG, "stat_cache_get miss on path: %s", path);
+            sd_journal_print(LOG_DEBUG, "stat_cache_value_get miss on path: %s", path);
         return NULL;
     }
+
+    if (S_ISDIR(value->st.st_mode))
+        print_stat(&value->st, path);
 
     if (vallen != sizeof(struct stat_cache_value)) {
         sd_journal_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
-    now = stat_cache_now();
-
-    if (value->local_generation.tv_sec >= now.tv_sec - CACHE_TIMEOUT) {
-        // @TODO: Don't rely on file cache for this.
-        if ((f = file_cache_get(path))) {
-            value->st.st_size = file_cache_get_size(f);
-            file_cache_unref(cache, f);
-        }
+    // @TODO: Don't rely on file cache for this.
+    if ((f = file_cache_get(path))) {
+        value->st.st_size = file_cache_get_size(f);
+        file_cache_unref(cache, f);
     }
 
     //print_stat(&value->st, "CGET");
@@ -197,28 +211,65 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     return value;
 }
 
-int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value) {
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, bool updating_children) {
     leveldb_writeoptions_t *options;
+    leveldb_readoptions_t *roptions;
+    struct stat_cache_value *oldvalue;
     char *errptr = NULL;
     char *key;
+    size_t vallen;
     int r = 0;
 
     assert(value);
 
-    if (clock_gettime(CLOCK_MONOTONIC, &value->local_generation) < 0) {
-        sd_journal_print(LOG_ERR, "clock_gettime error: %d", -errno);
-        r = -errno;
-    }
+    value->local_generation = stat_cache_get_local_generation();
 
     key = path2key(path, false);
-
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "CSET: %s", key);
+    //if (debug)
+        //sd_journal_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
         //print_stat(&value->st, "CSET");
+
+    roptions = leveldb_readoptions_create();
+    oldvalue = (struct stat_cache_value *) leveldb_get(cache, roptions, key, strlen(key) + 1, &vallen, &errptr);
+    leveldb_readoptions_destroy(roptions);
+    if (oldvalue) {
+        sd_journal_print(LOG_DEBUG, "Setting item that is already set: %s", key);
+    }
+
+    // Only track the timestamp of child updates for directories.
+    /*
+    if (S_ISDIR(value->st.st_mode)) {
+        if (updating_children) {
+            value->local_children_generation = time(NULL);
+        }
+        else {
+            // @TODO: Lock this lookup/replacement.
+    
+            roptions = leveldb_readoptions_create();
+            oldvalue = (struct stat_cache_value *) leveldb_get(cache, roptions, key, strlen(key) + 1, &vallen, &errptr);
+            leveldb_readoptions_destroy(roptions);
+    
+            if (errptr != NULL) {
+                sd_journal_print(LOG_ERR, "leveldb_set error in old value lookup: %s", errptr);
+                free(errptr);
+                free(key);
+                r = -1;
+            }
+    
+            if (oldvalue)
+                value->local_children_generation = oldvalue->local_children_generation;
+            else
+                value->local_children_generation = 0;
+        }
+    }
+    */
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
     leveldb_writeoptions_destroy(options);
+
+    //sd_journal_print(LOG_DEBUG, "Setting key: %s", key);
+
     free(key);
     
     if (errptr != NULL) {
@@ -282,7 +333,7 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
     iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
-    sd_journal_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
+    //sd_journal_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
     options = leveldb_readoptions_create();
     iter->ldb_iter = leveldb_create_iterator(cache, options);
     leveldb_readoptions_destroy(options);
@@ -294,7 +345,7 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
     //    return NULL;
     //}
 
-    sd_journal_print(LOG_DEBUG, "seeking");
+    //sd_journal_print(LOG_DEBUG, "seeking");
     leveldb_iter_seek(iter->ldb_iter, iter->key_prefix, iter->key_prefix_len);
 
     return iter;
@@ -326,7 +377,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     // If we've gone beyond the end of the prefix range, quit.
     // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
     if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
-        sd_journal_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
+        //sd_journal_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
         leveldb_iter_destroy(iter->ldb_iter);
         return NULL;
     }
@@ -345,39 +396,55 @@ static void stat_cache_iter_next(struct stat_cache_iterator *iter) {
     leveldb_iter_next(iter->ldb_iter);
 }
 
-/*
-static void stat_cache_list_all(stat_cache_t *cache, const char *start) {
+static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
-    size_t klen;
+    const struct stat_cache_value *itervalue;
+    struct stat_cache_value *value;
+    size_t klen, vlen;
+    const char *iterkey;
+    char *key = path2key(path, true);
 
     options = leveldb_readoptions_create();
     iter = leveldb_create_iterator(cache, options);
     leveldb_readoptions_destroy(options);
 
-    leveldb_iter_seek(iter, start, strlen(start) + 1);
+    leveldb_iter_seek(iter, key, strlen(key) + 1);
+    free(key);
 
     while (leveldb_iter_valid(iter)) {
-        sd_journal_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
+        //sd_journal_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
+
+        itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
+        if (S_ISDIR(itervalue->st.st_mode)) {
+            iterkey = leveldb_iter_key(iter, &klen);
+            sd_journal_print(LOG_DEBUG, "Listing directory: %s", iterkey);
+
+            value = stat_cache_value_get(cache, key2path(iterkey));
+            if (value) {
+                sd_journal_print(LOG_DEBUG, "Direct get mode: %04o", value->st.st_mode);
+                free(value);
+            }
+        }
+        
         leveldb_iter_next(iter);
     }
 
     leveldb_iter_destroy(iter);
 }
-*/
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     unsigned found_entries = 0;
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
+    //if (debug)
+    //    sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
 
-    //stat_cache_list_all(cache, key_prefix);
+    stat_cache_list_all(cache, path_prefix);
 
     iter = stat_cache_iter_init(cache, path_prefix);
-    sd_journal_print(LOG_DEBUG, "iterator initialized");
+    //sd_journal_print(LOG_DEBUG, "iterator initialized");
 
     while ((entry = stat_cache_iter_current(iter))) {
         // Skip the callback for the entry that exactly matches the key prefix. 
@@ -391,7 +458,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
         stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
-    sd_journal_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
+    //sd_journal_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
 
     // Ignore the entry that exactly matches the key prefix.
     if (found_entries <= 1)
@@ -400,13 +467,13 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     return 0;
 }
 
-int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, struct timespec min_time) {
+int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned int minimum_local_generation) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
-        if (memcmp(&min_time, &entry->value->local_generation, sizeof(struct timespec)) > 0) {
+        if (entry->value->local_generation < minimum_local_generation) {
             stat_cache_delete(cache, key2path(entry->key));
         }
         free(entry);

@@ -302,17 +302,17 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
             t = fn;
 
         asprintf(&cache_path, "%s/%s", f->root, t);
-        stat_cache_value_set(config->cache, cache_path, &value);
+        stat_cache_value_set(config->cache, cache_path, &value, false);
         free(cache_path);
         //dir_cache_add(f->root, t);
         
         h = ne_path_unescape(t);
-        sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
+        //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
         f->filler(f->buf, h, NULL, 0);
         free(h);
     }
 
-    stat_cache_value_set(config->cache, fn, &value);
+    //stat_cache_value_set(config->cache, fn, &value, false);
 }
 
 static void getdir_cache_callback(
@@ -346,12 +346,12 @@ static int dav_readdir(
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct fill_info f;
     ne_session *session;
-    struct timespec min_time;
+    unsigned int min_generation;
 
     path = path_cvt(path);
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "getdir(%s)", path);
+    //if (debug)
+    //    sd_journal_print(LOG_DEBUG, "getdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -369,7 +369,7 @@ static int dav_readdir(
             return -EIO;
 
         //dir_cache_begin(path);
-        min_time = stat_cache_now();
+        min_generation = stat_cache_get_local_generation();
 
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
             //dir_cache_finish(path, 2);
@@ -377,7 +377,8 @@ static int dav_readdir(
             return -ENOENT;
         }
 
-        stat_cache_delete_older(config->cache, path, min_time);
+        // @TODO: Restore.
+        stat_cache_delete_older(config->cache, path, min_generation);
 
         //dir_cache_finish(path, 1);
     }
@@ -392,19 +393,23 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     char fn[PATH_MAX];
     int is_dir;
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "getattr_propfind_callback");
-
     assert(st);
 
     strncpy(fn, u->path, sizeof(fn));
-    fn[sizeof(fn)-1] = 0;
+    fn[sizeof(fn) - 1] = 0;
+
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "getattr_propfind_callback: %s", fn);
+
     strip_trailing_slash(fn, &is_dir);
+
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "stripped: %s (isdir: %d)", fn, is_dir);
 
     fill_stat(st, results, is_dir);
 
     value.st = *st;
-    stat_cache_value_set(config->cache, fn, &value);
+    stat_cache_value_set(config->cache, fn, &value, false);
 }
 
 static int get_stat(const char *path, struct stat *stbuf) {
@@ -696,7 +701,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
     value.st = st;
     
-    stat_cache_value_set(config->cache, path, &value);
+    stat_cache_value_set(config->cache, path, &value, false);
 
     //stat_cache_invalidate(path);
     stat_cache_delete_parent(config->cache, path); // @TODO: Prepopulate this, too.
@@ -1258,7 +1263,7 @@ static int dav_chmod(const char *path, mode_t mode) {
     value = stat_cache_value_get(config->cache, path);
     if (value != NULL) {
         value->st.st_mode = mode;
-        stat_cache_value_set(config->cache, path, value);
+        stat_cache_value_set(config->cache, path, value, false);
         free(value);
     }
 

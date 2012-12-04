@@ -35,11 +35,14 @@ struct stat_cache_iterator {
 
 struct stat_cache_value {
     struct stat st;
-    struct timespec local_generation;
+    unsigned int local_generation;
+    time_t local_children_generation;
     char remote_generation[RGEN_LEN];
 };
 
 int print_stat(struct stat *stbuf, const char *title);
+
+unsigned int stat_cache_get_local_generation(void);
 
 int stat_cache_open(stat_cache_t **cache, char *storage_path);
 int stat_cache_close(stat_cache_t *cache);
@@ -47,12 +50,12 @@ int stat_cache_close(stat_cache_t *cache);
 struct timespec stat_cache_now(void);
 
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);
-int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value);
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, bool updating_children);
 void stat_cache_value_free(struct stat_cache_value *value);
 
 int stat_cache_delete(stat_cache_t *cache, const char* path);
 int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
-int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, struct timespec min_time);
+int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned int minimum_local_generation);
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user);
 
