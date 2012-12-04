@@ -65,6 +65,36 @@ void stat_cache_value_free(struct stat_cache_value *value) {
     leveldb_free(value);
 }
 
+// Allocates a new string.
+static char *path2key(const char *path, bool prefix) {
+    char *key = NULL;
+    unsigned int depth = 0;
+    size_t pos = 0;
+
+    if (prefix)
+        ++depth;
+
+    while (path[pos]) {
+        if (path[pos] == '/')
+            ++depth;
+        ++pos;
+    }
+
+    asprintf(&key, "%u%s", depth, path);
+    return key;
+}
+
+// Does *not* allocate a new string.
+static const char *key2path(const char *key) {
+    size_t pos = 0;
+    while (key[pos]) {
+        if (key[pos] == '/')
+            return key + pos;
+        ++pos;
+    }
+    return NULL;
+}
+
 int stat_cache_open(stat_cache_t **c, char *storage_path) {
 #ifdef HAVE_LIBLEVELDB
     char *error = NULL;
@@ -117,20 +147,24 @@ struct timespec stat_cache_now(void) {
     return now;
 }
 
-struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *key) {
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path) {
     struct stat_cache_value *value = NULL;
+    char *key;
     leveldb_readoptions_t *options;
     size_t vallen;
     char *errptr = NULL;
     void *f;
     struct timespec now;
 
-    //if (debug)
-    //    sd_journal_print(LOG_DEBUG, "CGET: %s", key);
+    key = path2key(path, false);
+
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
+    free(key);
 
     if (errptr != NULL) {
         sd_journal_print(LOG_ERR, "leveldb_get error: %s", errptr);
@@ -140,7 +174,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
 
     if (!value) {
         if (debug)
-            sd_journal_print(LOG_DEBUG, "stat_cache_get miss on key: %s", key);
+            sd_journal_print(LOG_DEBUG, "stat_cache_get miss on path: %s", path);
         return NULL;
     }
 
@@ -152,7 +186,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
 
     if (value->local_generation.tv_sec >= now.tv_sec - CACHE_TIMEOUT) {
         // @TODO: Don't rely on file cache for this.
-        if ((f = file_cache_get(key))) {
+        if ((f = file_cache_get(path))) {
             value->st.st_size = file_cache_get_size(f);
             file_cache_unref(cache, f);
         }
@@ -163,25 +197,29 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *k
     return value;
 }
 
-int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache_value *value) {
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value) {
     leveldb_writeoptions_t *options;
     char *errptr = NULL;
+    char *key;
     int r = 0;
 
     assert(value);
-
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "CSET: %s", key);
-        //print_stat(&value->st, "CSET");
 
     if (clock_gettime(CLOCK_MONOTONIC, &value->local_generation) < 0) {
         sd_journal_print(LOG_ERR, "clock_gettime error: %d", -errno);
         r = -errno;
     }
 
+    key = path2key(path, false);
+
+    if (debug)
+        sd_journal_print(LOG_DEBUG, "CSET: %s", key);
+        //print_stat(&value->st, "CSET");
+
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
     leveldb_writeoptions_destroy(options);
+    free(key);
     
     if (errptr != NULL) {
         sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
@@ -189,21 +227,20 @@ int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache
         r = -1;
     }
 
-    //value = stat_cache_value_get(cache, key);
-    //if (value == NULL)
-    //    sd_journal_print(LOG_ERR, "item just written not readable");
-
     return r;
 }
 
-int stat_cache_delete(stat_cache_t *cache, const char *key) {
+int stat_cache_delete(stat_cache_t *cache, const char *path) {
     leveldb_writeoptions_t *options;
+    char *key;
     int r = 0;
     char *errptr = NULL;
 
+    key = path2key(path, false);
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
     leveldb_writeoptions_destroy(options);
+    free(key);
 
     if (errptr != NULL) {
         sd_journal_print(LOG_ERR, "leveldb_delete error: %s", errptr);
@@ -214,10 +251,10 @@ int stat_cache_delete(stat_cache_t *cache, const char *key) {
     return r;
 }
 
-int stat_cache_delete_parent(stat_cache_t *cache, const char *key) {
+int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     char *p;
 
-    if ((p = ne_path_parent(key))) {
+    if ((p = ne_path_parent(path))) {
         int l = strlen(p);
 
         if (strcmp(p, "/") && l) {
@@ -228,7 +265,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *key) {
         stat_cache_delete(cache, p);
         free(p);
     } else
-        stat_cache_delete(cache, key);
+        stat_cache_delete(cache, path);
     return 0;
 }
 
@@ -237,15 +274,15 @@ static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
     free(iter);
 }
 
-static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *key_prefix_arg) {
+static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *path_prefix) {
     struct stat_cache_iterator *iter = NULL;
     leveldb_readoptions_t *options;
 
     iter = malloc(sizeof(struct stat_cache_iterator));
-    iter->key_prefix = strdup(key_prefix_arg);
+    iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
     iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
-    sd_journal_print(LOG_DEBUG, "creating leveldb iterator");
+    sd_journal_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
     options = leveldb_readoptions_create();
     iter->ldb_iter = leveldb_create_iterator(cache, options);
     leveldb_readoptions_destroy(options);
@@ -308,6 +345,7 @@ static void stat_cache_iter_next(struct stat_cache_iterator *iter) {
     leveldb_iter_next(iter->ldb_iter);
 }
 
+/*
 static void stat_cache_list_all(stat_cache_t *cache, const char *start) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
@@ -326,18 +364,19 @@ static void stat_cache_list_all(stat_cache_t *cache, const char *start) {
 
     leveldb_iter_destroy(iter);
 }
+*/
 
-int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *key, const char *child_key, void *user), void *user) {
+int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     unsigned found_entries = 0;
 
     if (debug)
-        sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", key_prefix);
+        sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
 
     //stat_cache_list_all(cache, key_prefix);
 
-    iter = stat_cache_iter_init(cache, key_prefix);
+    iter = stat_cache_iter_init(cache, path_prefix);
     sd_journal_print(LOG_DEBUG, "iterator initialized");
 
     while ((entry = stat_cache_iter_current(iter))) {
@@ -345,7 +384,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) 
         if (found_entries > 0) {
             //sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
             //sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
-            f(key_prefix, entry->key + iter->key_prefix_len, user);
+            f(path_prefix, entry->key + iter->key_prefix_len, user);
         }
         ++found_entries;
         free(entry);
@@ -361,14 +400,14 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) 
     return 0;
 }
 
-int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, struct timespec min_time) {
+int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, struct timespec min_time) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 
-    iter = stat_cache_iter_init(cache, key_prefix);
+    iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         if (memcmp(&min_time, &entry->value->local_generation, sizeof(struct timespec)) > 0) {
-            stat_cache_delete(cache, entry->key);
+            stat_cache_delete(cache, key2path(entry->key));
         }
         free(entry);
         stat_cache_iter_next(iter);

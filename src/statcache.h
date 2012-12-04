@@ -26,6 +26,7 @@
 
 typedef leveldb_t stat_cache_t;
 
+// Used opaquely outside this library.
 struct stat_cache_iterator {
     leveldb_iterator_t *ldb_iter;
     char *key_prefix;
@@ -45,14 +46,14 @@ int stat_cache_close(stat_cache_t *cache);
 
 struct timespec stat_cache_now(void);
 
-struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *key);
-int stat_cache_value_set(stat_cache_t *cache, const char *key, struct stat_cache_value *value);
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value);
 void stat_cache_value_free(struct stat_cache_value *value);
 
-int stat_cache_delete(stat_cache_t *cache, const char* key);
-int stat_cache_delete_parent(stat_cache_t *cache, const char *key);
+int stat_cache_delete(stat_cache_t *cache, const char* path);
+int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
 int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, struct timespec min_time);
 
-int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *key, const char *child_key, void *user), void *user);
+int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user);
 
 #endif

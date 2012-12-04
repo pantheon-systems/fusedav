@@ -347,7 +347,6 @@ static int dav_readdir(
     struct fill_info f;
     ne_session *session;
     struct timespec min_time;
-    
 
     path = path_cvt(path);
 
@@ -421,7 +420,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     if ((response = stat_cache_value_get(config->cache, path))) {
         *stbuf = response->st;
-        free(response)
+        free(response);
         //print_stat(stbuf, "get_stat from cache");
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
