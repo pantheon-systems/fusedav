@@ -38,7 +38,7 @@ struct stat_cache_iterator {
 struct stat_cache_value {
     struct stat st;
     unsigned int local_generation;
-    time_t local_children_generation;
+    time_t updated;
     char remote_generation[RGEN_LEN];
 };
 
@@ -61,6 +61,6 @@ int stat_cache_delete(stat_cache_t *cache, const char* path);
 int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
 int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned int minimum_local_generation);
 
-int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user);
+int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
 
 #endif

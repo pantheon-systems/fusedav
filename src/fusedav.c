@@ -278,7 +278,6 @@ static char *strip_trailing_slash(char *fn, int *is_dir) {
 
 static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
     struct fill_info *f = userdata;
-    //struct stat st;
     char fn[PATH_MAX], *t;
     int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
@@ -294,7 +293,7 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
     fill_stat(&value.st, results, is_dir);
 
     if (strcmp(fn, f->root) && fn[0]) {
-        char *h;
+        //char *h;
 
         if ((t = strrchr(fn, '/')))
             t++;
@@ -304,15 +303,13 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
         asprintf(&cache_path, "%s/%s", f->root, t);
         stat_cache_value_set(config->cache, cache_path, &value);
         free(cache_path);
-        //dir_cache_add(f->root, t);
 
-        h = ne_path_unescape(t);
         //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
-        f->filler(f->buf, h, NULL, 0);
-        free(h);
+        // Send the data to FUSE.
+        //h = ne_path_unescape(t);
+        //f->filler(f->buf, h, NULL, 0);
+        //free(h);
     }
-
-    //stat_cache_value_set(config->cache, fn, &value);
 }
 
 static void getdir_cache_callback(
@@ -348,6 +345,10 @@ static int dav_readdir(
     ne_session *session;
     unsigned int min_generation;
     time_t timestamp;
+    time_t last_updated;
+    char *update_path = NULL;
+    bool needs_update;
+    int ret;
 
     path = path_cvt(path);
 
@@ -361,33 +362,54 @@ static int dav_readdir(
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
-    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f) < 0);
+    // First, attempt to hit the cache.
+    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, false);
     if (ret < 0) {
-
+        needs_update = true;
         timestamp = time(NULL);
 
         if (debug) {
-            if (ret == -STAT_CACHE_OLD_DATA) sd_journal_print(LOG_DEBUG, "DIR-CACHE-TOO-OLD");
-            else sd_journal_print(LOG_DEBUG, "DIR-CACHE-MISS");
+            if (ret == -STAT_CACHE_OLD_DATA) sd_journal_print(LOG_DEBUG, "DIR-CACHE-TOO-OLD: %s", path);
+            else sd_journal_print(LOG_DEBUG, "DIR-CACHE-MISS: %s", path);
         }
 
         if (!(session = session_get(1)))
             return -EIO;
 
-        //dir_cache_begin(path);
-        min_generation = stat_cache_get_local_generation();
+        // If we have *old* data in some form, attempt to freshen the cache.
+        if (ret == -STAT_CACHE_OLD_DATA) {
+            last_updated = stat_cache_read_updated_children(config->cache, path);
+            asprintf(&update_path, "%s?changes-since=%lu", path, last_updated);
 
-        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
-            //dir_cache_finish(path, 2);
-            sd_journal_print(LOG_WARNING, "PROPFIND failed: %s", ne_get_error(session));
-            return -ENOENT;
+            // TODO: PROPFIND: getdir_propfind_callback updated with deleted
+            if (simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) == NE_OK) {
+                sd_journal_print(LOG_DEBUG, "Freshen PROPFIND success");
+                needs_update = false;
+            }
+            else {
+                sd_journal_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
+            }
+            
+            free(update_path);
         }
 
-        stat_cache_updated_children(config->cache, path, timestamp);
-        // @TODO: Restore.
-        stat_cache_delete_older(config->cache, path, min_generation);
+        // If we had *no data* or freshening failed, rebuild the cache
+        // with a full PROPFIND.
+        if (needs_update) {
+            min_generation = stat_cache_get_local_generation();
+            if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
+                sd_journal_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
+                return -ENOENT;
+            }
+            stat_cache_delete_older(config->cache, path, min_generation);
+        }
 
-        //dir_cache_finish(path, 1);
+        // Mark the directory contents as updated.
+        stat_cache_updated_children(config->cache, path, timestamp);
+
+        // Output the new data, skipping any cache freshness checks
+        // (which should pass, anyway).
+        stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
     }
 
     return 0;
