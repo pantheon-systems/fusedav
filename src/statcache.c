@@ -194,8 +194,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
-    if (S_ISDIR(value->st.st_mode))
-        print_stat(&value->st, path);
+    //if (S_ISDIR(value->st.st_mode))
+    //    print_stat(&value->st, path);
 
     if (vallen != sizeof(struct stat_cache_value)) {
         sd_journal_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
@@ -422,42 +422,44 @@ static void stat_cache_iter_next(struct stat_cache_iterator *iter) {
     leveldb_iter_next(iter->ldb_iter);
 }
 
-//static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
-    //leveldb_iterator_t *iter = NULL;
-    //leveldb_readoptions_t *options;
-    //const struct stat_cache_value *itervalue;
-    //struct stat_cache_value *value;
-    //size_t klen, vlen;
-    //const char *iterkey;
-    //char *key = path2key(path, true);
+/*
+static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
+    leveldb_iterator_t *iter = NULL;
+    leveldb_readoptions_t *options;
+    const struct stat_cache_value *itervalue;
+    struct stat_cache_value *value;
+    size_t klen, vlen;
+    const char *iterkey;
+    char *key = path2key(path, true);
 
-    //options = leveldb_readoptions_create();
-    //iter = leveldb_create_iterator(cache, options);
-    //leveldb_readoptions_destroy(options);
+    options = leveldb_readoptions_create();
+    iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
 
-    //leveldb_iter_seek(iter, key, strlen(key) + 1);
-    //free(key);
+    leveldb_iter_seek(iter, key, strlen(key) + 1);
+    free(key);
 
-    //while (leveldb_iter_valid(iter)) {
-        ////sd_journal_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
+    while (leveldb_iter_valid(iter)) {
+        //sd_journal_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
 
-        //itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
-        //if (S_ISDIR(itervalue->st.st_mode)) {
-            //iterkey = leveldb_iter_key(iter, &klen);
-            //sd_journal_print(LOG_DEBUG, "Listing directory: %s", iterkey);
+        itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
+        if (S_ISDIR(itervalue->st.st_mode)) {
+            iterkey = leveldb_iter_key(iter, &klen);
+            sd_journal_print(LOG_DEBUG, "Listing directory: %s", iterkey);
 
-            //value = stat_cache_value_get(cache, key2path(iterkey));
-            //if (value) {
-                //sd_journal_print(LOG_DEBUG, "Direct get mode: %04o", value->st.st_mode);
-                //free(value);
-            //}
-        //}
+            value = stat_cache_value_get(cache, key2path(iterkey));
+            if (value) {
+                sd_journal_print(LOG_DEBUG, "Direct get mode: %04o", value->st.st_mode);
+                free(value);
+            }
+        }
 
-        //leveldb_iter_next(iter);
-    //}
+        leveldb_iter_next(iter);
+    }
 
-    //leveldb_iter_destroy(iter);
-//}
+    leveldb_iter_destroy(iter);
+}
+*/
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force) {
     struct stat_cache_iterator *iter;
@@ -469,7 +471,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     //if (debug)
     //    sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
 
-    // stat_cache_list_all(cache, path_prefix);
+    //stat_cache_list_all(cache, path_prefix);
     if (!force) {
         timestamp = stat_cache_read_updated_children(cache, path_prefix);
     
@@ -486,15 +488,12 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     }
 
     iter = stat_cache_iter_init(cache, path_prefix);
-    //sd_journal_print(LOG_DEBUG, "iterator initialized");
+    //sd_journal_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
 
     while ((entry = stat_cache_iter_current(iter))) {
-        // Skip the callback for the entry that exactly matches the key prefix.
-        if (found_entries > 0) {
-            //sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
-            //sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
-            f(path_prefix, entry->key + iter->key_prefix_len, user);
-        }
+        //sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
+        //sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
+        f(path_prefix, entry->key + iter->key_prefix_len, user);
         ++found_entries;
         free(entry);
         stat_cache_iter_next(iter);
@@ -503,7 +502,8 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     //sd_journal_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
 
     // Ignore the entry that exactly matches the key prefix.
-    if (found_entries <= 1)
+    // @TODO: Remove this?
+    if (found_entries == 0)
         return -STAT_CACHE_NO_DATA;
 
     return 0;

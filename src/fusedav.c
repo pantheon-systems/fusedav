@@ -305,7 +305,7 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
 
     if (strcmp(fn, f->root) && fn[0]) {
         //char *h;
-        //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
+        //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", fn);
 
         if ((t = strrchr(fn, '/')))
             t++;
@@ -313,6 +313,7 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
             t = fn;
 
         asprintf(&cache_path, "%s/%s", f->root, t);
+        //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback cache_path: %s", cache_path);
         if (is_deleted)
             stat_cache_delete(config->cache, cache_path);
         else
@@ -481,7 +482,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
         sd_journal_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
         return -ENOENT;
     }
-    print_stat(stbuf, "get_stat from simple_propfind_with_redirect");
+    //print_stat(stbuf, "get_stat from simple_propfind_with_redirect");
 
     return 0;
 }
@@ -699,11 +700,11 @@ finish:
 
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    struct stat_cache_value value;
+    //struct stat_cache_value value;
     char tempfile[PATH_MAX];
     int fd;
     ne_session *session;
-    struct stat st;
+    //struct stat st;
 
     path = path_cvt(path);
     if (debug)
@@ -1282,6 +1283,9 @@ static int dav_chmod(const char *path, mode_t mode) {
     ne_proppatch_operation ops[2];
     int r = 0;
 
+    if (config->noattributes)
+        return 0;
+
     assert(path);
 
     path = path_cvt(path);
@@ -1318,6 +1322,16 @@ finish:
     return r;
 }
 
+static int dav_chown(__unused const char *path, __unused uid_t u, __unused gid_t g) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+
+    if (config->noattributes)
+        return 0;
+
+    // @TODO: Implement.
+    return 0;
+}
+
 static struct fuse_operations dav_oper = {
     .getattr     = dav_getattr,
     .readdir     = dav_readdir,
@@ -1327,6 +1341,7 @@ static struct fuse_operations dav_oper = {
     .rmdir       = dav_rmdir,
     .rename      = dav_rename,
     .chmod       = dav_chmod,
+    .chown       = dav_chown,
     .truncate    = dav_truncate,
     .utimens     = dav_utimens,
     .open        = dav_open,
