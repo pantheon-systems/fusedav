@@ -228,7 +228,10 @@ int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t ti
     asprintf(&key, "updated_children:%s", path);
 
     options = leveldb_writeoptions_create();
-    leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
+    if (timestamp == 0)
+        leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
+    else
+        leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
     leveldb_writeoptions_destroy(options);
 
     if (errptr != NULL) {
@@ -333,9 +336,13 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
         }
 
         stat_cache_delete(cache, p);
+        stat_cache_updated_children(cache, p, time(NULL) - CACHE_TIMEOUT - 1);
         free(p);
-    } else
+    }
+    else {
         stat_cache_delete(cache, path);
+        stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1);
+    }
     return 0;
 }
 

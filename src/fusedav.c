@@ -63,6 +63,7 @@ const ne_propname query_properties[] = {
     { "DAV:", "getcontentlength" },
     { "DAV:", "getlastmodified" },
     { "DAV:", "creationdate" },
+    { "DAV:", "event" }, // @TODO: Progressive PROPFIND support.
     { NULL, NULL }
 };
 
@@ -222,14 +223,15 @@ static int proppatch_with_redirect(
 }
 
 
-static void fill_stat(struct stat *st, const ne_prop_result_set *results, int is_dir) {
-    const char *e, *gcl, *glm, *cd;
+static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *is_deleted, int is_dir) {
+    const char *e, *gcl, *glm, *cd, *ev;
     //const char *rt;
     //const ne_propname resourcetype = { "DAV:", "resourcetype" };
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
     const ne_propname creationdate = { "DAV:", "creationdate" };
+    const ne_propname event = { "DAV:", "event" };
 
     assert(st && results);
 
@@ -238,6 +240,14 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, int is
     gcl = ne_propset_value(results, &getcontentlength);
     glm = ne_propset_value(results, &getlastmodified);
     cd = ne_propset_value(results, &creationdate);
+
+    if (is_deleted != NULL) {
+        ev = ne_propset_value(results, &event);
+        if (ev != NULL) {
+            sd_journal_print(LOG_DEBUG, "DAV:event=%s", ev);
+            *is_deleted = (strcmp(ev, "destroyed") == 0);
+        }
+    }
 
     memset(st, 0, sizeof(struct stat));
 
@@ -283,6 +293,7 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     char *cache_path = NULL;
+    bool is_deleted;
 
     assert(f);
 
@@ -290,10 +301,11 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
     fn[sizeof(fn)-1] = 0;
     strip_trailing_slash(fn, &is_dir);
 
-    fill_stat(&value.st, results, is_dir);
+    fill_stat(&value.st, results, &is_deleted, is_dir);
 
     if (strcmp(fn, f->root) && fn[0]) {
         //char *h;
+        //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
 
         if ((t = strrchr(fn, '/')))
             t++;
@@ -301,10 +313,12 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
             t = fn;
 
         asprintf(&cache_path, "%s/%s", f->root, t);
-        stat_cache_value_set(config->cache, cache_path, &value);
+        if (is_deleted)
+            stat_cache_delete(config->cache, cache_path);
+        else
+            stat_cache_value_set(config->cache, cache_path, &value);
         free(cache_path);
 
-        //sd_journal_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", h);
         // Send the data to FUSE.
         //h = ne_path_unescape(t);
         //f->filler(f->buf, h, NULL, 0);
@@ -377,11 +391,11 @@ static int dav_readdir(
             return -EIO;
 
         // If we have *old* data in some form, attempt to freshen the cache.
-        if (ret == -STAT_CACHE_OLD_DATA) {
+        // @TODO: Only use with supporting servers.
+        if (false && ret == -STAT_CACHE_OLD_DATA) {
             last_updated = stat_cache_read_updated_children(config->cache, path);
             asprintf(&update_path, "%s?changes-since=%lu", path, last_updated);
 
-            // TODO: PROPFIND: getdir_propfind_callback updated with deleted
             if (simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) == NE_OK) {
                 sd_journal_print(LOG_DEBUG, "Freshen PROPFIND success");
                 needs_update = false;
@@ -435,7 +449,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     if (debug)
         sd_journal_print(LOG_DEBUG, "stripped: %s (isdir: %d)", fn, is_dir);
 
-    fill_stat(st, results, is_dir);
+    fill_stat(st, results, NULL, is_dir);
 
     value.st = *st;
     stat_cache_value_set(config->cache, fn, &value);
@@ -717,6 +731,8 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     close(fd);
 
     // Prepopulate stat cache.
+
+    /*
     st.st_mode = 040775;  // @TODO: Use the right mode data.
     st.st_nlink = 3;
     st.st_size = 0;
@@ -731,9 +747,10 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     value.st = st;
 
     stat_cache_value_set(config->cache, path, &value);
+    */
 
-    //stat_cache_invalidate(path);
-    stat_cache_delete_parent(config->cache, path); // @TODO: Prepopulate this, too.
+    stat_cache_delete(config->cache, path);
+    stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }

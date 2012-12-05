@@ -72,7 +72,7 @@ static pthread_mutex_t files_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static int file_cache_sync_unlocked(stat_cache_t *cache, struct file_info *fi);
 
-void* file_cache_get(const char *path) {
+void *file_cache_get(const char *path) {
     struct file_info *f, *r = NULL;
 
     pthread_mutex_lock(&files_mutex);
@@ -159,7 +159,7 @@ int file_cache_close(void *f) {
     return r;
 }
 
-void* file_cache_open(const char *path, int flags) {
+void *file_cache_open(const char *path, int flags) {
     struct file_info *fi = NULL;
     char tempfile[PATH_MAX];
     const char *length = NULL;
@@ -277,7 +277,7 @@ int file_cache_read(void *f, char *buf, size_t size, ne_off_t offset) {
 
     pthread_mutex_lock(&fi->mutex);
 
-    if (load_up_to_unlocked(fi, offset+size) < 0)
+    if (load_up_to_unlocked(fi, offset + size) < 0)
         goto finish;
 
     if ((r = pread(fi->fd, buf, size, offset)) < 0)
