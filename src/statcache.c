@@ -38,8 +38,6 @@
 
 #include <ne_uri.h>
 
-#include <systemd/sd-journal.h>
-
 #define CACHE_TIMEOUT 3
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;

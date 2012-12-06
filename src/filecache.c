@@ -42,8 +42,6 @@
 #include <ne_dates.h>
 #include <ne_basic.h>
 
-#include <systemd/sd-journal.h>
-
 #include "log.h"
 #include "filecache.h"
 #include "statcache.h"

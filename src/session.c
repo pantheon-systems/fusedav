@@ -40,8 +40,6 @@
 #include <ne_dates.h>
 #include <ne_redirect.h>
 
-#include <systemd/sd-journal.h>
-
 #include "log.h"
 #include "session.h"
 #include "fusedav.h"

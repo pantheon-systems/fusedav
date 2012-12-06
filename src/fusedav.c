@@ -50,7 +50,6 @@
 #include <fuse.h>
 
 #include <yaml.h>
-#include <systemd/sd-journal.h>
 
 #include "log.h"
 #include "statcache.h"
