@@ -63,7 +63,7 @@ const ne_propname query_properties[] = {
     { "DAV:", "getcontentlength" },
     { "DAV:", "getlastmodified" },
     { "DAV:", "creationdate" },
-    { "DAV:", "event" }, // @TODO: Progressive PROPFIND support.
+    { "DAV:", "event" }, // @TODO: Optional progressive PROPFIND support.
     { NULL, NULL }
 };
 
