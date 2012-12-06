@@ -44,6 +44,7 @@
 
 #include <systemd/sd-journal.h>
 
+#include "log.h"
 #include "filecache.h"
 #include "statcache.h"
 #include "fusedav.h"
@@ -192,7 +193,7 @@ void *file_cache_open(const char *path, int flags) {
     assert(req);
 
     if (ne_request_dispatch(req) != NE_OK) {
-        sd_journal_print(LOG_ERR, "HEAD failed: %s", ne_get_error(session));
+        log_print(LOG_ERR, "HEAD failed: %s", ne_get_error(session));
         errno = ENOENT;
         goto fail;
     }
@@ -260,7 +261,7 @@ static int load_up_to_unlocked(struct file_info *fi, ne_off_t l) {
     range.total = 0;
 
     if (ne_get_range(session, fi->filename, &range, fi->fd) != NE_OK) {
-        sd_journal_print(LOG_ERR, "GET failed: %s", ne_get_error(session));
+        log_print(LOG_ERR, "GET failed: %s", ne_get_error(session));
         errno = ENOENT;
         return -1;
     }
@@ -368,7 +369,7 @@ int file_cache_sync_unlocked(stat_cache_t *cache, struct file_info *fi) {
     }
 
     if (ne_put(session, fi->filename, fi->fd)) {
-        sd_journal_print(LOG_ERR, "PUT failed: %s", ne_get_error(session));
+        log_print(LOG_ERR, "PUT failed: %s", ne_get_error(session));
         errno = ENOENT;
         goto finish;
     }

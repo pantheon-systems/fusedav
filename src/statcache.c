@@ -34,12 +34,13 @@
 #include "statcache.h"
 #include "filecache.h"
 #include "fusedav.h"
+#include "log.h"
 
 #include <ne_uri.h>
 
 #include <systemd/sd-journal.h>
 
-#define CACHE_TIMEOUT 60
+#define CACHE_TIMEOUT 3
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -60,17 +61,17 @@ unsigned int stat_cache_get_local_generation(void) {
 
 int print_stat(struct stat *stbuf, const char *title) {
     if (debug) {
-        sd_journal_print(LOG_DEBUG, "stat: %s", title);
-        sd_journal_print(LOG_DEBUG, "  .st_mode=%o", stbuf->st_mode);
-        sd_journal_print(LOG_DEBUG, "  .st_nlink=%ld", stbuf->st_nlink);
-        sd_journal_print(LOG_DEBUG, "  .st_uid=%d", stbuf->st_uid);
-        sd_journal_print(LOG_DEBUG, "  .st_gid=%d", stbuf->st_gid);
-        sd_journal_print(LOG_DEBUG, "  .st_size=%ld", stbuf->st_size);
-        sd_journal_print(LOG_DEBUG, "  .st_blksize=%ld", stbuf->st_blksize);
-        sd_journal_print(LOG_DEBUG, "  .st_blocks=%ld", stbuf->st_blocks);
-        sd_journal_print(LOG_DEBUG, "  .st_atime=%ld", stbuf->st_atime);
-        sd_journal_print(LOG_DEBUG, "  .st_mtime=%ld", stbuf->st_mtime);
-        sd_journal_print(LOG_DEBUG, "  .st_ctime=%ld", stbuf->st_ctime);
+        log_print(LOG_DEBUG, "stat: %s", title);
+        log_print(LOG_DEBUG, "  .st_mode=%o", stbuf->st_mode);
+        log_print(LOG_DEBUG, "  .st_nlink=%ld", stbuf->st_nlink);
+        log_print(LOG_DEBUG, "  .st_uid=%d", stbuf->st_uid);
+        log_print(LOG_DEBUG, "  .st_gid=%d", stbuf->st_gid);
+        log_print(LOG_DEBUG, "  .st_size=%ld", stbuf->st_size);
+        log_print(LOG_DEBUG, "  .st_blksize=%ld", stbuf->st_blksize);
+        log_print(LOG_DEBUG, "  .st_blocks=%ld", stbuf->st_blocks);
+        log_print(LOG_DEBUG, "  .st_atime=%ld", stbuf->st_atime);
+        log_print(LOG_DEBUG, "  .st_mtime=%ld", stbuf->st_mtime);
+        log_print(LOG_DEBUG, "  .st_ctime=%ld", stbuf->st_ctime);
     }
     return 0;
 }
@@ -118,7 +119,7 @@ int stat_cache_open(stat_cache_t **c, char *storage_path) {
     // Check that a directory is set.
     if (!storage_path) {
         // @TODO: Use a mkdtemp-based path.
-        sd_journal_print(LOG_WARNING, "No cache path specified.");
+        log_print(LOG_WARNING, "No cache path specified.");
         return -EINVAL;
     }
 
@@ -137,7 +138,7 @@ int stat_cache_open(stat_cache_t **c, char *storage_path) {
 
     *c = leveldb_open(options, storage_path, &error);
     if (error) {
-        sd_journal_print(LOG_ERR, "ERROR opening db: %s", error);
+        log_print(LOG_ERR, "ERROR opening db: %s", error);
         return -1;
     }
 #endif
@@ -155,7 +156,7 @@ int stat_cache_close(stat_cache_t *c) {
 struct timespec stat_cache_now(void) {
     struct timespec now;
     if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
-        sd_journal_print(LOG_ERR, "clock_gettime error: %d", -errno);
+        log_print(LOG_ERR, "clock_gettime error: %d", -errno);
         // @TODO: Something to do here?
     }
     return now;
@@ -173,24 +174,24 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     key = path2key(path, false);
 
     //if (debug)
-    //    sd_journal_print(LOG_DEBUG, "CGET: %s", key);
+    //    log_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
     free(key);
 
-    //sd_journal_print(LOG_DEBUG, "Mode: %04o", value->st.st_mode);
+    //log_print(LOG_DEBUG, "Mode: %04o", value->st.st_mode);
 
     if (errptr != NULL) {
-        sd_journal_print(LOG_ERR, "leveldb_get error: %s", errptr);
+        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
         return NULL;
     }
 
     if (!value) {
         if (debug)
-            sd_journal_print(LOG_DEBUG, "stat_cache_value_get miss on path: %s", path);
+            log_print(LOG_DEBUG, "stat_cache_value_get miss on path: %s", path);
         return NULL;
     }
 
@@ -198,15 +199,17 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     //    print_stat(&value->st, path);
 
     if (vallen != sizeof(struct stat_cache_value)) {
-        sd_journal_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
+    /*
     current_time = time(NULL);
     if (current_time - value->updated > CACHE_TIMEOUT) {
-        sd_journal_print(LOG_DEBUG, "%s too old", path);
+        log_print(LOG_DEBUG, "%s too old", path);
         free(value);
         return NULL;
     }
+    */
 
     // @TODO: Don't rely on file cache for this.
     if ((f = file_cache_get(path))) {
@@ -235,7 +238,7 @@ int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t ti
     leveldb_writeoptions_destroy(options);
 
     if (errptr != NULL) {
-        sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
         r = -1;
     }
@@ -258,7 +261,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     leveldb_readoptions_destroy(options);
 
     if (errptr != NULL) {
-        sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
         r = -1;
     }
@@ -283,19 +286,19 @@ int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cach
 
     key = path2key(path, false);
     //if (debug)
-        //sd_journal_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
+        //log_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
         //print_stat(&value->st, "CSET");
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
     leveldb_writeoptions_destroy(options);
 
-    //sd_journal_print(LOG_DEBUG, "Setting key: %s", key);
+    //log_print(LOG_DEBUG, "Setting key: %s", key);
 
     free(key);
 
     if (errptr != NULL) {
-        sd_journal_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
         r = -1;
     }
@@ -316,7 +319,7 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
     free(key);
 
     if (errptr != NULL) {
-        sd_journal_print(LOG_ERR, "leveldb_delete error: %s", errptr);
+        log_print(LOG_ERR, "leveldb_delete error: %s", errptr);
         free(errptr);
         r = -1;
     }
@@ -359,19 +362,19 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
     iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
-    //sd_journal_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
+    //log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
     options = leveldb_readoptions_create();
     iter->ldb_iter = leveldb_create_iterator(cache, options);
     leveldb_readoptions_destroy(options);
 
-    //sd_journal_print(LOG_DEBUG, "checking iterator validity");
+    //log_print(LOG_DEBUG, "checking iterator validity");
 
     //if (!leveldb_iter_valid(iter->ldb_iter)) {
-    //    sd_journal_print(LOG_ERR, "Initial LevelDB iterator is not valid.");
+    //    log_print(LOG_ERR, "Initial LevelDB iterator is not valid.");
     //    return NULL;
     //}
 
-    //sd_journal_print(LOG_DEBUG, "seeking");
+    //log_print(LOG_DEBUG, "seeking");
     leveldb_iter_seek(iter->ldb_iter, iter->key_prefix, iter->key_prefix_len);
 
     return iter;
@@ -385,7 +388,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
 
     assert(iter);
 
-    //sd_journal_print(LOG_DEBUG, "checking iterator validity");
+    //log_print(LOG_DEBUG, "checking iterator validity");
 
     // If we've gone beyond the end of the dataset, quit.
     if (!leveldb_iter_valid(iter->ldb_iter)) {
@@ -393,22 +396,22 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
         return false;
     }
 
-    //sd_journal_print(LOG_DEBUG, "fetching the key");
+    //log_print(LOG_DEBUG, "fetching the key");
 
     key = leveldb_iter_key(iter->ldb_iter, &klen);
-    //sd_journal_print(LOG_DEBUG, "fetched key: %s", key);
+    //log_print(LOG_DEBUG, "fetched key: %s", key);
 
-    //sd_journal_print(LOG_DEBUG, "fetched the key");
+    //log_print(LOG_DEBUG, "fetched the key");
 
     // If we've gone beyond the end of the prefix range, quit.
     // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
     if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
-        //sd_journal_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
+        //log_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
         leveldb_iter_destroy(iter->ldb_iter);
         return NULL;
     }
 
-    //sd_journal_print(LOG_DEBUG, "fetching the value");
+    //log_print(LOG_DEBUG, "fetching the value");
 
     value = (const struct stat_cache_value *) leveldb_iter_value(iter->ldb_iter, &vlen);
 
@@ -440,16 +443,16 @@ static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
     free(key);
 
     while (leveldb_iter_valid(iter)) {
-        //sd_journal_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
+        //log_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
 
         itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
         if (S_ISDIR(itervalue->st.st_mode)) {
             iterkey = leveldb_iter_key(iter, &klen);
-            sd_journal_print(LOG_DEBUG, "Listing directory: %s", iterkey);
+            log_print(LOG_DEBUG, "Listing directory: %s", iterkey);
 
             value = stat_cache_value_get(cache, key2path(iterkey));
             if (value) {
-                sd_journal_print(LOG_DEBUG, "Direct get mode: %04o", value->st.st_mode);
+                log_print(LOG_DEBUG, "Direct get mode: %04o", value->st.st_mode);
                 free(value);
             }
         }
@@ -469,7 +472,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     time_t current_time;
 
     //if (debug)
-    //    sd_journal_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
+    //    log_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
 
     //stat_cache_list_all(cache, path_prefix);
     if (!force) {
@@ -482,24 +485,24 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
         // Check for cache values which are too old; but timestamp = 0 needs to trigger below
         current_time = time(NULL);
         if (current_time - timestamp > CACHE_TIMEOUT) {
-            sd_journal_print(LOG_DEBUG, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
+            log_print(LOG_DEBUG, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
             return -STAT_CACHE_OLD_DATA;
         }
     }
 
     iter = stat_cache_iter_init(cache, path_prefix);
-    //sd_journal_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
+    //log_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
 
     while ((entry = stat_cache_iter_current(iter))) {
-        //sd_journal_print(LOG_DEBUG, "key: %s", entry->key);
-        //sd_journal_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
+        //log_print(LOG_DEBUG, "key: %s", entry->key);
+        //log_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
         f(path_prefix, entry->key + iter->key_prefix_len, user);
         ++found_entries;
         free(entry);
         stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
-    //sd_journal_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
+    //log_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
 
     // Ignore the entry that exactly matches the key prefix.
     // @TODO: Remove this?

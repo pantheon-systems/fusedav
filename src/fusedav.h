@@ -1,8 +1,6 @@
 #ifndef foofusedevhfoo
 #define foofusedevhfoo
 
-/* $Id$ */
-
 /***
   This file is part of fusedav.
 
