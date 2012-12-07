@@ -27,7 +27,7 @@
 
 #include "statcache.h"
 
-void* file_cache_open(const char *path, int flags);
+void* file_cache_open(stat_cache_t *cache, const char *path, int flags);
 void* file_cache_get(const char *path);
 void file_cache_unref(stat_cache_t *cache, void *f);
 

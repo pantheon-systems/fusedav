@@ -27,4 +27,7 @@ extern int debug;
 #define __unused
 #endif
 
+// @TODO: Move this elsewhere.
+char *strip_trailing_slash(char *fn, int *is_dir);
+
 #endif

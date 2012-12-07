@@ -167,7 +167,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     size_t vallen;
     char *errptr = NULL;
     void *f;
-    time_t current_time;
+    //time_t current_time;
 
     key = path2key(path, false);
 

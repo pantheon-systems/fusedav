@@ -26,6 +26,8 @@
 #define STAT_CACHE_OLD_DATA 2
 #define STAT_CACHE_NO_DATA 1
 
+#define STAT_CACHE_NEGATIVE_TTL 3
+
 typedef leveldb_t stat_cache_t;
 
 // Used opaquely outside this library.
@@ -39,6 +41,7 @@ struct stat_cache_value {
     struct stat st;
     unsigned int local_generation;
     time_t updated;
+    bool prepopulated; // Added to the local cache; not from the server.
     char remote_generation[RGEN_LEN];
 };
 
