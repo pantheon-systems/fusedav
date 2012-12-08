@@ -101,6 +101,8 @@ struct fusedav_config {
     bool noattributes;
     char *cache_path;
     stat_cache_t *cache;
+    uid_t uid;
+    gid_t gid;
 };
 
 enum {
@@ -122,6 +124,8 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 5),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("noattributes",                   noattributes, true),
+     FUSEDAV_OPT("uid=%d",                         uid, 0),
+     FUSEDAV_OPT("gid=%d",                         gid, 0),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -542,6 +546,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 }
 
 static int dav_getattr(const char *path, struct stat *stbuf) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
     path = path_cvt(path);
     //memset(stbuf, 0, sizeof(stbuf));
@@ -550,6 +555,10 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     stbuf->st_atim.tv_nsec = 0;
     stbuf->st_mtim.tv_nsec = 0;
     stbuf->st_ctim.tv_nsec = 0;
+
+    // @TODO: Make the "no permissions" mode configurable.
+    stbuf->st_uid = config->uid;
+    stbuf->st_gid = config->gid;
     //clock_gettime(CLOCK_REALTIME, &stbuf->st_atim);
     //print_stat(stbuf, "getattr");
     return r;
@@ -713,8 +722,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "release(%s)", path);
+    //log_print(LOG_DEBUG, "release(%s)", path);
 
     if (!(session = session_get(1))) {
         r = -EIO;
@@ -836,7 +844,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     void *f;
 
-    log_print(LOG_DEBUG, "open(%s)", path);
+    //log_print(LOG_DEBUG, "open(%s)", path);
 
     path = path_cvt(path);
 
@@ -855,8 +863,7 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, _
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    //log_print(LOG_DEBUG, "read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if (!(f = file_cache_get(path))) {
         log_print(LOG_WARNING, "read() called for closed file");
@@ -883,8 +890,7 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    //log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if (!(f = file_cache_get(path))) {
         log_print(LOG_WARNING, "write() called for closed file");
@@ -946,10 +952,10 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     int r = 0;
     char *date;
 
-    log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
+    //log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     if (config->noattributes) {
-        log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
+        //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
         return r;
     }
 
@@ -1673,6 +1679,26 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     return 1;
 }
 
+static int config_privileges(struct fusedav_config *config) {
+    if (config->gid > 0) {
+        if (setegid(config->gid) < 0) {
+            log_print(LOG_ERR, "Can't drop gid to %d.", config->gid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, "Set egid to %d.", config->gid);
+    }
+
+    if (config->uid > 0) {
+        if (seteuid(config->uid) < 0) {
+            log_print(LOG_ERR, "Can't drop uid to %d.", config->uid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, "Set euid to %d.", config->uid);
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -1725,14 +1751,6 @@ int main(int argc, char *argv[]) {
     if (debug)
         log_print(LOG_DEBUG, "Parsed options.");
 
-    if (stat_cache_open(&config.cache, config.cache_path) < 0) {
-        log_print(LOG_WARNING, "Failed to open the stat cache.");
-        config.cache = NULL;
-    }
-
-    if (debug)
-        log_print(LOG_DEBUG, "Opened stat cache.");
-
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
         goto finish;
@@ -1779,8 +1797,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (config.nodaemon) {
-        if (debug)
-            log_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
+        log_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
     }
     else {
         if (debug)
@@ -1790,6 +1807,19 @@ int main(int argc, char *argv[]) {
             goto finish;
         }
     }
+
+    log_print(LOG_DEBUG, "Attempting to configure privileges.");
+    if (config_privileges(&config) < 0) {
+        log_print(LOG_CRIT, "Failed to configure privileges.");
+        goto finish;
+    }
+
+    if (stat_cache_open(&config.cache, config.cache_path) < 0) {
+        log_print(LOG_WARNING, "Failed to open the stat cache.");
+        config.cache = NULL;
+    }
+
+    log_print(LOG_DEBUG, "Opened stat cache.");
 
     if (debug)
         log_print(LOG_DEBUG, "Entering main FUSE loop.");
