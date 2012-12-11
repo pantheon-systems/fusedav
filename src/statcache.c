@@ -210,9 +210,9 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     */
 
     // @TODO: Don't rely on file cache for this.
-    if ((f = file_cache_get(path))) {
-        value->st.st_size = file_cache_get_size(f);
-        file_cache_unref(cache, f);
+    if ((f = File_Cache_get(path))) {
+        value->st.st_size = File_Cache_get_size(f);
+        File_Cache_unref(cache, f);
     }
 
     //print_stat(&value->st, "CGET");
@@ -475,11 +475,11 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     //stat_cache_list_all(cache, path_prefix);
     if (!force) {
         timestamp = stat_cache_read_updated_children(cache, path_prefix);
-    
+
         if (timestamp == 0) {
             return -STAT_CACHE_NO_DATA;
         }
-    
+
         // Check for cache values which are too old; but timestamp = 0 needs to trigger below
         current_time = time(NULL);
         if (current_time - timestamp > CACHE_TIMEOUT) {

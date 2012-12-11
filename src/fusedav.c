@@ -54,6 +54,7 @@
 #include "log.h"
 #include "statcache.h"
 #include "filecache.h"
+#include "ldb-filecache.h"
 #include "session.h"
 #include "fusedav.h"
 
@@ -68,7 +69,7 @@ const ne_propname query_properties[] = {
 };
 
 mode_t mask = 0;
-int debug = 0;
+int debug = 1;
 struct fuse* fuse = NULL;
 ne_lock_store *lock_store = NULL;
 struct ne_lock *lock = NULL;
@@ -119,7 +120,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
-     FUSEDAV_OPT("verbosity=%d",                   verbosity, 5),
+     FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("noattributes",                   noattributes, true),
 
@@ -406,7 +407,7 @@ static int dav_readdir(
             else {
                 log_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
             }
-            
+
             free(update_path);
         }
 
@@ -477,7 +478,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     }
 
     if (debug)
-        log_print(LOG_DEBUG, "STAT-CACHE-MISS");
+        log_print(LOG_NOTICE, "STAT-CACHE-MISS");
 
     if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
         stat_cache_delete(config->cache, path);
@@ -495,7 +496,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 static int dav_getattr(const char *path, struct stat *stbuf) {
     path = path_cvt(path);
     //if (debug)
-    //    log_print(LOG_DEBUG, "getattr(%s)", path);
+    //    log_print(LOG_NOTICE, "getattr(%s)", path);
     return get_stat(path, stbuf);
 }
 
@@ -638,7 +639,7 @@ finish:
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     void *f = NULL;
-    int r = 0;
+    int ret = 0;
     ne_session *session;
 
     path = path_cvt(path);
@@ -646,33 +647,39 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     if (debug)
         log_print(LOG_DEBUG, "release(%s)", path);
 
+    // JB do we need session?
     if (!(session = session_get(1))) {
-        r = -EIO;
+        ret = -EIO;
         goto finish;
     }
 
-    if (!(f = file_cache_get(path))) {
+    ret = ldb_filecache_unref(config->cache, path, info);
+    if (ret < 0) goto finish;
+
+    if (!(f = File_Cache_get(path))) {
         log_print(LOG_DEBUG, "release() called for closed file");
-        r = -EFAULT;
+        ret = -EFAULT;
         goto finish;
     }
 
-    if (file_cache_close(f) < 0) {
-        r = -errno;
+    if (File_Cache_close(f) < 0) {
+        ret = -errno;
         goto finish;
     }
+
+    ret = 0;
 
 finish:
     if (f)
-        file_cache_unref(config->cache, f);
+        File_Cache_unref(config->cache, f);
 
-    return r;
+    return ret;
 }
 
 static int dav_fsync(const char *path, __unused int isdatasync, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     void *f = NULL;
-    int r = 0;
+    int ret = 0;
     ne_session *session;
 
     path = path_cvt(path);
@@ -680,27 +687,35 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
         log_print(LOG_DEBUG, "fsync(%s)", path);
 
     if (!(session = session_get(1))) {
-        r = -EIO;
+        ret = -EIO;
         goto finish;
     }
 
-    if (!(f = file_cache_get(path))) {
+    if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
+        goto finish;
+    }
+
+    if (!(f = File_Cache_get(path))) {
         log_print(LOG_DEBUG, "fsync() called for closed file");
-        r = -EFAULT;
+        ret = -EFAULT;
         goto finish;
     }
 
-    if (file_cache_sync(config->cache, f) < 0) {
-        r = -errno;
+    if (File_Cache_sync(config->cache, f) < 0) {
+        ret = -errno;
         goto finish;
     }
 
 finish:
 
     if (f)
-        file_cache_unref(config->cache, f);
+        File_Cache_unref(config->cache, f);
 
-    return r;
+    // We sync above, then if file ref is 0, we sync again in unref.
+    // Is this what we want?
+    ret = ldb_filecache_unref(config->cache, path, info);
+
+    return ret;
 }
 
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
@@ -766,82 +781,128 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    int ret = 0;
     void *f;
 
-    if (debug)
-        log_print(LOG_DEBUG, "open(%s)", path);
+    if (debug) {
+        log_print(LOG_DEBUG, "dav_open: open(%s)", path);
+    }
 
     path = path_cvt(path);
 
-    if (!(f = file_cache_open(path, info->flags)))
+    if ((ret = ldb_filecache_open(config->cache, path, info)) < 0) {
+        log_print(LOG_ERR, "dav_open: Failed ldb_filecache_open");
+        return ret;
+    }
+
+    if (debug) {
+        log_print(LOG_ERR, "dav_open: after ldb_filecache_open");
+    }
+
+    if (!(f = File_Cache_open(path, info->flags))) {
+        log_print(LOG_ERR, "dav_open: Failed File_Cache_open");
         return -errno;
+    }
 
-    file_cache_unref(config->cache, f);
+     if (debug) {
+        log_print(LOG_ERR, "dav_open: after File_Cache_open");
+    }
 
-    return 0;
+    File_Cache_unref(config->cache, f);
+
+     if (debug) {
+        log_print(LOG_ERR, "dav_open: after File_Cache_unref");
+    }
+
+    // Essentially we open the file, PUT it, then close it here
+    // Is this what we want?
+    ret = ldb_filecache_unref(config->cache, path, info);
+
+    if (debug) {
+        log_print(LOG_ERR, "dav_open: after fdb_filecache_unref ret=%d", ret);
+    }
+
+    return ret;
 }
 
-static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, __unused struct fuse_file_info *info) {
+static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     void *f = NULL;
-    ssize_t r;
+    int ret;
 
     path = path_cvt(path);
 
     if (debug)
         log_print(LOG_DEBUG, "read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
-    if (!(f = file_cache_get(path))) {
+    if (!(f = File_Cache_get(path))) {
         log_print(LOG_WARNING, "read() called for closed file");
-        r = -EFAULT;
+        ret = -EFAULT;
         goto finish;
     }
 
-    if ((r = file_cache_read(f, buf, size, offset)) < 0) {
-        r = -errno;
+    if ((ret = File_Cache_read(f, buf, size, offset)) < 0) {
+        ret = -errno;
+        goto finish;
+    }
+
+    if ((ret = ldb_filecache_read(info, buf, size, offset)) < 0) {
+        ret = -errno;
         goto finish;
     }
 
 finish:
     if (f)
-        file_cache_unref(config->cache, f);
+        File_Cache_unref(config->cache, f);
 
-    return r;
+    // Essentially we read the file, PUT it, then close it here
+    // Is this what we want?
+    ldb_filecache_unref(config->cache, path, info);
+
+    return ret;
 }
 
-static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, __unused struct fuse_file_info *info) {
+static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     void *f = NULL;
-    ssize_t r;
+    ssize_t ret;
 
     path = path_cvt(path);
 
     if (debug)
         log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
-    if (!(f = file_cache_get(path))) {
+    if (!(f = File_Cache_get(path))) {
         log_print(LOG_WARNING, "write() called for closed file");
-        r = -EFAULT;
+        ret = -EFAULT;
         goto finish;
     }
 
-    if ((r = file_cache_write(f, buf, size, offset)) < 0) {
-        r = -errno;
+    if ((ret = File_Cache_write(f, buf, size, offset)) < 0) {
+        ret = -errno;
+        goto finish;
+    }
+
+    if ((ret = ldb_filecache_write(info, buf, size, offset)) < 0) {
         goto finish;
     }
 
 finish:
     if (f)
-        file_cache_unref(config->cache, f);
+        File_Cache_unref(config->cache, f);
 
-    return r;
+    // Essentially we read the file, PUT it, then close it here
+    // Is this what we want?
+    ret = ldb_filecache_unref(config->cache, path, info);
+
+   return ret;
 }
 
 
-static int dav_truncate(const char *path, ne_off_t size) {
+static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     void *f = NULL;
-    int r = 0;
+    int ret = 0;
     ne_session *session;
 
     path = path_cvt(path);
@@ -850,25 +911,32 @@ static int dav_truncate(const char *path, ne_off_t size) {
         log_print(LOG_DEBUG, "truncate(%s, %lu)", path, (unsigned long) size);
 
     if (!(session = session_get(1)))
-        r = -EIO;
+        ret = -EIO;
         goto finish;
 
-    if (!(f = file_cache_get(path))) {
-        log_print(LOG_WARNING, "truncate() called for closed file");
-        r = -EFAULT;
+    if (ldb_filecache_truncate(info, size) < 0) {
+        ret = -errno;
         goto finish;
     }
 
-    if (file_cache_truncate(f, size) < 0) {
-        r = -errno;
+    if (!(f = File_Cache_get(path))) {
+        log_print(LOG_WARNING, "truncate() called for closed file");
+        ret = -EFAULT;
+        goto finish;
+    }
+
+    if (File_Cache_truncate(f, size) < 0) {
+        ret = -errno;
         goto finish;
     }
 
 finish:
     if (f)
-        file_cache_unref(config->cache, f);
+        File_Cache_unref(config->cache, f);
 
-    return r;
+    ret = ldb_filecache_unref(config->cache, path, info);
+
+    return ret;
 }
 
 static int dav_utimens(const char *path, const struct timespec tv[2]) {
@@ -1350,7 +1418,8 @@ static struct fuse_operations dav_oper = {
     .rename      = dav_rename,
     .chmod       = dav_chmod,
     .chown       = dav_chown,
-    .truncate    = dav_truncate,
+    .ftruncate    = dav_ftruncate,
+    // .truncate    = dav_truncate,
     .utimens     = dav_utimens,
     .open        = dav_open,
     .read        = dav_read,
@@ -1668,6 +1737,9 @@ int main(int argc, char *argv[]) {
     if (debug)
         log_print(LOG_DEBUG, "Opened stat cache.");
 
+    if (debug)
+        log_print(LOG_DEBUG, "Opened ldb file cache.");
+
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
         goto finish;
@@ -1767,7 +1839,7 @@ finish:
     if (debug)
         log_print(LOG_DEBUG, "Freed arguments.");
 
-    file_cache_close_all(config.cache);
+    File_Cache_close_all(config.cache);
     if (debug)
         log_print(LOG_DEBUG, "Closed file cache.");
 
