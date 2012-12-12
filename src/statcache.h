@@ -39,7 +39,7 @@ struct stat_cache_iterator {
 
 struct stat_cache_value {
     struct stat st;
-    unsigned int local_generation;
+    unsigned long local_generation;
     time_t updated;
     bool prepopulated; // Added to the local cache; not from the server.
     char remote_generation[RGEN_LEN];
@@ -47,7 +47,7 @@ struct stat_cache_value {
 
 int print_stat(struct stat *stbuf, const char *title);
 
-unsigned int stat_cache_get_local_generation(void);
+unsigned long stat_cache_get_local_generation(void);
 
 int stat_cache_open(stat_cache_t **cache, char *storage_path);
 int stat_cache_close(stat_cache_t *cache);

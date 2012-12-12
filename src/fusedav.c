@@ -67,7 +67,7 @@ const ne_propname query_properties[] = {
     { "DAV:", "getcontentlength" },
     { "DAV:", "getlastmodified" },
     { "DAV:", "creationdate" },
-    { "DAV:", "event" }, // @TODO: Optional progressive PROPFIND support.
+    { "DAV:", "event" }, // For optional progressive PROPFIND support.
     { NULL, NULL }
 };
 
@@ -102,7 +102,7 @@ struct fusedav_config {
     bool lock_on_mount;
     int  verbosity;
     bool nodaemon;
-    bool noutimens;
+    bool ignoreutimens;
     char *cache_path;
     stat_cache_t *cache;
     uid_t uid;
@@ -112,6 +112,8 @@ struct fusedav_config {
     char *run_as_uid_name;
     char *run_as_gid_name;
     bool progressive_propfind;
+    bool refresh_dir_for_file_stat;
+    bool ignorexattr;
 };
 
 enum {
@@ -132,7 +134,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 5),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
-     FUSEDAV_OPT("noutimens",                      noutimens, true),
+     FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
      FUSEDAV_OPT("uid=%d",                         uid, 0),
      FUSEDAV_OPT("gid=%d",                         gid, 0),
      FUSEDAV_OPT("dir_mode=%o",                    dir_mode, 0),
@@ -140,6 +142,8 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid_name, 0),
      FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid_name, 0),
      FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
+     FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
+     FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -510,6 +514,10 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // Check if we can directly hit this file in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path))) {
+
+        // @TODO: Check that either the stat data itself of the containing
+        // directory is fresh enough.
+        
         *stbuf = response->st;
         free(response);
         //print_stat(stbuf, "get_stat from cache");
@@ -519,9 +527,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
     log_print(LOG_DEBUG, "STAT-CACHE-MISS");
 
     // If it's the root directory, just do a single PROPFIND.
-    // @TODO: Make this an optional fallback for *any* file.
     log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
-    if (strcmp(path, base_directory) == 0) {
+    if (!config->refresh_dir_for_file_stat && strcmp(path, base_directory) == 0) {
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_delete(config->cache, path);
@@ -531,6 +538,9 @@ static int get_stat(const char *path, struct stat *stbuf) {
         }
         return 0;
     }
+
+    // If we're here, refresh_dir_for_file_stat is set, so we're updating
+    // directory stat data to, in turn, update the desired file stat data.
 
     // If it's not found, check the freshness of its directory.
     parent_path = strip_trailing_slash(ne_path_parent(path), &is_dir);
@@ -562,14 +572,15 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
     path = path_cvt(path);
-    //memset(stbuf, 0, sizeof(stbuf));
+
     //log_print(LOG_DEBUG, "getattr(%s)", path);
     r = get_stat(path, stbuf);
+
+    // Zero-out unused nanosecond fields.
     stbuf->st_atim.tv_nsec = 0;
     stbuf->st_mtim.tv_nsec = 0;
     stbuf->st_ctim.tv_nsec = 0;
 
-    // @TODO: Make the "no permissions" mode configurable.
     if (config->uid)
         stbuf->st_uid = config->uid;
     if (config->gid)
@@ -578,8 +589,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         stbuf->st_mode = S_IFDIR | config->dir_mode;
     if (S_ISREG(stbuf->st_mode) && config->file_mode)
         stbuf->st_mode = S_IFREG | config->file_mode;
-    //clock_gettime(CLOCK_REALTIME, &stbuf->st_atim);
-    //print_stat(stbuf, "getattr");
+
     return r;
 }
 
@@ -973,7 +983,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
 
     //log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
-    if (config->noutimens) {
+    if (config->ignoreutimens) {
         //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
         return r;
     }
@@ -1069,9 +1079,12 @@ static int dav_listxattr(
         char *list,
         size_t size) {
 
+    struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     struct listxattr_info l;
 
+    if (config->ignorexattr)
+        return 0;
 
     assert(path);
 
@@ -1203,18 +1216,21 @@ static int dav_getxattr(
         char *value,
         size_t size) {
 
+    struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     struct getxattr_info g;
     ne_propname props[2];
     char dnspace[128], dname[128];
+
+    if (config->ignorexattr)
+        return -ENOATTR;
 
     assert(path);
 
     path = path_cvt(path);
     name = fix_xattr(name);
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
+    log_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0)
         return -ENOATTR;
@@ -1265,6 +1281,9 @@ static int dav_setxattr(
     char dnspace[128], dname[128];
     char *value_fixed = NULL;
 
+    if (config->ignorexattr)
+        return 0;
+
     assert(path);
     assert(name);
     assert(value);
@@ -1272,8 +1291,7 @@ static int dav_setxattr(
     path = path_cvt(path);
     name = fix_xattr(name);
 
-    if (debug)
-        log_print(LOG_DEBUG, "setxattr(%s, %s)", path, name);
+    log_print(LOG_DEBUG, "setxattr(%s, %s)", path, name);
 
     if (flags) {
         r = ENOTSUP;
@@ -1428,9 +1446,8 @@ static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
     if (config->uid && config->gid)
         return 0;
 
-    // @TODO: Implement.
     log_print(LOG_ERR, "NOT IMPLEMENTED: chown(%s, %d:%d)", path, u, g);
-    return 0;
+    return -EPROTONOSUPPORT;
 }
 
 static struct fuse_operations dav_oper = {
@@ -1450,7 +1467,6 @@ static struct fuse_operations dav_oper = {
     .write       = dav_write,
     .release     = dav_release,
     .fsync       = dav_fsync,
-// @TODO: Make optional.
     .setxattr    = dav_setxattr,
     .getxattr    = dav_getxattr,
     .listxattr   = dav_listxattr,
@@ -1683,13 +1699,15 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o lock_timeout=NUM\n"
                 "        -o lock_on_mount\n"
                 "    File and directory attributes:\n"
-                "        -o noutimens\n"
                 "        -o uid=STRING (masks file owner)\n"
                 "        -o gid=STRING (masks file group)\n"
                 "        -o file_mode=OCTAL (masks file permissions)\n"
                 "        -o dir_mode=OCTAL (masks directory permissions)\n"
-                "    Protocol options:\n"
+                "        -o ignoreutimens\n"
+                "        -o ignorexattr\n"
+                "    Protocol and performance options:\n"
                 "        -o progressive_propfind\n"
+                "        -o refresh_dir_for_file_stat\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
@@ -1794,9 +1812,13 @@ int main(int argc, char *argv[]) {
     // Apply debug mode.
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
+    log_print(LOG_DEBUG, "Parsed options.");
 
-    if (debug)
-        log_print(LOG_DEBUG, "Parsed options.");
+    if (config.ignoreutimens)
+        log_print(LOG_NOTICE, "Ignoring utimens requests.");
+
+    if (config.ignorexattr)
+        log_print(LOG_NOTICE, "Ignoring extended attributes.");
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");

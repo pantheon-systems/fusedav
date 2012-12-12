@@ -47,13 +47,20 @@ struct stat_cache_entry {
     const struct stat_cache_value *value;
 };
 
-// @TODO: Write this to LevelDB and restore on restart or use a <start time>.<counter> tuple.
-unsigned int stat_cache_get_local_generation(void) {
-    static unsigned int counter = 0;
-    unsigned int ret;
+unsigned long stat_cache_get_local_generation(void) {
+    static unsigned long counter = 0;
+    unsigned long ret;
     pthread_mutex_lock(&counter_mutex);
+    if (counter == 0) {
+        // Top 40 bits for the timestamp. Bottom 24 bits for the counter.
+        counter = time(NULL);
+        log_print(LOG_DEBUG, "Pre-shift counter: %lu", counter);
+        counter <<= 24;
+        log_print(LOG_DEBUG, "Initialized counter: %lu", counter);
+    }
     ret = ++counter;
     pthread_mutex_unlock(&counter_mutex);
+    log_print(LOG_DEBUG, "stat_cache_get_local_generation: %lu", ret);
     return ret;
 }
 
