@@ -399,7 +399,7 @@ static int update_directory(const char *path, bool attempt_progessive_update, vo
         else {
             log_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
         }
-        
+
         free(update_path);
     }
 
@@ -415,8 +415,9 @@ static int update_directory(const char *path, bool attempt_progessive_update, vo
         }
         stat_cache_delete_older(config->cache, path, min_generation);
     }
-    
+
     // Mark the directory contents as updated.
+    log_print(LOG_DEBUG, "Marking directory %s as updated at timestamp %lu.", path, timestamp);
     stat_cache_updated_children(config->cache, path, timestamp);
     return 0;
 }
@@ -434,8 +435,7 @@ static int dav_readdir(
 
     path = path_cvt(path);
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "getdir(%s)", path);
+    //log_print(LOG_DEBUG, "getdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -514,10 +514,6 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // Check if we can directly hit this file in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path))) {
-
-        // @TODO: Check that either the stat data itself of the containing
-        // directory is fresh enough.
-        
         *stbuf = response->st;
         free(response);
         //print_stat(stbuf, "get_stat from cache");
@@ -528,7 +524,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // If it's the root directory, just do a single PROPFIND.
     log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
-    if (!config->refresh_dir_for_file_stat && strcmp(path, base_directory) == 0) {
+    if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_delete(config->cache, path);
@@ -544,7 +540,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // If it's not found, check the freshness of its directory.
     parent_path = strip_trailing_slash(ne_path_parent(path), &is_dir);
-    
+
     log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
     parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path);
     log_print(LOG_DEBUG, "Parent was updated: %lu", parent_children_update_ts);
@@ -555,7 +551,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
         update_directory(parent_path, (parent_children_update_ts > 0), &junk_value);
     }
 
-    // Try again to hit the file in the stat cache. 
+    // Try again to hit the file in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path))) {
         log_print(LOG_DEBUG, "Hit updated cache: %s", path);
         *stbuf = response->st;
@@ -691,7 +687,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     value.st.st_gid = getgid();
     value.prepopulated = true;
     stat_cache_value_set(config->cache, path, &value);
-    
+
     //stat_cache_delete(config->cache, path);
     //stat_cache_delete_parent(config->cache, path);
 
@@ -817,7 +813,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     //char tempfile[PATH_MAX];
     //int fd;
     //ne_session *session;
-    
+
     path = path_cvt(path);
     if (debug)
         log_print(LOG_DEBUG, "mknod(%s)", path);
@@ -1007,7 +1003,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
         goto finish;
     }
 
-    // @TODO: Before public release:Update the stat cache instead.
+    // @TODO: Update the stat cache instead.
     stat_cache_delete(config->cache, path);
 
 finish:
@@ -1753,7 +1749,7 @@ static int config_privileges(struct fusedav_config *config) {
             }
             log_print(LOG_DEBUG, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
         }
-        
+
         if (seteuid(u->pw_uid) < 0) {
             log_print(LOG_ERR, "Can't drop uid to %d.", u->pw_uid);
             return -1;

@@ -166,7 +166,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     size_t vallen;
     char *errptr = NULL;
     //void *f;
-    //time_t current_time;
+    time_t current_time;
 
     key = path2key(path, false);
 
@@ -195,14 +195,28 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
-    /*
     current_time = time(NULL);
+
+    // First, check against the stat item itself.
+    //log_print(LOG_DEBUG, "Current time: %lu", current_time);
     if (current_time - value->updated > CACHE_TIMEOUT) {
-        log_print(LOG_DEBUG, "%s too old", path);
-        free(value);
-        return NULL;
+        char *directory;
+        time_t directory_updated;
+        int is_dir;
+
+        //log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+
+        // If that's too old, check the last update of the directory.
+        directory = strip_trailing_slash(ne_path_parent(path), &is_dir);
+        directory_updated = stat_cache_read_updated_children(cache, directory);
+        //log_print(LOG_DEBUG, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
+        free(directory);
+        if (current_time - directory_updated > CACHE_TIMEOUT) {
+            log_print(LOG_DEBUG, "%s is too old.", path);
+            free(value);
+            return NULL;
+        }
     }
-    */
 
     /*
     if ((f = file_cache_get(path))) {
@@ -255,14 +269,17 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     leveldb_readoptions_destroy(options);
 
     if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
-        r = -1;
+        r = 0;
     }
 
     if (value == NULL) return 0;
 
     r = *value;
+
+    //log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, r);
+
     free(value);
     return r;
 }
@@ -471,11 +488,11 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     //stat_cache_list_all(cache, path_prefix);
     if (!force) {
         timestamp = stat_cache_read_updated_children(cache, path_prefix);
-    
+
         if (timestamp == 0) {
             return -STAT_CACHE_NO_DATA;
         }
-    
+
         // Check for cache values which are too old; but timestamp = 0 needs to trigger below
         current_time = time(NULL);
         if (current_time - timestamp > CACHE_TIMEOUT) {
