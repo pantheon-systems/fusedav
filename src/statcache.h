@@ -52,8 +52,6 @@ unsigned long stat_cache_get_local_generation(void);
 int stat_cache_open(stat_cache_t **cache, char *storage_path);
 int stat_cache_close(stat_cache_t *cache);
 
-struct timespec stat_cache_now(void);
-
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);
 int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp);
 time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path);

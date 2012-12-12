@@ -158,15 +158,6 @@ int stat_cache_close(stat_cache_t *c) {
     return 0;
 }
 
-struct timespec stat_cache_now(void) {
-    struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
-        log_print(LOG_ERR, "clock_gettime error: %d", -errno);
-        // @TODO: Something to do here?
-    }
-    return now;
-}
-
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path) {
     struct stat_cache_value *value = NULL;
     char *key;
