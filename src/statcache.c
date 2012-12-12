@@ -165,7 +165,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     leveldb_readoptions_t *options;
     size_t vallen;
     char *errptr = NULL;
-    void *f;
+    //void *f;
     //time_t current_time;
 
     key = path2key(path, false);
