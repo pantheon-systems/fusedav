@@ -111,6 +111,7 @@ struct fusedav_config {
     mode_t file_mode;
     char *run_as_uid_name;
     char *run_as_gid_name;
+    bool progressive_propfind;
 };
 
 enum {
@@ -138,6 +139,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("file_mode=%o",                   file_mode, 0),
      FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid_name, 0),
      FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid_name, 0),
+     FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -380,8 +382,7 @@ static int update_directory(const char *path, bool attempt_progessive_update, vo
         return -EIO;
 
     // Attempt to freshen the cache.
-    // @TODO: Only use with supporting servers.
-    if (attempt_progessive_update) {
+    if (attempt_progessive_update && config->progressive_propfind) {
         timestamp = time(NULL);
         last_updated = stat_cache_read_updated_children(config->cache, path);
         asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
@@ -1687,6 +1688,8 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o gid=STRING (masks file group)\n"
                 "        -o file_mode=OCTAL (masks file permissions)\n"
                 "        -o dir_mode=OCTAL (masks directory permissions)\n"
+                "    Protocol options:\n"
+                "        -o progressive_propfind\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
