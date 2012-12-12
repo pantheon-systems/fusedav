@@ -53,6 +53,7 @@ unsigned long stat_cache_get_local_generation(void) {
     pthread_mutex_lock(&counter_mutex);
     if (counter == 0) {
         // Top 40 bits for the timestamp. Bottom 24 bits for the counter.
+        // Will be safe for at least a couple hundred years.
         counter = time(NULL);
         //log_print(LOG_DEBUG, "Pre-shift counter: %lu", counter);
         counter <<= 24;
