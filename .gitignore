@@ -9,3 +9,10 @@ config.status
 /Makefile
 config.h
 config.h.in
+/depcomp
+/doc
+/install-sh
+/missing
+/src/fusedav
+/src/Makefile
+/stamp-h1
