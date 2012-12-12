@@ -833,7 +833,6 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     if ((fd = mkstemp(tempfile)) < 0)
         return -errno;
 
-    // @TODO: Prepopulate file cache.
     unlink(tempfile);
 
     if (ne_put(session, path, fd)) {
@@ -1008,7 +1007,8 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
         goto finish;
     }
 
-    stat_cache_delete(config->cache, path); // @TODO: Update the stat cache instead.
+    // @TODO: Before public release:Update the stat cache instead.
+    stat_cache_delete(config->cache, path);
 
 finish:
     free(date);
@@ -1426,7 +1426,7 @@ static int dav_chmod(const char *path, mode_t mode) {
         goto finish;
     }
 
-    // @TODO: Lock for concurrency.
+    // @TODO: Before public release: Lock for concurrency.
     value = stat_cache_value_get(config->cache, path);
     if (value != NULL) {
         value->st.st_mode = mode;

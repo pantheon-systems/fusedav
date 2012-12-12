@@ -54,13 +54,13 @@ unsigned long stat_cache_get_local_generation(void) {
     if (counter == 0) {
         // Top 40 bits for the timestamp. Bottom 24 bits for the counter.
         counter = time(NULL);
-        log_print(LOG_DEBUG, "Pre-shift counter: %lu", counter);
+        //log_print(LOG_DEBUG, "Pre-shift counter: %lu", counter);
         counter <<= 24;
-        log_print(LOG_DEBUG, "Initialized counter: %lu", counter);
+        //log_print(LOG_DEBUG, "Initialized counter: %lu", counter);
     }
     ret = ++counter;
     pthread_mutex_unlock(&counter_mutex);
-    log_print(LOG_DEBUG, "stat_cache_get_local_generation: %lu", ret);
+    //log_print(LOG_DEBUG, "stat_cache_get_local_generation: %lu", ret);
     return ret;
 }
 
@@ -123,7 +123,7 @@ int stat_cache_open(stat_cache_t **c, char *storage_path) {
 
     // Check that a directory is set.
     if (!storage_path) {
-        // @TODO: Use a mkdtemp-based path.
+        // @TODO: Before public release: Use a mkdtemp-based path.
         log_print(LOG_WARNING, "No cache path specified.");
         return -EINVAL;
     }
@@ -169,8 +169,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
     key = path2key(path, false);
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "CGET: %s", key);
+    //log_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
@@ -191,9 +190,6 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
-    //if (S_ISDIR(value->st.st_mode))
-    //    print_stat(&value->st, path);
-
     if (vallen != sizeof(struct stat_cache_value)) {
         log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
@@ -207,11 +203,12 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
     */
 
-    // @TODO: Don't rely on file cache for this.
+    /*
     if ((f = file_cache_get(path))) {
         value->st.st_size = file_cache_get_size(f);
         file_cache_unref(cache, f);
     }
+    */
 
     //print_stat(&value->st, "CGET");
 
@@ -500,8 +497,6 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     stat_cache_iterator_free(iter);
     //log_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
 
-    // Ignore the entry that exactly matches the key prefix.
-    // @TODO: Remove this?
     if (found_entries == 0)
         return -STAT_CACHE_NO_DATA;
 
