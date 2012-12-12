@@ -1,0 +1,11 @@
+*.o
+.deps
+Makefile.in
+aclocal.m4
+configure
+*.cache
+config.log
+config.status
+/Makefile
+config.h
+config.h.in
