@@ -47,14 +47,12 @@ struct ldb_filecache_pdata {
     char etag[ETAG_MAX];
 };
 
-int ldb_filecache_opencache(ldb_filecache_t **cache, char *storage_path);
-int ldb_filecache_closecache(ldb_filecache_t *cache);
-
 int ldb_filecache_open(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info);
-int ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, ne_off_t offset);
-int ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset);
+ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, ne_off_t offset);
+ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset);
 int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s);
-int ldb_filecache_unref(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info);
-int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info);
+int ldb_filecache_unref(const char *path, struct fuse_file_info *info);
+int ldb_filecache_sync(const char *path, struct fuse_file_info *info);
+int ldb_filecache_delete(ldb_filecache_t *cache, const char *path);
 
 #endif
