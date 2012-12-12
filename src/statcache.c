@@ -60,7 +60,7 @@ unsigned int stat_cache_get_local_generation(void) {
 int print_stat(struct stat *stbuf, const char *title) {
     if (debug) {
         log_print(LOG_DEBUG, "stat: %s", title);
-        log_print(LOG_DEBUG, "  .st_mode=%o", stbuf->st_mode);
+        log_print(LOG_DEBUG, "  .st_mode=%04o", stbuf->st_mode);
         log_print(LOG_DEBUG, "  .st_nlink=%ld", stbuf->st_nlink);
         log_print(LOG_DEBUG, "  .st_uid=%d", stbuf->st_uid);
         log_print(LOG_DEBUG, "  .st_gid=%d", stbuf->st_gid);

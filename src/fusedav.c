@@ -37,6 +37,10 @@
 #include <getopt.h>
 #include <attr/xattr.h>
 
+#include <sys/types.h>
+#include <grp.h>
+#include <pwd.h>
+
 #include <ne_request.h>
 #include <ne_basic.h>
 #include <ne_props.h>
@@ -98,11 +102,15 @@ struct fusedav_config {
     bool lock_on_mount;
     int  verbosity;
     bool nodaemon;
-    bool noattributes;
+    bool noutimens;
     char *cache_path;
     stat_cache_t *cache;
     uid_t uid;
     gid_t gid;
+    mode_t dir_mode;
+    mode_t file_mode;
+    char *run_as_uid_name;
+    char *run_as_gid_name;
 };
 
 enum {
@@ -123,9 +131,13 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 5),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
-     FUSEDAV_OPT("noattributes",                   noattributes, true),
+     FUSEDAV_OPT("noutimens",                      noutimens, true),
      FUSEDAV_OPT("uid=%d",                         uid, 0),
      FUSEDAV_OPT("gid=%d",                         gid, 0),
+     FUSEDAV_OPT("dir_mode=%o",                    dir_mode, 0),
+     FUSEDAV_OPT("file_mode=%o",                   file_mode, 0),
+     FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid_name, 0),
+     FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid_name, 0),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -557,8 +569,14 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     stbuf->st_ctim.tv_nsec = 0;
 
     // @TODO: Make the "no permissions" mode configurable.
-    stbuf->st_uid = config->uid;
-    stbuf->st_gid = config->gid;
+    if (config->uid)
+        stbuf->st_uid = config->uid;
+    if (config->gid)
+        stbuf->st_gid = config->gid;
+    if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
+        stbuf->st_mode = S_IFDIR | config->dir_mode;
+    if (S_ISREG(stbuf->st_mode) && config->file_mode)
+        stbuf->st_mode = S_IFREG | config->file_mode;
     //clock_gettime(CLOCK_REALTIME, &stbuf->st_atim);
     //print_stat(stbuf, "getattr");
     return r;
@@ -954,7 +972,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
 
     //log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
-    if (config->noattributes) {
+    if (config->noutimens) {
         //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
         return r;
     }
@@ -1362,7 +1380,8 @@ static int dav_chmod(const char *path, mode_t mode) {
     ne_proppatch_operation ops[2];
     int r = 0;
 
-    if (config->noattributes)
+    // If both file and dir modes are fixed, there is nothing to set.
+    if (config->file_mode && config->dir_mode)
         return 0;
 
     assert(path);
@@ -1401,13 +1420,15 @@ finish:
     return r;
 }
 
-static int dav_chown(__unused const char *path, __unused uid_t u, __unused gid_t g) {
+static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
     struct fusedav_config *config = fuse_get_context()->private_data;
 
-    if (config->noattributes)
+    // If the uid and gid are fixed, there is nothing to chown.
+    if (config->uid && config->gid)
         return 0;
 
     // @TODO: Implement.
+    log_print(LOG_ERR, "NOT IMPLEMENTED: chown(%s, %d:%d)", path, u, g);
     return 0;
 }
 
@@ -1651,16 +1672,27 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    -V   --version   print version\n"
                 "\n"
                 "fusedav mount options:\n"
-                "    -o username=STRING\n"
-                "    -o password=STRING\n"
-                "    -o ca_certificate=PATH\n"
-                "    -o client_certificate=PATH\n"
-                "    -o client_certificate_password=STRING\n"
-                "    -o lock_timeout=NUM\n"
-                "    -o lock_on_mount\n"
-                "    -o debug\n"
-                "    -o nodaemon\n"
-                "    -o noattributes\n"
+                "    Authenticating with the server:\n"
+                "        -o username=STRING (for HTTP authentication)\n"
+                "        -o password=STRING (for HTTP authentication)\n"
+                "        -o ca_certificate=PATH\n"
+                "        -o client_certificate=PATH\n"
+                "        -o client_certificate_password=STRING\n"
+                "    Locking:\n"
+                "        -o lock_timeout=NUM\n"
+                "        -o lock_on_mount\n"
+                "    File and directory attributes:\n"
+                "        -o noutimens\n"
+                "        -o uid=STRING (masks file owner)\n"
+                "        -o gid=STRING (masks file group)\n"
+                "        -o file_mode=OCTAL (masks file permissions)\n"
+                "        -o dir_mode=OCTAL (masks directory permissions)\n"
+                "    Daemon, logging, and process privilege:\n"
+                "        -o verbosity=NUM (use 7 for debug)\n"
+                "        -o nodaemon\n"
+                "        -o run_as_uid=STRING\n"
+                "        -o run_as_gid=STRING (defaults to primary group for run_as_uid)\n"
+                "        -o cache_path=STRING\n"
                 "\n"
                 , outargs->argv[0]);
         fuse_opt_add_arg(outargs, "-ho");
@@ -1680,20 +1712,32 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
 }
 
 static int config_privileges(struct fusedav_config *config) {
-    if (config->gid > 0) {
-        if (setegid(config->gid) < 0) {
-            log_print(LOG_ERR, "Can't drop gid to %d.", config->gid);
+    if (config->run_as_gid_name != 0) {
+        struct group *g = getgrnam(config->run_as_gid_name);
+        if (setegid(g->gr_gid) < 0) {
+            log_print(LOG_ERR, "Can't drop gid to %d.", g->gr_gid);
             return -1;
         }
-        log_print(LOG_DEBUG, "Set egid to %d.", config->gid);
+        log_print(LOG_DEBUG, "Set egid to %d.", g->gr_gid);
     }
 
-    if (config->uid > 0) {
-        if (seteuid(config->uid) < 0) {
-            log_print(LOG_ERR, "Can't drop uid to %d.", config->uid);
+    if (config->run_as_uid_name != 0) {
+        struct passwd *u = getpwnam(config->run_as_uid_name);
+
+        // If there's no explict group set, use the user's primary gid.
+        if (config->run_as_gid_name == 0) {
+            if (setegid(u->pw_gid) < 0) {
+                log_print(LOG_ERR, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+                return -1;
+            }
+            log_print(LOG_DEBUG, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+        }
+        
+        if (seteuid(u->pw_uid) < 0) {
+            log_print(LOG_ERR, "Can't drop uid to %d.", u->pw_uid);
             return -1;
         }
-        log_print(LOG_DEBUG, "Set euid to %d.", config->uid);
+        log_print(LOG_DEBUG, "Set euid to %d.", u->pw_uid);
     }
 
     return 0;
