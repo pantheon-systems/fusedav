@@ -26,6 +26,8 @@
 #define STAT_CACHE_OLD_DATA 2
 #define STAT_CACHE_NO_DATA 1
 
+#define STAT_CACHE_NEGATIVE_TTL 3
+
 typedef leveldb_t stat_cache_t;
 
 // Used opaquely outside this library.
@@ -37,19 +39,18 @@ struct stat_cache_iterator {
 
 struct stat_cache_value {
     struct stat st;
-    unsigned int local_generation;
+    unsigned long local_generation;
     time_t updated;
+    bool prepopulated; // Added to the local cache; not from the server.
     char remote_generation[RGEN_LEN];
 };
 
 int print_stat(struct stat *stbuf, const char *title);
 
-unsigned int stat_cache_get_local_generation(void);
+unsigned long stat_cache_get_local_generation(void);
 
 int stat_cache_open(stat_cache_t **cache, char *storage_path);
 int stat_cache_close(stat_cache_t *cache);
-
-struct timespec stat_cache_now(void);
 
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);
 int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp);

@@ -32,7 +32,6 @@
 #include <sys/stat.h>
 
 #include "statcache.h"
-#include "filecache.h"
 #include "fusedav.h"
 #include "log.h"
 
@@ -47,20 +46,28 @@ struct stat_cache_entry {
     const struct stat_cache_value *value;
 };
 
-// @TODO: Write this to LevelDB and restore on restart or use a <start time>.<counter> tuple.
-unsigned int stat_cache_get_local_generation(void) {
-    static unsigned int counter = 0;
-    unsigned int ret;
+unsigned long stat_cache_get_local_generation(void) {
+    static unsigned long counter = 0;
+    unsigned long ret;
     pthread_mutex_lock(&counter_mutex);
+    if (counter == 0) {
+        // Top 40 bits for the timestamp. Bottom 24 bits for the counter.
+        // Will be safe for at least a couple hundred years.
+        counter = time(NULL);
+        //log_print(LOG_DEBUG, "Pre-shift counter: %lu", counter);
+        counter <<= 24;
+        //log_print(LOG_DEBUG, "Initialized counter: %lu", counter);
+    }
     ret = ++counter;
     pthread_mutex_unlock(&counter_mutex);
+    //log_print(LOG_DEBUG, "stat_cache_get_local_generation: %lu", ret);
     return ret;
 }
 
 int print_stat(struct stat *stbuf, const char *title) {
     if (debug) {
         log_print(LOG_DEBUG, "stat: %s", title);
-        log_print(LOG_DEBUG, "  .st_mode=%o", stbuf->st_mode);
+        log_print(LOG_DEBUG, "  .st_mode=%04o", stbuf->st_mode);
         log_print(LOG_DEBUG, "  .st_nlink=%ld", stbuf->st_nlink);
         log_print(LOG_DEBUG, "  .st_uid=%d", stbuf->st_uid);
         log_print(LOG_DEBUG, "  .st_gid=%d", stbuf->st_gid);
@@ -116,7 +123,7 @@ int stat_cache_open(stat_cache_t **c, char *storage_path) {
 
     // Check that a directory is set.
     if (!storage_path) {
-        // @TODO: Use a mkdtemp-based path.
+        // @TODO: Before public release: Use a mkdtemp-based path.
         log_print(LOG_WARNING, "No cache path specified.");
         return -EINVAL;
     }
@@ -151,28 +158,18 @@ int stat_cache_close(stat_cache_t *c) {
     return 0;
 }
 
-struct timespec stat_cache_now(void) {
-    struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
-        log_print(LOG_ERR, "clock_gettime error: %d", -errno);
-        // @TODO: Something to do here?
-    }
-    return now;
-}
-
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path) {
     struct stat_cache_value *value = NULL;
     char *key;
     leveldb_readoptions_t *options;
     size_t vallen;
     char *errptr = NULL;
-    void *f;
+    //void *f;
     time_t current_time;
 
     key = path2key(path, false);
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "CGET: %s", key);
+    //log_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
@@ -193,27 +190,39 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
-    //if (S_ISDIR(value->st.st_mode))
-    //    print_stat(&value->st, path);
-
     if (vallen != sizeof(struct stat_cache_value)) {
         log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
-    /*
     current_time = time(NULL);
+
+    // First, check against the stat item itself.
+    //log_print(LOG_DEBUG, "Current time: %lu", current_time);
     if (current_time - value->updated > CACHE_TIMEOUT) {
-        log_print(LOG_DEBUG, "%s too old", path);
-        free(value);
-        return NULL;
+        char *directory;
+        time_t directory_updated;
+        int is_dir;
+
+        //log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+
+        // If that's too old, check the last update of the directory.
+        directory = strip_trailing_slash(ne_path_parent(path), &is_dir);
+        directory_updated = stat_cache_read_updated_children(cache, directory);
+        //log_print(LOG_DEBUG, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
+        free(directory);
+        if (current_time - directory_updated > CACHE_TIMEOUT) {
+            log_print(LOG_DEBUG, "%s is too old.", path);
+            free(value);
+            return NULL;
+        }
+    }
+
+    /*
+    if ((f = file_cache_get(path))) {
+        value->st.st_size = file_cache_get_size(f);
+        file_cache_unref(cache, f);
     }
     */
-
-    // @TODO: Don't rely on file cache for this.
-    if ((f = File_Cache_get(path))) {
-        value->st.st_size = File_Cache_get_size(f);
-        File_Cache_unref(cache, f);
-    }
 
     //print_stat(&value->st, "CGET");
 
@@ -259,14 +268,17 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     leveldb_readoptions_destroy(options);
 
     if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
-        r = -1;
+        r = 0;
     }
 
     if (value == NULL) return 0;
 
     r = *value;
+
+    //log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, r);
+
     free(value);
     return r;
 }
@@ -502,8 +514,6 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     stat_cache_iterator_free(iter);
     //log_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
 
-    // Ignore the entry that exactly matches the key prefix.
-    // @TODO: Remove this?
     if (found_entries == 0)
         return -STAT_CACHE_NO_DATA;
 

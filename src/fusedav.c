@@ -37,6 +37,10 @@
 #include <getopt.h>
 #include <attr/xattr.h>
 
+#include <sys/types.h>
+#include <grp.h>
+#include <pwd.h>
+
 #include <ne_request.h>
 #include <ne_basic.h>
 #include <ne_props.h>
@@ -53,7 +57,6 @@
 
 #include "log.h"
 #include "statcache.h"
-#include "filecache.h"
 #include "ldb-filecache.h"
 #include "session.h"
 #include "fusedav.h"
@@ -64,7 +67,7 @@ const ne_propname query_properties[] = {
     { "DAV:", "getcontentlength" },
     { "DAV:", "getlastmodified" },
     { "DAV:", "creationdate" },
-    { "DAV:", "event" }, // @TODO: Optional progressive PROPFIND support.
+    { "DAV:", "event" }, // For optional progressive PROPFIND support.
     { NULL, NULL }
 };
 
@@ -99,9 +102,18 @@ struct fusedav_config {
     bool lock_on_mount;
     int  verbosity;
     bool nodaemon;
-    bool noattributes;
+    bool ignoreutimens;
     char *cache_path;
     stat_cache_t *cache;
+    uid_t uid;
+    gid_t gid;
+    mode_t dir_mode;
+    mode_t file_mode;
+    char *run_as_uid_name;
+    char *run_as_gid_name;
+    bool progressive_propfind;
+    bool refresh_dir_for_file_stat;
+    bool ignorexattr;
 };
 
 enum {
@@ -122,7 +134,16 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
-     FUSEDAV_OPT("noattributes",                   noattributes, true),
+     FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
+     FUSEDAV_OPT("uid=%d",                         uid, 0),
+     FUSEDAV_OPT("gid=%d",                         gid, 0),
+     FUSEDAV_OPT("dir_mode=%o",                    dir_mode, 0),
+     FUSEDAV_OPT("file_mode=%o",                   file_mode, 0),
+     FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid_name, 0),
+     FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid_name, 0),
+     FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
+     FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
+     FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -277,7 +298,7 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
     st->st_gid = getgid();
 }
 
-static char *strip_trailing_slash(char *fn, int *is_dir) {
+char *strip_trailing_slash(char *fn, int *is_dir) {
     size_t l = strlen(fn);
     assert(fn);
     assert(is_dir);
@@ -298,13 +319,14 @@ static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_p
     char *cache_path = NULL;
     bool is_deleted;
 
-    assert(f);
+    //assert(f);
 
     strncpy(fn, u->path, sizeof(fn));
     fn[sizeof(fn)-1] = 0;
     strip_trailing_slash(fn, &is_dir);
 
     fill_stat(&value.st, results, &is_deleted, is_dir);
+    value.prepopulated = false;
 
     if (strcmp(fn, f->root) && fn[0]) {
         //char *h;
@@ -351,6 +373,55 @@ static void getdir_cache_callback(
     free(h);
 }
 
+static int update_directory(const char *path, bool attempt_progessive_update, void *userdata) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+    bool needs_update = true;
+    ne_session *session;
+    unsigned int min_generation;
+    time_t last_updated;
+    time_t timestamp;
+    char *update_path = NULL;
+
+    if (!(session = session_get(1)))
+        return -EIO;
+
+    // Attempt to freshen the cache.
+    if (attempt_progessive_update && config->progressive_propfind) {
+        timestamp = time(NULL);
+        last_updated = stat_cache_read_updated_children(config->cache, path);
+        asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
+
+        log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
+        if (simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, userdata) == NE_OK) {
+            log_print(LOG_DEBUG, "Freshen PROPFIND success");
+            needs_update = false;
+        }
+        else {
+            log_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
+        }
+
+        free(update_path);
+    }
+
+    // If we had *no data* or freshening failed, rebuild the cache
+    // with a full PROPFIND.
+    if (needs_update) {
+        log_print(LOG_DEBUG, "Replacing directory data: %s", path);
+        timestamp = time(NULL);
+        min_generation = stat_cache_get_local_generation();
+        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, userdata) != NE_OK) {
+            log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
+            return -ENOENT;
+        }
+        stat_cache_delete_older(config->cache, path, min_generation);
+    }
+
+    // Mark the directory contents as updated.
+    log_print(LOG_DEBUG, "Marking directory %s as updated at timestamp %lu.", path, timestamp);
+    stat_cache_updated_children(config->cache, path, timestamp);
+    return 0;
+}
+
 static int dav_readdir(
         const char *path,
         void *buf,
@@ -360,18 +431,11 @@ static int dav_readdir(
 
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct fill_info f;
-    ne_session *session;
-    unsigned int min_generation;
-    time_t timestamp;
-    time_t last_updated;
-    char *update_path = NULL;
-    bool needs_update;
     int ret;
 
     path = path_cvt(path);
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "getdir(%s)", path);
+    //log_print(LOG_DEBUG, "getdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -383,47 +447,16 @@ static int dav_readdir(
     // First, attempt to hit the cache.
     ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, false);
     if (ret < 0) {
-        needs_update = true;
-        timestamp = time(NULL);
-
         if (debug) {
             if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, "DIR-CACHE-TOO-OLD: %s", path);
             else log_print(LOG_DEBUG, "DIR-CACHE-MISS: %s", path);
         }
 
-        if (!(session = session_get(1)))
-            return -EIO;
-
-        // If we have *old* data in some form, attempt to freshen the cache.
-        // @TODO: Only use with supporting servers.
-        if (ret == -STAT_CACHE_OLD_DATA) {
-            last_updated = stat_cache_read_updated_children(config->cache, path);
-            asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
-
-            if (simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) == NE_OK) {
-                log_print(LOG_DEBUG, "Freshen PROPFIND success");
-                needs_update = false;
-            }
-            else {
-                log_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
-            }
-
-            free(update_path);
+        log_print(LOG_DEBUG, "Updating directory: %s", path);
+        if (update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &f) != 0) {
+            log_print(LOG_ERR, "Failed to update directory: %s", path);
+            return -1;
         }
-
-        // If we had *no data* or freshening failed, rebuild the cache
-        // with a full PROPFIND.
-        if (needs_update) {
-            min_generation = stat_cache_get_local_generation();
-            if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, &f) != NE_OK) {
-                log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
-                return -ENOENT;
-            }
-            stat_cache_delete_older(config->cache, path, min_generation);
-        }
-
-        // Mark the directory contents as updated.
-        stat_cache_updated_children(config->cache, path, timestamp);
 
         // Output the new data, skipping any cache freshness checks
         // (which should pass, anyway).
@@ -456,6 +489,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     fill_stat(st, results, NULL, is_dir);
 
     value.st = *st;
+    value.prepopulated = false;
     stat_cache_value_set(config->cache, fn, &value);
 }
 
@@ -463,13 +497,22 @@ static int get_stat(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     struct stat_cache_value *response;
+    char *parent_path;
+    int is_dir = 0;
+    time_t parent_children_update_ts;
+    int junk_value = 0;
+
+    memset(stbuf, 0, sizeof(struct stat));
 
     //if (debug)
     //    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
-    if (!(session = session_get(1)))
+    if (!(session = session_get(1))) {
+        memset(stbuf, 0, sizeof(struct stat));
         return -EIO;
+    }
 
+    // Check if we can directly hit this file in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path))) {
         *stbuf = response->st;
         free(response);
@@ -477,27 +520,73 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
-    if (debug)
-        log_print(LOG_NOTICE, "STAT-CACHE-MISS");
+    log_print(LOG_DEBUG, "STAT-CACHE-MISS");
 
-    if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
-        stat_cache_delete(config->cache, path);
-        log_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
-        return -ENOENT;
+    // If it's the root directory, just do a single PROPFIND.
+    log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
+    if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
+        log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
+        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
+            stat_cache_delete(config->cache, path);
+            log_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
+            memset(stbuf, 0, sizeof(struct stat));
+            return -ENOENT;
+        }
+        return 0;
     }
 
-    if (debug)
-        log_print(LOG_DEBUG, "STAT-CACHE-PUT");
-    //print_stat(stbuf, "get_stat from simple_propfind_with_redirect");
+    // If we're here, refresh_dir_for_file_stat is set, so we're updating
+    // directory stat data to, in turn, update the desired file stat data.
 
-    return 0;
+    // If it's not found, check the freshness of its directory.
+    parent_path = strip_trailing_slash(ne_path_parent(path), &is_dir);
+
+    log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
+    parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path);
+    log_print(LOG_DEBUG, "Parent was updated: %lu", parent_children_update_ts);
+
+    // If the parent directory is out of date, update it.
+    if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
+        log_print(LOG_DEBUG, "Updating directory: %s", parent_path);
+        update_directory(parent_path, (parent_children_update_ts > 0), &junk_value);
+    }
+
+    // Try again to hit the file in the stat cache.
+    if ((response = stat_cache_value_get(config->cache, path))) {
+        log_print(LOG_DEBUG, "Hit updated cache: %s", path);
+        *stbuf = response->st;
+        free(response);
+        return stbuf->st_mode == 0 ? -ENOENT : 0;
+    }
+
+    // If it's still not found, return that it doesn't exist.
+    memset(stbuf, 0, sizeof(struct stat));
+    return -ENOENT;
 }
 
 static int dav_getattr(const char *path, struct stat *stbuf) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+    int r;
     path = path_cvt(path);
-    //if (debug)
-    //    log_print(LOG_NOTICE, "getattr(%s)", path);
-    return get_stat(path, stbuf);
+
+    //log_print(LOG_DEBUG, "getattr(%s)", path);
+    r = get_stat(path, stbuf);
+
+    // Zero-out unused nanosecond fields.
+    stbuf->st_atim.tv_nsec = 0;
+    stbuf->st_mtim.tv_nsec = 0;
+    stbuf->st_ctim.tv_nsec = 0;
+
+    if (config->uid)
+        stbuf->st_uid = config->uid;
+    if (config->gid)
+        stbuf->st_gid = config->gid;
+    if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
+        stbuf->st_mode = S_IFDIR | config->dir_mode;
+    if (S_ISREG(stbuf->st_mode) && config->file_mode)
+        stbuf->st_mode = S_IFREG | config->file_mode;
+
+    return r;
 }
 
 static int dav_unlink(const char *path) {
@@ -566,15 +655,15 @@ static int dav_rmdir(const char *path) {
     return 0;
 }
 
-static int dav_mkdir(const char *path, __unused mode_t mode) {
+static int dav_mkdir(const char *path, mode_t mode) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value value;
     char fn[PATH_MAX];
     ne_session *session;
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "mkdir(%s)", path);
+    log_print(LOG_DEBUG, "mkdir(%s, %04o)", path, mode);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -586,8 +675,22 @@ static int dav_mkdir(const char *path, __unused mode_t mode) {
         return -ENOENT;
     }
 
-    stat_cache_delete(config->cache, path);
-    stat_cache_delete_parent(config->cache, path);
+    // Prepopulate stat cache.
+    value.st.st_mode = mode | S_IFDIR;
+    value.st.st_nlink = 3;
+    value.st.st_size = 0;
+    value.st.st_atime = time(NULL);
+    value.st.st_mtime = value.st.st_atime;
+    value.st.st_ctime = value.st.st_mtime;
+    value.st.st_blksize = 0;
+    value.st.st_blocks = 8;
+    value.st.st_uid = getuid();
+    value.st.st_gid = getgid();
+    value.prepopulated = true;
+    stat_cache_value_set(config->cache, path, &value);
+
+    //stat_cache_delete(config->cache, path);
+    //stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
@@ -638,42 +741,31 @@ finish:
 }
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
-    // void *f = NULL;
+    struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
-    ne_session *session;
 
     path = path_cvt(path);
 
-    if (debug)
+    if (debug) {
         log_print(LOG_DEBUG, "release(%s)", path);
-
-    // JB do we need session?
-    if (!(session = session_get(1))) {
-        ret = -EIO;
-        goto finish;
     }
 
-    ret = ldb_filecache_unref(path, info);
-
-finish:
+    if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
+        log_print(LOG_ERR, "dav_write: error on ldb_filecache_sync: %d::%s", ret, path);
+    }
 
     return ret;
 }
 
 static int dav_fsync(const char *path, __unused int isdatasync, __unused struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
-    ne_session *session;
 
     path = path_cvt(path);
     if (debug)
         log_print(LOG_DEBUG, "fsync(%s)", path);
 
-    if (!(session = session_get(1))) {
-        ret = -EIO;
-        goto finish;
-    }
-
-    if ((ret = ldb_filecache_sync(path, info)) < 0) {
+    if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
         goto finish;
     }
 
@@ -684,16 +776,17 @@ finish:
 
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    //struct stat_cache_value value;
-    char tempfile[PATH_MAX];
-    int fd;
-    ne_session *session;
-    //struct stat st;
+    struct stat_cache_value value;
+
+    //char tempfile[PATH_MAX];
+    //int fd;
+    //ne_session *session;
 
     path = path_cvt(path);
     if (debug)
         log_print(LOG_DEBUG, "mknod(%s)", path);
 
+    /*
     if (!(session = session_get(1)))
         return -EIO;
 
@@ -704,7 +797,6 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     if ((fd = mkstemp(tempfile)) < 0)
         return -errno;
 
-    // @TODO: Prepopulate file cache.
     unlink(tempfile);
 
     if (ne_put(session, path, fd)) {
@@ -717,28 +809,25 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
         log_print(LOG_DEBUG, "mknod(%s):PUT complete", path);
 
     close(fd);
+    */
 
     // Prepopulate stat cache.
 
-    /*
-    st.st_mode = 040775;  // @TODO: Use the right mode data.
-    st.st_nlink = 3;
-    st.st_size = 0;
-    st.st_atime = time(NULL);
-    st.st_mtime = st.st_atime;
-    st.st_ctime = st.st_mtime;
-    st.st_blksize = 0;
-    st.st_blocks = 8;
-    st.st_uid = getuid();
-    st.st_gid = getgid();
-
-    value.st = st;
-
+    value.st.st_mode = mode | S_IFREG;
+    value.st.st_nlink = 1;
+    value.st.st_size = 0;
+    value.st.st_atime = time(NULL);
+    value.st.st_mtime = value.st.st_atime;
+    value.st.st_ctime = value.st.st_mtime;
+    value.st.st_blksize = 0;
+    value.st.st_blocks = 8;
+    value.st.st_uid = getuid();
+    value.st.st_gid = getgid();
+    value.prepopulated = true;
     stat_cache_value_set(config->cache, path, &value);
-    */
 
-    stat_cache_delete(config->cache, path);
-    stat_cache_delete_parent(config->cache, path);
+    //stat_cache_delete(config->cache, path);
+    //stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
@@ -786,7 +875,7 @@ finish:
 }
 
 static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
-    ssize_t ret, bytes_written;
+    ssize_t bytes_written;
 
     path = path_cvt(path);
 
@@ -800,11 +889,6 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     }
 
 finish:
-
-    // Sync -> writethrough
-    if ((ret = ldb_filecache_sync(path, info)) < 0) {
-        log_print(LOG_ERR, "dav_write: error on ldb_filecache_sync: %d::%s", ret, path);
-    }
 
    return bytes_written;
 }
@@ -840,18 +924,16 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     int r = 0;
     char *date;
 
-    if (config->noattributes) {
-        if (debug)
-            log_print(LOG_DEBUG, "Skipping attribute setting.");
+    //log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
+
+    if (config->ignoreutimens) {
+        //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
         return r;
     }
 
     assert(path);
 
     path = path_cvt(path);
-
-    if (debug)
-        log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
@@ -869,7 +951,8 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
         goto finish;
     }
 
-    stat_cache_delete(config->cache, path);  // @TODO: Update the stat cache instead.
+    // @TODO: Update the stat cache instead.
+    stat_cache_delete(config->cache, path);
 
 finish:
     free(date);
@@ -940,9 +1023,12 @@ static int dav_listxattr(
         char *list,
         size_t size) {
 
+    struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     struct listxattr_info l;
 
+    if (config->ignorexattr)
+        return 0;
 
     assert(path);
 
@@ -1074,18 +1160,21 @@ static int dav_getxattr(
         char *value,
         size_t size) {
 
+    struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     struct getxattr_info g;
     ne_propname props[2];
     char dnspace[128], dname[128];
+
+    if (config->ignorexattr)
+        return -ENOATTR;
 
     assert(path);
 
     path = path_cvt(path);
     name = fix_xattr(name);
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
+    log_print(LOG_DEBUG, "getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0)
         return -ENOATTR;
@@ -1136,6 +1225,9 @@ static int dav_setxattr(
     char dnspace[128], dname[128];
     char *value_fixed = NULL;
 
+    if (config->ignorexattr)
+        return 0;
+
     assert(path);
     assert(name);
     assert(value);
@@ -1143,8 +1235,7 @@ static int dav_setxattr(
     path = path_cvt(path);
     name = fix_xattr(name);
 
-    if (debug)
-        log_print(LOG_DEBUG, "setxattr(%s, %s)", path, name);
+    log_print(LOG_DEBUG, "setxattr(%s, %s)", path, name);
 
     if (flags) {
         r = ENOTSUP;
@@ -1252,7 +1343,8 @@ static int dav_chmod(const char *path, mode_t mode) {
     ne_proppatch_operation ops[2];
     int r = 0;
 
-    if (config->noattributes)
+    // If both file and dir modes are fixed, there is nothing to set.
+    if (config->file_mode && config->dir_mode)
         return 0;
 
     assert(path);
@@ -1278,7 +1370,7 @@ static int dav_chmod(const char *path, mode_t mode) {
         goto finish;
     }
 
-    // @TODO: Lock for concurrency.
+    // @TODO: Before public release: Lock for concurrency.
     value = stat_cache_value_get(config->cache, path);
     if (value != NULL) {
         value->st.st_mode = mode;
@@ -1291,14 +1383,15 @@ finish:
     return r;
 }
 
-static int dav_chown(__unused const char *path, __unused uid_t u, __unused gid_t g) {
+static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
     struct fusedav_config *config = fuse_get_context()->private_data;
 
-    if (config->noattributes)
+    // If the uid and gid are fixed, there is nothing to chown.
+    if (config->uid && config->gid)
         return 0;
 
-    // @TODO: Implement.
-    return 0;
+    log_print(LOG_ERR, "NOT IMPLEMENTED: chown(%s, %d:%d)", path, u, g);
+    return -EPROTONOSUPPORT;
 }
 
 static struct fuse_operations dav_oper = {
@@ -1319,7 +1412,6 @@ static struct fuse_operations dav_oper = {
     .write       = dav_write,
     .release     = dav_release,
     .fsync       = dav_fsync,
-// @TODO: Make optional.
     .setxattr    = dav_setxattr,
     .getxattr    = dav_getxattr,
     .listxattr   = dav_listxattr,
@@ -1542,16 +1634,31 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    -V   --version   print version\n"
                 "\n"
                 "fusedav mount options:\n"
-                "    -o username=STRING\n"
-                "    -o password=STRING\n"
-                "    -o ca_certificate=PATH\n"
-                "    -o client_certificate=PATH\n"
-                "    -o client_certificate_password=STRING\n"
-                "    -o lock_timeout=NUM\n"
-                "    -o lock_on_mount\n"
-                "    -o debug\n"
-                "    -o nodaemon\n"
-                "    -o noattributes\n"
+                "    Authenticating with the server:\n"
+                "        -o username=STRING\n"
+                "        -o password=STRING\n"
+                "        -o ca_certificate=PATH\n"
+                "        -o client_certificate=PATH\n"
+                "        -o client_certificate_password=STRING\n"
+                "    Locking:\n"
+                "        -o lock_timeout=NUM\n"
+                "        -o lock_on_mount\n"
+                "    File and directory attributes:\n"
+                "        -o uid=STRING (masks file owner)\n"
+                "        -o gid=STRING (masks file group)\n"
+                "        -o file_mode=OCTAL (masks file permissions)\n"
+                "        -o dir_mode=OCTAL (masks directory permissions)\n"
+                "        -o ignoreutimens\n"
+                "        -o ignorexattr\n"
+                "    Protocol and performance options:\n"
+                "        -o progressive_propfind\n"
+                "        -o refresh_dir_for_file_stat\n"
+                "    Daemon, logging, and process privilege:\n"
+                "        -o verbosity=NUM (use 7 for debug)\n"
+                "        -o nodaemon\n"
+                "        -o run_as_uid=STRING\n"
+                "        -o run_as_gid=STRING (defaults to primary group for run_as_uid)\n"
+                "        -o cache_path=STRING\n"
                 "\n"
                 , outargs->argv[0]);
         fuse_opt_add_arg(outargs, "-ho");
@@ -1568,6 +1675,38 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
         exit(0);
     }
     return 1;
+}
+
+static int config_privileges(struct fusedav_config *config) {
+    if (config->run_as_gid_name != 0) {
+        struct group *g = getgrnam(config->run_as_gid_name);
+        if (setegid(g->gr_gid) < 0) {
+            log_print(LOG_ERR, "Can't drop gid to %d.", g->gr_gid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, "Set egid to %d.", g->gr_gid);
+    }
+
+    if (config->run_as_uid_name != 0) {
+        struct passwd *u = getpwnam(config->run_as_uid_name);
+
+        // If there's no explict group set, use the user's primary gid.
+        if (config->run_as_gid_name == 0) {
+            if (setegid(u->pw_gid) < 0) {
+                log_print(LOG_ERR, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+                return -1;
+            }
+            log_print(LOG_DEBUG, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+        }
+
+        if (seteuid(u->pw_uid) < 0) {
+            log_print(LOG_ERR, "Can't drop uid to %d.", u->pw_uid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, "Set euid to %d.", u->pw_uid);
+    }
+
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
@@ -1618,17 +1757,13 @@ int main(int argc, char *argv[]) {
     // Apply debug mode.
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
+    log_print(LOG_DEBUG, "Parsed options.");
 
-    if (debug)
-        log_print(LOG_DEBUG, "Parsed options.");
+    if (config.ignoreutimens)
+        log_print(LOG_NOTICE, "Ignoring utimens requests.");
 
-    if (stat_cache_open(&config.cache, config.cache_path) < 0) {
-        log_print(LOG_WARNING, "Failed to open the stat cache.");
-        config.cache = NULL;
-    }
-
-    if (debug)
-        log_print(LOG_DEBUG, "Opened stat cache.");
+    if (config.ignorexattr)
+        log_print(LOG_NOTICE, "Ignoring extended attributes.");
 
     if (debug)
         log_print(LOG_DEBUG, "Opened ldb file cache.");
@@ -1679,8 +1814,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (config.nodaemon) {
-        if (debug)
-            log_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
+        log_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
     }
     else {
         if (debug)
@@ -1690,6 +1824,19 @@ int main(int argc, char *argv[]) {
             goto finish;
         }
     }
+
+    log_print(LOG_DEBUG, "Attempting to configure privileges.");
+    if (config_privileges(&config) < 0) {
+        log_print(LOG_CRIT, "Failed to configure privileges.");
+        goto finish;
+    }
+
+    if (stat_cache_open(&config.cache, config.cache_path) < 0) {
+        log_print(LOG_WARNING, "Failed to open the stat cache.");
+        config.cache = NULL;
+    }
+
+    log_print(LOG_DEBUG, "Opened stat cache.");
 
     if (debug)
         log_print(LOG_DEBUG, "Entering main FUSE loop.");
