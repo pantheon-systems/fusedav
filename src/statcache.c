@@ -1,5 +1,3 @@
-/* $Id$ */
-
 /***
   This file is part of fusedav.
 
@@ -7,12 +5,12 @@
   under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   fusedav is distributed in the hope that it will be useful, but WITHOUT
   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
   License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with fusedav; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
@@ -29,366 +27,513 @@
 #include <malloc.h>
 #include <pthread.h>
 #include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <sys/stat.h>
 
 #include "statcache.h"
 #include "filecache.h"
 #include "fusedav.h"
+#include "log.h"
 
 #include <ne_uri.h>
 
-#include <systemd/sd-journal.h>
+#define CACHE_TIMEOUT 3
 
-#define CACHE_SIZE 2049
-#define CACHE_TIMEOUT 60
+static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-struct dir_entry {
-    struct dir_entry *next;
-    char filename[];
+struct stat_cache_entry {
+    const char *key;
+    const struct stat_cache_value *value;
 };
 
-struct cache_entry {
-    struct {
-        int valid;
-        uint32_t hash;
-        char *filename;
-        time_t dead;
-        struct stat st;
-    } stat_info;
-
-    struct {
-        int valid, filling, in_use, valid2;
-        uint32_t hash;
-        char *filename;
-        struct dir_entry *entries, *entries2;
-        time_t dead, dead2;
-    } dir_info;
-};
-
-static struct cache_entry *cache = NULL;
-static pthread_mutex_t stat_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t dir_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static uint32_t calc_hash(const char *s) {
-    uint32_t h = 0;
-
-    for (; *s; s++) {
-        h ^= * (const uint8_t*) s;
-        h = (h << 8) | (h  >> 24);
+unsigned long stat_cache_get_local_generation(void) {
+    static unsigned long counter = 0;
+    unsigned long ret;
+    pthread_mutex_lock(&counter_mutex);
+    if (counter == 0) {
+        // Top 40 bits for the timestamp. Bottom 24 bits for the counter.
+        // Will be safe for at least a couple hundred years.
+        counter = time(NULL);
+        //log_print(LOG_DEBUG, "Pre-shift counter: %lu", counter);
+        counter <<= 24;
+        //log_print(LOG_DEBUG, "Initialized counter: %lu", counter);
     }
-
-    return h;
+    ret = ++counter;
+    pthread_mutex_unlock(&counter_mutex);
+    //log_print(LOG_DEBUG, "stat_cache_get_local_generation: %lu", ret);
+    return ret;
 }
 
-int stat_cache_get(const char *fn, struct stat *st) {
-    uint32_t h;
-    struct cache_entry *ce;
-    int r = -1;
-    void *f;
+int print_stat(struct stat *stbuf, const char *title) {
+    if (debug) {
+        log_print(LOG_DEBUG, "stat: %s", title);
+        log_print(LOG_DEBUG, "  .st_mode=%04o", stbuf->st_mode);
+        log_print(LOG_DEBUG, "  .st_nlink=%ld", stbuf->st_nlink);
+        log_print(LOG_DEBUG, "  .st_uid=%d", stbuf->st_uid);
+        log_print(LOG_DEBUG, "  .st_gid=%d", stbuf->st_gid);
+        log_print(LOG_DEBUG, "  .st_size=%ld", stbuf->st_size);
+        log_print(LOG_DEBUG, "  .st_blksize=%ld", stbuf->st_blksize);
+        log_print(LOG_DEBUG, "  .st_blocks=%ld", stbuf->st_blocks);
+        log_print(LOG_DEBUG, "  .st_atime=%ld", stbuf->st_atime);
+        log_print(LOG_DEBUG, "  .st_mtime=%ld", stbuf->st_mtime);
+        log_print(LOG_DEBUG, "  .st_ctime=%ld", stbuf->st_ctime);
+    }
+    return 0;
+}
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "CGET: %s", fn);
-    
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
+void stat_cache_value_free(struct stat_cache_value *value) {
+    leveldb_free(value);
+}
 
-    pthread_mutex_lock(&stat_cache_mutex);
-    
-    if (ce->stat_info.valid &&
-        ce->stat_info.filename &&
-        ce->stat_info.hash == h &&
-        !strcmp(ce->stat_info.filename, fn) &&
-        time(NULL) <= ce->stat_info.dead) {
-        
-        *st = ce->stat_info.st;
+// Allocates a new string.
+static char *path2key(const char *path, bool prefix) {
+    char *key = NULL;
+    unsigned int depth = 0;
+    size_t pos = 0;
 
-        if ((f = file_cache_get(fn))) {
-            st->st_size = file_cache_get_size(f);
-            file_cache_unref(f);
-        }
+    if (prefix)
+        ++depth;
 
-        r = 0;
+    while (path[pos]) {
+        if (path[pos] == '/')
+            ++depth;
+        ++pos;
     }
 
-    pthread_mutex_unlock(&stat_cache_mutex);
-    
+    asprintf(&key, "%u%s", depth, path);
+    return key;
+}
+
+// Does *not* allocate a new string.
+static const char *key2path(const char *key) {
+    size_t pos = 0;
+    while (key[pos]) {
+        if (key[pos] == '/')
+            return key + pos;
+        ++pos;
+    }
+    return NULL;
+}
+
+int stat_cache_open(stat_cache_t **c, char *storage_path) {
+#ifdef HAVE_LIBLEVELDB
+    char *error = NULL;
+    leveldb_cache_t *ldb_cache;
+    leveldb_options_t *options;
+
+    // Check that a directory is set.
+    if (!storage_path) {
+        // @TODO: Before public release: Use a mkdtemp-based path.
+        log_print(LOG_WARNING, "No cache path specified.");
+        return -EINVAL;
+    }
+
+    options = leveldb_options_create();
+
+    // Initialize LevelDB's own cache.
+    ldb_cache = leveldb_cache_create_lru(100 * 1048576); // 100MB
+    leveldb_options_set_cache(options, ldb_cache);
+
+    // Create the database if missing.
+    leveldb_options_set_create_if_missing(options, true);
+    leveldb_options_set_error_if_exists(options, false);
+
+    // Use a fusedav logger.
+    leveldb_options_set_info_log(options, NULL);
+
+    *c = leveldb_open(options, storage_path, &error);
+    if (error) {
+        log_print(LOG_ERR, "ERROR opening db: %s", error);
+        return -1;
+    }
+#endif
+    return 0;
+}
+
+int stat_cache_close(stat_cache_t *c) {
+#ifdef HAVE_LIBLEVELDB
+    if (c != NULL)
+        leveldb_close(c);
+#endif
+    return 0;
+}
+
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path) {
+    struct stat_cache_value *value = NULL;
+    char *key;
+    leveldb_readoptions_t *options;
+    size_t vallen;
+    char *errptr = NULL;
+    //void *f;
+    time_t current_time;
+
+    key = path2key(path, false);
+
+    //log_print(LOG_DEBUG, "CGET: %s", key);
+
+    options = leveldb_readoptions_create();
+    value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
+    leveldb_readoptions_destroy(options);
+    free(key);
+
+    //log_print(LOG_DEBUG, "Mode: %04o", value->st.st_mode);
+
+    if (errptr != NULL) {
+        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
+        free(errptr);
+        return NULL;
+    }
+
+    if (!value) {
+        if (debug)
+            log_print(LOG_DEBUG, "stat_cache_value_get miss on path: %s", path);
+        return NULL;
+    }
+
+    if (vallen != sizeof(struct stat_cache_value)) {
+        log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+    }
+
+    current_time = time(NULL);
+
+    // First, check against the stat item itself.
+    //log_print(LOG_DEBUG, "Current time: %lu", current_time);
+    if (current_time - value->updated > CACHE_TIMEOUT) {
+        char *directory;
+        time_t directory_updated;
+        int is_dir;
+
+        //log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+
+        // If that's too old, check the last update of the directory.
+        directory = strip_trailing_slash(ne_path_parent(path), &is_dir);
+        directory_updated = stat_cache_read_updated_children(cache, directory);
+        //log_print(LOG_DEBUG, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
+        free(directory);
+        if (current_time - directory_updated > CACHE_TIMEOUT) {
+            log_print(LOG_DEBUG, "%s is too old.", path);
+            free(value);
+            return NULL;
+        }
+    }
+
+    /*
+    if ((f = file_cache_get(path))) {
+        value->st.st_size = file_cache_get_size(f);
+        file_cache_unref(cache, f);
+    }
+    */
+
+    //print_stat(&value->st, "CGET");
+
+    return value;
+}
+
+int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp) {
+    leveldb_writeoptions_t *options;
+    char *key = NULL;
+    char *errptr = NULL;
+    int r = 0;
+
+    asprintf(&key, "updated_children:%s", path);
+
+    options = leveldb_writeoptions_create();
+    if (timestamp == 0)
+        leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
+    else
+        leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
+    leveldb_writeoptions_destroy(options);
+
+    if (errptr != NULL) {
+        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        free(errptr);
+        r = -1;
+    }
+
     return r;
 }
 
-void stat_cache_set(const char *fn, const struct stat *st) {
-    uint32_t h;
-    struct cache_entry *ce;
+time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
+    leveldb_readoptions_t *options;
+    char *key = NULL;
+    char *errptr = NULL;
+    time_t *value = NULL;
+    time_t r;
+    size_t vallen;
 
-    if (debug)
-        sd_journal_print(LOG_DEBUG, "CSET: %s", fn);
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
+    asprintf(&key, "updated_children:%s", path);
 
-    pthread_mutex_lock(&stat_cache_mutex);
+    options = leveldb_readoptions_create();
+    value = (time_t *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
+    leveldb_readoptions_destroy(options);
 
-    if (!ce->stat_info.filename || ce->stat_info.hash != h || strcmp(ce->stat_info.filename, fn)) {
-        free(ce->stat_info.filename);
-        ce->stat_info.filename = strdup(fn);
-        ce->stat_info.hash = h;
-    }
-        
-    ce->stat_info.st = *st;
-    ce->stat_info.dead = time(NULL)+CACHE_TIMEOUT;
-    ce->stat_info.valid = 1;
-
-    pthread_mutex_unlock(&stat_cache_mutex);
-}
-
-void stat_cache_invalidate(const char*fn) {
-    uint32_t h;
-    struct cache_entry *ce;
-
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-
-    pthread_mutex_lock(&stat_cache_mutex);
-
-    ce->stat_info.valid = 0;
-    free(ce->stat_info.filename);
-    ce->stat_info.filename = NULL;
-    
-    pthread_mutex_unlock(&stat_cache_mutex);
-}
-
-static void free_dir_entries(struct dir_entry *de) {
-
-    while (de) {
-        struct dir_entry *next = de->next;
-        free(de);
-        de = next;
-    }
-}
-
-
-void dir_cache_begin(const char *fn) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL, *de2 = NULL;
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-
-    if (!ce->dir_info.filling) {
-        
-        if (!ce->dir_info.filename || ce->dir_info.hash != h || strcmp(ce->dir_info.filename, fn)) {
-            free(ce->dir_info.filename);
-            ce->dir_info.filename = strdup(fn);
-            ce->dir_info.hash = h;
-
-            de = ce->dir_info.entries;
-            ce->dir_info.entries = NULL;
-            ce->dir_info.valid = 0;
-        }
-
-        de2 = ce->dir_info.entries2;
-        ce->dir_info.entries2 = NULL;
-        ce->dir_info.valid2 = 0;
-        ce->dir_info.filling = 1;
-    }
-    
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
-    free_dir_entries(de2);
-}
-
-void dir_cache_finish(const char *fn, int success) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL;
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.filling &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn)) {
-
-        assert(!ce->dir_info.valid2);
-
-        if (success) {
-            
-            ce->dir_info.valid2 = 1;
-            ce->dir_info.filling = 0;
-            ce->dir_info.dead2 = time(NULL)+CACHE_TIMEOUT;
-            
-            if (!ce->dir_info.in_use) {
-                de = ce->dir_info.entries;
-                ce->dir_info.entries = ce->dir_info.entries2;
-                ce->dir_info.entries2 = NULL;
-                ce->dir_info.dead = ce->dir_info.dead2;
-                ce->dir_info.valid2 = 0;
-                ce->dir_info.valid = 1;
-            }
-            
-        } else {
-            ce->dir_info.filling = 0;
-            de = ce->dir_info.entries2;
-            ce->dir_info.entries2 = NULL;
-        }
-    }
-
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
-}
-
-void dir_cache_add(const char *fn, const char *subdir) {
-    uint32_t h;
-    struct cache_entry *ce;
-    assert(cache);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.filling &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn)) {
-
-        struct dir_entry *n;
-
-        assert(!ce->dir_info.valid2);
-
-        n = malloc(sizeof(struct dir_entry) + strlen(subdir) + 1);
-        assert(n);
-
-        strcpy(n->filename, subdir);
-        
-        n->next = ce->dir_info.entries2;
-        ce->dir_info.entries2 = n;
-    }
-
-    pthread_mutex_unlock(&dir_cache_mutex);
-}
-
-int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *subdir, void *user), void *user) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL;
-    int r = -1;
-
-    assert(cache && f);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.valid &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn) &&
-        time(NULL) <= ce->dir_info.dead) {
-
-        ce->dir_info.in_use = 1;
-        pthread_mutex_unlock(&dir_cache_mutex);
-
-        for (de = ce->dir_info.entries; de; de = de->next)
-            f(fn, de->filename, user);
-
-        pthread_mutex_lock(&dir_cache_mutex);
-        ce->dir_info.in_use = 0;
-
-        if (ce->dir_info.valid2) {
-            de = ce->dir_info.entries;
-            ce->dir_info.entries = ce->dir_info.entries2;
-            ce->dir_info.entries2 = NULL;
-            ce->dir_info.dead = ce->dir_info.dead2;
-            ce->dir_info.valid2 = 0;
-            ce->dir_info.valid = 1;
-        }
-
+    if (errptr != NULL) {
+        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
+        free(errptr);
         r = 0;
     }
-    
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
 
+    if (value == NULL) return 0;
+
+    r = *value;
+
+    //log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, r);
+
+    free(value);
     return r;
-}   
-
-void dir_cache_invalidate(const char*fn) {
-    uint32_t h;
-    struct cache_entry *ce;
-    struct dir_entry *de = NULL;
-    assert(cache && fn);
-    
-    h = calc_hash(fn);
-    ce = cache + (h % CACHE_SIZE);
-    pthread_mutex_lock(&dir_cache_mutex);
-    
-    if (ce->dir_info.valid &&
-        ce->dir_info.filename &&
-        ce->dir_info.hash == h &&
-        !strcmp(ce->dir_info.filename, fn)) {
-
-        ce->dir_info.valid = 0;
-        de = ce->dir_info.entries;
-        ce->dir_info.entries = NULL;
-    }
-    
-    pthread_mutex_unlock(&dir_cache_mutex);
-    free_dir_entries(de);
 }
 
-void dir_cache_invalidate_parent(const char *fn) {
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value) {
+    leveldb_writeoptions_t *options;
+    char *errptr = NULL;
+    char *key;
+    int r = 0;
+
+    assert(value);
+
+    value->updated = time(NULL);
+    value->local_generation = stat_cache_get_local_generation();
+
+    key = path2key(path, false);
+    //if (debug)
+        //log_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
+        //print_stat(&value->st, "CSET");
+
+    options = leveldb_writeoptions_create();
+    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
+    leveldb_writeoptions_destroy(options);
+
+    //log_print(LOG_DEBUG, "Setting key: %s", key);
+
+    free(key);
+
+    if (errptr != NULL) {
+        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        free(errptr);
+        r = -1;
+    }
+
+    return r;
+}
+
+int stat_cache_delete(stat_cache_t *cache, const char *path) {
+    leveldb_writeoptions_t *options;
+    char *key;
+    int r = 0;
+    char *errptr = NULL;
+
+    key = path2key(path, false);
+    options = leveldb_writeoptions_create();
+    leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
+    leveldb_writeoptions_destroy(options);
+    free(key);
+
+    if (errptr != NULL) {
+        log_print(LOG_ERR, "leveldb_delete error: %s", errptr);
+        free(errptr);
+        r = -1;
+    }
+
+    return r;
+}
+
+int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     char *p;
 
-    if ((p = ne_path_parent(fn))) {
+    if ((p = ne_path_parent(path))) {
         int l = strlen(p);
 
         if (strcmp(p, "/") && l) {
             if (p[l-1] == '/')
                 p[l-1] = 0;
         }
-        
-        dir_cache_invalidate(p);
+
+        stat_cache_delete(cache, p);
+        stat_cache_updated_children(cache, p, time(NULL) - CACHE_TIMEOUT - 1);
         free(p);
-    } else
-        dir_cache_invalidate(fn);
+    }
+    else {
+        stat_cache_delete(cache, path);
+        stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1);
+    }
+    return 0;
 }
 
-void cache_free(void) {
-    uint32_t h;
-    struct cache_entry *ce;
+static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
+    free(iter->key_prefix);
+    free(iter);
+}
 
-    if (!cache)
-        return;
+static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *path_prefix) {
+    struct stat_cache_iterator *iter = NULL;
+    leveldb_readoptions_t *options;
 
-    for (h = 0, ce = cache; h < CACHE_SIZE; h++, ce++) {
-        free(ce->stat_info.filename);
-        free(ce->dir_info.filename);
-        free_dir_entries(ce->dir_info.entries);
-        free_dir_entries(ce->dir_info.entries2);
+    iter = malloc(sizeof(struct stat_cache_iterator));
+    iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
+    iter->key_prefix_len = strlen(iter->key_prefix) + 1;
+
+    //log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
+    options = leveldb_readoptions_create();
+    iter->ldb_iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
+
+    //log_print(LOG_DEBUG, "checking iterator validity");
+
+    //if (!leveldb_iter_valid(iter->ldb_iter)) {
+    //    log_print(LOG_ERR, "Initial LevelDB iterator is not valid.");
+    //    return NULL;
+    //}
+
+    //log_print(LOG_DEBUG, "seeking");
+    leveldb_iter_seek(iter->ldb_iter, iter->key_prefix, iter->key_prefix_len);
+
+    return iter;
+}
+
+static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterator *iter) {
+    struct stat_cache_entry *entry;
+    const struct stat_cache_value *value;
+    const char *key;
+    size_t klen, vlen;
+
+    assert(iter);
+
+    //log_print(LOG_DEBUG, "checking iterator validity");
+
+    // If we've gone beyond the end of the dataset, quit.
+    if (!leveldb_iter_valid(iter->ldb_iter)) {
+        leveldb_iter_destroy(iter->ldb_iter);
+        return false;
     }
 
-    memset(cache, 0, sizeof(struct cache_entry)*CACHE_SIZE);
+    //log_print(LOG_DEBUG, "fetching the key");
+
+    key = leveldb_iter_key(iter->ldb_iter, &klen);
+    //log_print(LOG_DEBUG, "fetched key: %s", key);
+
+    //log_print(LOG_DEBUG, "fetched the key");
+
+    // If we've gone beyond the end of the prefix range, quit.
+    // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
+    if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
+        //log_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
+        leveldb_iter_destroy(iter->ldb_iter);
+        return NULL;
+    }
+
+    //log_print(LOG_DEBUG, "fetching the value");
+
+    value = (const struct stat_cache_value *) leveldb_iter_value(iter->ldb_iter, &vlen);
+
+    entry = malloc(sizeof(struct stat_cache_entry));
+    entry->key = key;
+    entry->value = value;
+    return entry;
 }
 
-void cache_alloc(void) {
-    
-    if (cache)
-        return;
+static void stat_cache_iter_next(struct stat_cache_iterator *iter) {
+    leveldb_iter_next(iter->ldb_iter);
+}
 
-    cache = malloc(sizeof(struct cache_entry)*CACHE_SIZE);
-    assert(cache);
-    memset(cache, 0, sizeof(struct cache_entry)*CACHE_SIZE);
+/*
+static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
+    leveldb_iterator_t *iter = NULL;
+    leveldb_readoptions_t *options;
+    const struct stat_cache_value *itervalue;
+    struct stat_cache_value *value;
+    size_t klen, vlen;
+    const char *iterkey;
+    char *key = path2key(path, true);
+
+    options = leveldb_readoptions_create();
+    iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
+
+    leveldb_iter_seek(iter, key, strlen(key) + 1);
+    free(key);
+
+    while (leveldb_iter_valid(iter)) {
+        //log_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
+
+        itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
+        if (S_ISDIR(itervalue->st.st_mode)) {
+            iterkey = leveldb_iter_key(iter, &klen);
+            log_print(LOG_DEBUG, "Listing directory: %s", iterkey);
+
+            value = stat_cache_value_get(cache, key2path(iterkey));
+            if (value) {
+                log_print(LOG_DEBUG, "Direct get mode: %04o", value->st.st_mode);
+                free(value);
+            }
+        }
+
+        leveldb_iter_next(iter);
+    }
+
+    leveldb_iter_destroy(iter);
+}
+*/
+
+int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force) {
+    struct stat_cache_iterator *iter;
+    struct stat_cache_entry *entry;
+    unsigned found_entries = 0;
+    time_t timestamp;
+    time_t current_time;
+
+    //if (debug)
+    //    log_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
+
+    //stat_cache_list_all(cache, path_prefix);
+    if (!force) {
+        timestamp = stat_cache_read_updated_children(cache, path_prefix);
+
+        if (timestamp == 0) {
+            return -STAT_CACHE_NO_DATA;
+        }
+
+        // Check for cache values which are too old; but timestamp = 0 needs to trigger below
+        current_time = time(NULL);
+        if (current_time - timestamp > CACHE_TIMEOUT) {
+            log_print(LOG_DEBUG, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
+            return -STAT_CACHE_OLD_DATA;
+        }
+    }
+
+    iter = stat_cache_iter_init(cache, path_prefix);
+    //log_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
+
+    while ((entry = stat_cache_iter_current(iter))) {
+        //log_print(LOG_DEBUG, "key: %s", entry->key);
+        //log_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
+        f(path_prefix, entry->key + iter->key_prefix_len, user);
+        ++found_entries;
+        free(entry);
+        stat_cache_iter_next(iter);
+    }
+    stat_cache_iterator_free(iter);
+    //log_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
+
+    if (found_entries == 0)
+        return -STAT_CACHE_NO_DATA;
+
+    return 0;
+}
+
+int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned int minimum_local_generation) {
+    struct stat_cache_iterator *iter;
+    struct stat_cache_entry *entry;
+
+    iter = stat_cache_iter_init(cache, path_prefix);
+    while ((entry = stat_cache_iter_current(iter))) {
+        if (entry->value->local_generation < minimum_local_generation) {
+            stat_cache_delete(cache, key2path(entry->key));
+        }
+        free(entry);
+        stat_cache_iter_next(iter);
+    }
+    stat_cache_iterator_free(iter);
+
+    return 0;
 }

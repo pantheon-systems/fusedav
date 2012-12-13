@@ -1,8 +1,6 @@
 #ifndef foofusedevhfoo
 #define foofusedevhfoo
 
-/* $Id$ */
-
 /***
   This file is part of fusedav.
 
@@ -28,5 +26,8 @@ extern int debug;
 #else
 #define __unused
 #endif
+
+// @TODO: Move this elsewhere.
+char *strip_trailing_slash(char *fn, int *is_dir);
 
 #endif

@@ -42,8 +42,7 @@
 #include <ne_dates.h>
 #include <ne_basic.h>
 
-#include <systemd/sd-journal.h>
-
+#include "log.h"
 #include "filecache.h"
 #include "statcache.h"
 #include "fusedav.h"
@@ -70,9 +69,9 @@ struct file_info {
 static struct file_info *files = NULL;
 static pthread_mutex_t files_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static int file_cache_sync_unlocked(struct file_info *fi);
+static int file_cache_sync_unlocked(stat_cache_t *cache, struct file_info *fi);
 
-void* file_cache_get(const char *path) {
+void *file_cache_get(const char *path) {
     struct file_info *f, *r = NULL;
 
     pthread_mutex_lock(&files_mutex);
@@ -106,7 +105,7 @@ static void file_cache_free_unlocked(struct file_info *fi) {
     free(fi);
 }
 
-void file_cache_unref(void *f) {
+void file_cache_unref(stat_cache_t *cache, void *f) {
     struct file_info *fi = f;
     assert(fi);
 
@@ -116,7 +115,7 @@ void file_cache_unref(void *f) {
     fi->ref--;
 
     if (!fi->ref && fi->dead) {
-        file_cache_sync_unlocked(fi);
+        file_cache_sync_unlocked(cache, fi);
         file_cache_free_unlocked(fi);
     }
 
@@ -159,12 +158,16 @@ int file_cache_close(void *f) {
     return r;
 }
 
-void* file_cache_open(const char *path, int flags) {
+void *file_cache_open(stat_cache_t *cache, const char *path, int flags) {
     struct file_info *fi = NULL;
     char tempfile[PATH_MAX];
     const char *length = NULL;
     ne_request *req = NULL;
     ne_session *session;
+    struct stat_cache_value *value;
+    char *parent_path;
+    bool need_head_request = true;
+    int is_dir;
 
     if (!(session = session_get(1))) {
         errno = EIO;
@@ -188,22 +191,59 @@ void* file_cache_open(const char *path, int flags) {
         goto fail;
     unlink(tempfile);
 
-    req = ne_request_create(session, "HEAD", path);
-    assert(req);
-
-    if (ne_request_dispatch(req) != NE_OK) {
-        sd_journal_print(LOG_ERR, "HEAD failed: %s", ne_get_error(session));
-        errno = ENOENT;
-        goto fail;
+    // See if the file was prepopulated by mknod()
+    //log_print(LOG_DEBUG, "Checking if file was prepopulated.");
+    value = stat_cache_value_get(cache, path);
+    if (value) {
+        // If we have a local cache entry indicating that it's a product
+        // of mknod(), assume zero length.
+        // @TODO: Put a TTL on use of this in case the prepopulated value is stale?
+        if (value->prepopulated) {
+            //log_print(LOG_DEBUG, "File was prepopulated.");
+            fi->server_length = fi->length = value->st.st_size;
+            need_head_request = false;
+        }
+        free(value);
     }
 
-    if (!(length = ne_get_response_header(req, "Content-Length")))
-        /* dirty hack, since Apache doesn't send the file size if the file is empty */
-        fi->server_length = fi->length = 0;
-    else
-        fi->server_length = fi->length = atoi(length);
+    // If the mknod() check failed, see if the file's directory was prepopulated by mkdir().
+    if (need_head_request) {
+        //log_print(LOG_DEBUG, "Checking if parent directory was prepopulated.");
+        parent_path = strip_trailing_slash(ne_path_parent(path), &is_dir);
+        if (strcmp(parent_path, base_directory) != 0) {
+            value = stat_cache_value_get(cache, parent_path);
+            if (value) {
+                // If we have a local cache entry indicating that the parent is a product
+                // of mkdir(), assume zero length.
+                // @TODO: Put a TTL on use of this in case the prepopulated value is stale?
+                if (value->prepopulated) {
+                    //log_print(LOG_DEBUG, "Parent directory was prepopulated.");
+                    fi->server_length = fi->length = 0;
+                    need_head_request = false;
+                }
+                free(value);
+            }
+        }
+    }
 
-    ne_request_destroy(req);
+    if (need_head_request) {
+        req = ne_request_create(session, "HEAD", path);
+        assert(req);
+    
+        if (ne_request_dispatch(req) != NE_OK) {
+            log_print(LOG_ERR, "HEAD failed: %s", ne_get_error(session));
+            errno = ENOENT;
+            goto fail;
+        }
+    
+        if (!(length = ne_get_response_header(req, "Content-Length")))
+            /* dirty hack, since Apache doesn't send the file size if the file is empty */
+            fi->server_length = fi->length = 0;
+        else
+            fi->server_length = fi->length = atoi(length);
+    
+        ne_request_destroy(req);
+    }
 
     if (flags & O_RDONLY || flags & O_RDWR) fi->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) fi->writable = 1;
@@ -260,7 +300,7 @@ static int load_up_to_unlocked(struct file_info *fi, ne_off_t l) {
     range.total = 0;
 
     if (ne_get_range(session, fi->filename, &range, fi->fd) != NE_OK) {
-        sd_journal_print(LOG_ERR, "GET failed: %s", ne_get_error(session));
+        log_print(LOG_ERR, "GET failed: %s", ne_get_error(session));
         errno = ENOENT;
         return -1;
     }
@@ -277,7 +317,7 @@ int file_cache_read(void *f, char *buf, size_t size, ne_off_t offset) {
 
     pthread_mutex_lock(&fi->mutex);
 
-    if (load_up_to_unlocked(fi, offset+size) < 0)
+    if (load_up_to_unlocked(fi, offset + size) < 0)
         goto finish;
 
     if ((r = pread(fi->fd, buf, size, offset)) < 0)
@@ -340,9 +380,10 @@ int file_cache_truncate(void *f, ne_off_t s) {
     return r;
 }
 
-int file_cache_sync_unlocked(struct file_info *fi) {
+int file_cache_sync_unlocked(stat_cache_t *cache, struct file_info *fi) {
     int r = -1;
     ne_session *session;
+    struct stat_cache_value value;
 
     assert(fi);
 
@@ -351,7 +392,7 @@ int file_cache_sync_unlocked(struct file_info *fi) {
         goto finish;
     }
 
-    if (!fi->modified) {
+    if (!fi->modified && !stat_cache_value_get(cache, fi->filename)->prepopulated) {
         r = 0;
         goto finish;
     }
@@ -367,14 +408,30 @@ int file_cache_sync_unlocked(struct file_info *fi) {
         goto finish;
     }
 
+    log_print(LOG_DEBUG, "Doing PUT on file content: %s", fi->filename);
+
     if (ne_put(session, fi->filename, fi->fd)) {
-        sd_journal_print(LOG_ERR, "PUT failed: %s", ne_get_error(session));
+        log_print(LOG_ERR, "PUT failed: %s", ne_get_error(session));
         errno = ENOENT;
         goto finish;
     }
 
-    stat_cache_invalidate(fi->filename);
-    dir_cache_invalidate_parent(fi->filename);
+    // @TODO: Use real mode.
+    value.st.st_mode = 0664 | S_IFREG;
+    value.st.st_nlink = 1;
+    value.st.st_size = fi->length;
+    value.st.st_atime = time(NULL);
+    value.st.st_mtime = value.st.st_atime;
+    value.st.st_ctime = value.st.st_mtime;
+    value.st.st_blksize = 0;
+    value.st.st_blocks = 8;
+    value.st.st_uid = getuid();
+    value.st.st_gid = getgid();
+    value.prepopulated = true;
+    stat_cache_value_set(cache, fi->filename, &value);
+
+    //stat_cache_delete(cache, fi->filename);
+    //stat_cache_delete_parent(cache, fi->filename);
 
     r = 0;
 
@@ -383,19 +440,19 @@ finish:
     return r;
 }
 
-int file_cache_sync(void *f) {
+int file_cache_sync(stat_cache_t *cache, void *f) {
     struct file_info *fi = f;
     int r = -1;
     assert(fi);
 
     pthread_mutex_lock(&fi->mutex);
-    r = file_cache_sync_unlocked(fi);
+    r = file_cache_sync_unlocked(cache, fi);
     pthread_mutex_unlock(&fi->mutex);
 
     return r;
 }
 
-int file_cache_close_all(void) {
+int file_cache_close_all(stat_cache_t *cache) {
     int r = 0;
 
     pthread_mutex_lock(&files_mutex);
@@ -409,7 +466,7 @@ int file_cache_close_all(void) {
 
         pthread_mutex_unlock(&files_mutex);
         file_cache_close(fi);
-        file_cache_unref(fi);
+        file_cache_unref(cache, fi);
         pthread_mutex_lock(&files_mutex);
     }
 
