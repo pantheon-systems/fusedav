@@ -1003,7 +1003,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
         goto finish;
     }
 
-    // @TODO: Update the stat cache instead.
+    // @TODO: Before public release: Update the stat cache instead.
     stat_cache_delete(config->cache, path);
 
 finish:
