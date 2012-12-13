@@ -62,10 +62,14 @@ static void generate_etag(char *dest, int fd);
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata);
 static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cache, const char *path);
 static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, struct ldb_filecache_pdata *pdata);
+// static int get_etag(ne_session *session, const char *path, char *current_etag, char **new_etag);
+// static bool equal_etags(char *etag1, char *etag2);
+static int ne_get_extended(ne_session *session, const char *path,
+    struct ldb_filecache_pdata *pdata, struct ldb_filecache_sdata *sdata, char *tempfile);
+static int new_cache_file(char *tempfile);
 
 int ldb_filecache_open(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     char tempfile[PATH_MAX];
-    char *check_etag_path = NULL;
     ne_request *req = NULL;
     ne_session *session;
     struct ldb_filecache_pdata *pdata;
@@ -85,6 +89,7 @@ int ldb_filecache_open(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     if (sdata == NULL) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed to malloc sdata");
+        ret = -1;
         goto fail;
     }
 
@@ -97,6 +102,8 @@ int ldb_filecache_open(ldb_filecache_t *cache, const char *path, struct fuse_fil
             log_print(LOG_DEBUG, "ldb_filecache_open: file already in cache: %s::%s", path, pdata->filename);
         }
         strncpy(tempfile, pdata->filename, PATH_MAX);
+
+        // REVIEW
         newflags = (flags & O_RDONLY) | (flags & O_WRONLY) | O_APPEND; // is APPEND correct?
         if ((fd = open(tempfile, newflags)) < 0) {
             log_print(LOG_DEBUG, "ldb_filecache_open: reopen fails (%d): %s:::%s", fd, path, tempfile);
@@ -114,31 +121,28 @@ int ldb_filecache_open(ldb_filecache_t *cache, const char *path, struct fuse_fil
         pdata = (struct ldb_filecache_pdata *) malloc(sizeof(struct ldb_filecache_pdata));
         if (!pdata) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed to malloc pdata");
+            ret = -1;
             goto fail;
         }
 
+        // REVIEW
         pdata->last_server_update = time(NULL);
         // Initialize with the character '0' so we send all ETAG_MAX bytes
         memset(pdata->etag, '0', ETAG_MAX);
         pdata->last_server_update = 0;
         sdata->fd = -1;
 
-        snprintf(tempfile, sizeof(tempfile), "%s/fusedav-cache-XXXXXX", "/tmp");
-        if ((sdata->fd = mkstemp(tempfile)) < 0) {
-            log_print(LOG_ERR, "ldb_filecache_open: Failed mkstemp");
-            goto fail;
-        }
-
-        if (debug) {
-            log_print(LOG_ERR, "ldb_filecache_open: mkstemp fd=%d :: %s", sdata->fd, tempfile);
-        }
-
+        sdata->fd = new_cache_file(tempfile);
         strncpy(pdata->filename, tempfile, PATH_MAX);
+        if (debug) {
+            log_print(LOG_DEBUG, "ldb_filecache_open: new fd=%d", sdata->fd);
+        }
     }
 
     req = ne_request_create(session, "HEAD", path);
     if (!req) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed ne_request_create");
+        ret = -1;
         goto fail;
     }
 
@@ -150,19 +154,20 @@ int ldb_filecache_open(ldb_filecache_t *cache, const char *path, struct fuse_fil
         goto fail;
     }
 
-    asprintf(&check_etag_path, "%s?If-None-Match=%s", path, pdata->etag);
-
     if ((time(NULL) - pdata->last_server_update) > REFRESH_INTERVAL) {
-        // Get the file from the server into the tmp cache file
-        if ((ne_get(session, check_etag_path, sdata->fd)) != NE_OK) {
+        // REVIEW
+
+        ret = ne_get_extended(session, path, pdata, sdata, tempfile);
+
+        if (ret) {
             log_print(LOG_ERR, "GET failed: %s", ne_get_error(session));
             errno = ENOENT;
             ret = -errno;
-            log_print(LOG_ERR, "ldb_filecache_open: Failed ne_get");
+            log_print(LOG_ERR, "ldb_filecache_open: Failed ne_get_extended");
             goto fail;
         }
+
     }
-    free(check_etag_path);
 
     if (flags & O_RDONLY || flags & O_RDWR) sdata->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
@@ -174,12 +179,15 @@ int ldb_filecache_open(ldb_filecache_t *cache, const char *path, struct fuse_fil
         goto fail;
     }
 
-    return 0;
+    ret = 0;
+
+    goto finish;
 
 fail:
 
-    if (pdata) ldb_filecache_close(sdata);
-    if (check_etag_path) free(check_etag_path);
+    if (sdata) ldb_filecache_close(sdata);
+
+finish:
 
     return ret;
 }
@@ -428,7 +436,95 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     return 0;
 }
 
+static int new_cache_file(char *tempfile) {
+    int fd;
+
+    snprintf(tempfile, sizeof(tempfile), "%s/fusedav-cache-XXXXXX", "/tmp");
+    if ((fd = mkstemp(tempfile)) < 0) {
+        log_print(LOG_ERR, "ldb_filecache_open: Failed mkstemp");
+        goto finish;
+    }
+
+    if (debug) {
+        log_print(LOG_ERR, "ldb_filecache_open: mkstemp fd=%d :: %s", fd, tempfile);
+    }
+
+
+finish:
+    return fd;
+}
+
 static void generate_etag(char *dest, int fd) {
     memset(dest, '0', ETAG_MAX);
 }
 
+/* Get to given fd */
+/* Code modelled on ne_get and dispatch_to_fd at:
+http://www.opensource.apple.com/source/neon/neon-11/neon/src/ne_basic.c
+*/
+static int ne_get_extended(ne_session *session, const char *path,
+    struct ldb_filecache_pdata *pdata, struct ldb_filecache_sdata *sdata,
+    char *tempfile) {
+    int ret;
+    ne_status const *status;
+    ne_request *req = ne_request_create(session, "GET", path);
+    if (!req) {
+        log_print(LOG_ERR, "ldb_filecache_open: Failed ne_request_create on GET");
+        goto finish;
+    }
+
+    ne_add_request_header(req, "If-None-Match", pdata->etag);
+
+    ret = ne_request_dispatch(req);
+    if (ret != NE_OK) {
+        ret = -1;
+        goto finish;
+    }
+
+    status = ne_get_status(req);
+
+    do {
+        ret = ne_begin_request(req);
+        if (ret != NE_OK) {
+            ret = -1;
+            goto finish;
+        }
+
+        // Is it klass or code? if status->klass == 304) {
+        if (status->code == 304) {
+            if (debug) {
+                log_print(LOG_DEBUG, "Got 304 on %s", path);
+            }
+            ret = ne_discard_response(req);
+            ret = 0;
+            goto finish;
+        }
+        if (ret == NE_OK) ret = ne_end_request(req);
+    } while (ret == NE_RETRY);
+
+    if (ret == NE_OK && ne_get_status(req)->klass != 2) {
+        ret = -1;
+        goto finish;
+    }
+
+    close(sdata->fd);
+    unlink(pdata->filename);
+
+    // get new cache file name and fd
+    sdata->fd = new_cache_file(tempfile);
+    strncpy(pdata->filename, tempfile, PATH_MAX);
+    if (debug) {
+        log_print(LOG_DEBUG, "ldb_filecache_open: new fd=%d", sdata->fd);
+    }
+
+    ret = ne_read_response_to_fd(req, sdata->fd);
+
+finish:
+
+    ne_request_destroy(req);
+    return ret;
+}
+
+static bool equal_etags(char *etag1, char *etag2) {
+    return !strcmp(etag1, etag2);
+}
