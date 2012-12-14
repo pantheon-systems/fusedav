@@ -503,12 +503,11 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     struct fill_info f;
 
-    path = path_cvt(path);
     //log_print(LOG_DEBUG, "getdir(%s)", path);
 
     f.buf = NULL;
     f.filler = NULL;
-    f.root = path;
+    f.root = path_cvt(path);
 
     memset(stbuf, 0, sizeof(struct stat));
 
