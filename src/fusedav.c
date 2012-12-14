@@ -311,16 +311,16 @@ char *strip_trailing_slash(char *fn, int *is_dir) {
 }
 
 static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
-    char path[PATH_MAX];
+    char *path = NULL;
     int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     bool is_deleted;
 
-    //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", u->path);
+    path = strdup(u->path);
 
-    strncpy(path, u->path, PATH_MAX);
-    path[sizeof(path) - 1] = 0;
+    //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
+
     strip_trailing_slash(path, &is_dir);
 
     fill_stat(&value.st, results, &is_deleted, is_dir);
@@ -330,6 +330,8 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
         stat_cache_delete(config->cache, path);
     else
         stat_cache_value_set(config->cache, path, &value);
+
+    free(path);
 }
 
 static void getdir_cache_callback(
@@ -450,17 +452,16 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat *st = (struct stat*) userdata;
     struct stat_cache_value value;
-    char fn[PATH_MAX];
+    char *path;
     int is_dir;
 
     assert(st);
 
-    strncpy(fn, u->path, sizeof(fn));
-    fn[sizeof(fn) - 1] = 0;
+    path = strdup(u->path);
 
     //log_print(LOG_DEBUG, "getattr_propfind_callback: %s", fn);
 
-    strip_trailing_slash(fn, &is_dir);
+    strip_trailing_slash(path, &is_dir);
 
     //log_print(LOG_DEBUG, "stripped: %s (isdir: %d)", fn, is_dir);
 
@@ -468,7 +469,9 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
 
     value.st = *st;
     value.prepopulated = false;
-    stat_cache_value_set(config->cache, fn, &value);
+    stat_cache_value_set(config->cache, path, &value);
+
+    free(path);
 }
 
 static int get_stat(const char *path, struct stat *stbuf) {
@@ -483,7 +486,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     memset(stbuf, 0, sizeof(struct stat));
 
-    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
+    //log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
@@ -547,7 +550,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     int r;
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "getattr(%s)", path);
+    //log_print(LOG_DEBUG, "getattr(%s)", path);
     r = get_stat(path, stbuf);
 
     // Zero-out unused nanosecond fields.
