@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <sys/stat.h>
+#include <limits.h>
 
 #include "statcache.h"
 #include "fusedav.h"
@@ -115,18 +116,21 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
-int stat_cache_open(stat_cache_t **c, char *storage_path) {
+int stat_cache_open(stat_cache_t **c, char *cache_path) {
 #ifdef HAVE_LIBLEVELDB
     char *error = NULL;
+    char storage_path[PATH_MAX];
     leveldb_cache_t *ldb_cache;
     leveldb_options_t *options;
 
     // Check that a directory is set.
-    if (!storage_path) {
+    if (!cache_path) {
         // @TODO: Before public release: Use a mkdtemp-based path.
         log_print(LOG_WARNING, "No cache path specified.");
         return -EINVAL;
     }
+
+    snprintf(storage_path, PATH_MAX, "%s/leveldb", cache_path);
 
     options = leveldb_options_create();
 

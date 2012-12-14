@@ -569,7 +569,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     int r;
     path = path_cvt(path);
 
-    //log_print(LOG_DEBUG, "getattr(%s)", path);
+    log_print(LOG_DEBUG, "getattr(%s)", path);
     r = get_stat(path, stbuf);
 
     // Zero-out unused nanosecond fields.
@@ -835,15 +835,13 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 static int dav_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
-    // void *f;
 
-    if (debug) {
-        log_print(LOG_DEBUG, "dav_open: open(%s)", path);
-    }
+    assert(info);
+    log_print(LOG_DEBUG, "dav_open: open(%s)", path);
 
     path = path_cvt(path);
 
-    if ((ret = ldb_filecache_open(config->cache, path, info)) < 0) {
+    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, info->flags & O_TRUNC)) < 0) {
         log_print(LOG_ERR, "dav_open: Failed ldb_filecache_open");
         return ret;
     }
@@ -1383,6 +1381,19 @@ finish:
     return r;
 }
 
+static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
+    int ret = 0;
+
+    info->flags |= O_CREAT | O_TRUNC;
+    ret = dav_open(path, info);
+
+    if (ret < 0)
+        return ret;
+
+    ret = dav_chmod(path, mode);
+    return ret;
+}
+
 static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
     struct fusedav_config *config = fuse_get_context()->private_data;
 
@@ -1398,6 +1409,7 @@ static struct fuse_operations dav_oper = {
     .getattr     = dav_getattr,
     .readdir     = dav_readdir,
     .mknod       = dav_mknod,
+    .create      = dav_create,
     .mkdir       = dav_mkdir,
     .unlink      = dav_unlink,
     .rmdir       = dav_rmdir,
@@ -1765,13 +1777,13 @@ int main(int argc, char *argv[]) {
     if (config.ignorexattr)
         log_print(LOG_NOTICE, "Ignoring extended attributes.");
 
-    if (debug)
-        log_print(LOG_DEBUG, "Opened ldb file cache.");
-
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
         goto finish;
     }
+
+    //fuse_opt_add_arg(&args, "-o atomic_o_trunc");
+    
     if (debug)
         log_print(LOG_DEBUG, "Parsed command line.");
 
@@ -1831,11 +1843,18 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
+    // Ensure directory exists for file content cache.
+    if (ldb_filecache_init(config.cache_path) < 0) {
+        log_print(LOG_CRIT, "Could not initialize file content cache directory.");
+        goto finish;
+    }
+    log_print(LOG_DEBUG, "Opened ldb file cache.");
+
+    // Open the stat cache.
     if (stat_cache_open(&config.cache, config.cache_path) < 0) {
         log_print(LOG_WARNING, "Failed to open the stat cache.");
         config.cache = NULL;
     }
-
     log_print(LOG_DEBUG, "Opened stat cache.");
 
     if (debug)
