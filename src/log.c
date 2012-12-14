@@ -27,15 +27,15 @@ void log_set_minimum_verbosity(int verbosity) {
 }
 
 int log_print(int verbosity, const char *format, ...) {
-        int r;
-        va_list ap;
+    int r;
+    va_list ap;
 
-        if (verbosity < minimum_verbosity)
-            return 0;
+    if (verbosity >= minimum_verbosity)
+        return 0;
 
-        va_start(ap, format);
-        r = sd_journal_printv(verbosity, format, ap);
-        va_end(ap);
+    va_start(ap, format);
+    r = sd_journal_printv(verbosity, format, ap);
+    va_end(ap);
 
-        return r;
+    return r;
 }
