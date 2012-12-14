@@ -267,7 +267,10 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
 
     if (is_deleted != NULL) {
         ev = ne_propset_value(results, &event);
-        if (ev != NULL) {
+        if (ev == NULL) {
+            *is_deleted = false;
+        }
+        else {
             log_print(LOG_DEBUG, "DAV:event=%s", ev);
             *is_deleted = (strcmp(ev, "DESTROYED") == 0);
         }
@@ -310,46 +313,28 @@ char *strip_trailing_slash(char *fn, int *is_dir) {
     return fn;
 }
 
-static void getdir_propfind_callback(void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
-    struct fill_info *f = userdata;
-    char fn[PATH_MAX], *t;
+static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
+    char *path = NULL;
     int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    char *cache_path = NULL;
     bool is_deleted;
 
-    //assert(f);
+    path = strdup(u->path);
 
-    strncpy(fn, u->path, sizeof(fn));
-    fn[sizeof(fn)-1] = 0;
-    strip_trailing_slash(fn, &is_dir);
+    //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
+
+    strip_trailing_slash(path, &is_dir);
 
     fill_stat(&value.st, results, &is_deleted, is_dir);
     value.prepopulated = false;
 
-    if (strcmp(fn, f->root) && fn[0]) {
-        //char *h;
-        //log_print(LOG_DEBUG, "getdir_propfind_callback fn: %s", fn);
+    if (is_deleted)
+        stat_cache_delete(config->cache, path);
+    else
+        stat_cache_value_set(config->cache, path, &value);
 
-        if ((t = strrchr(fn, '/')))
-            t++;
-        else
-            t = fn;
-
-        asprintf(&cache_path, "%s/%s", f->root, t);
-        //log_print(LOG_DEBUG, "getdir_propfind_callback cache_path: %s", cache_path);
-        if (is_deleted)
-            stat_cache_delete(config->cache, cache_path);
-        else
-            stat_cache_value_set(config->cache, cache_path, &value);
-        free(cache_path);
-
-        // Send the data to FUSE.
-        //h = ne_path_unescape(t);
-        //f->filler(f->buf, h, NULL, 0);
-        //free(h);
-    }
+    free(path);
 }
 
 static void getdir_cache_callback(
@@ -373,7 +358,7 @@ static void getdir_cache_callback(
     free(h);
 }
 
-static int update_directory(const char *path, bool attempt_progessive_update, void *userdata) {
+static int update_directory(const char *path, bool attempt_progessive_update) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     bool needs_update = true;
     ne_session *session;
@@ -381,6 +366,7 @@ static int update_directory(const char *path, bool attempt_progessive_update, vo
     time_t last_updated;
     time_t timestamp;
     char *update_path = NULL;
+    int ne_result;
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -392,7 +378,10 @@ static int update_directory(const char *path, bool attempt_progessive_update, vo
         asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
 
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
-        if (simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, userdata) == NE_OK) {
+
+        // @TODO: Server should not return 404 on no events.
+        ne_result = simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
+        if (ne_result != NE_FAILED && ne_result != NE_CONNECT && ne_result != NE_TIMEOUT) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
         }
@@ -409,7 +398,7 @@ static int update_directory(const char *path, bool attempt_progessive_update, vo
         log_print(LOG_DEBUG, "Replacing directory data: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
-        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, userdata) != NE_OK) {
+        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL) != NE_OK) {
             log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
             return -ENOENT;
         }
@@ -435,7 +424,7 @@ static int dav_readdir(
 
     path = path_cvt(path);
 
-    //log_print(LOG_DEBUG, "getdir(%s)", path);
+    log_print(LOG_DEBUG, "readdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -453,7 +442,7 @@ static int dav_readdir(
         }
 
         log_print(LOG_DEBUG, "Updating directory: %s", path);
-        if (update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &f) != 0) {
+        if (update_directory(path, (ret == -STAT_CACHE_OLD_DATA)) != 0) {
             log_print(LOG_ERR, "Failed to update directory: %s", path);
             return -1;
         }
@@ -470,27 +459,26 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat *st = (struct stat*) userdata;
     struct stat_cache_value value;
-    char fn[PATH_MAX];
+    char *path;
     int is_dir;
 
     assert(st);
 
-    strncpy(fn, u->path, sizeof(fn));
-    fn[sizeof(fn) - 1] = 0;
+    path = strdup(u->path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "getattr_propfind_callback: %s", fn);
+    //log_print(LOG_DEBUG, "getattr_propfind_callback: %s", fn);
 
-    strip_trailing_slash(fn, &is_dir);
+    strip_trailing_slash(path, &is_dir);
 
-    if (debug)
-        log_print(LOG_DEBUG, "stripped: %s (isdir: %d)", fn, is_dir);
+    //log_print(LOG_DEBUG, "stripped: %s (isdir: %d)", fn, is_dir);
 
     fill_stat(st, results, NULL, is_dir);
 
     value.st = *st;
     value.prepopulated = false;
-    stat_cache_value_set(config->cache, fn, &value);
+    stat_cache_value_set(config->cache, path, &value);
+
+    free(path);
 }
 
 static int get_stat(const char *path, struct stat *stbuf) {
@@ -500,12 +488,10 @@ static int get_stat(const char *path, struct stat *stbuf) {
     char *parent_path;
     int is_dir = 0;
     time_t parent_children_update_ts;
-    int junk_value = 0;
 
     memset(stbuf, 0, sizeof(struct stat));
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
+    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
@@ -548,7 +534,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         log_print(LOG_DEBUG, "Updating directory: %s", parent_path);
-        update_directory(parent_path, (parent_children_update_ts > 0), &junk_value);
+        update_directory(parent_path, (parent_children_update_ts > 0));
     }
 
     // Try again to hit the file in the stat cache.
@@ -558,6 +544,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
         free(response);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
+
+    log_print(LOG_DEBUG, "Missed updated cache: %s", path);
 
     // If it's still not found, return that it doesn't exist.
     memset(stbuf, 0, sizeof(struct stat));
@@ -597,8 +585,7 @@ static int dav_unlink(const char *path) {
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "unlink(%s)", path);
+    log_print(LOG_DEBUG, "unlink(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -616,7 +603,6 @@ static int dav_unlink(const char *path) {
 
     ldb_filecache_delete(config->cache, path);
     stat_cache_delete(config->cache, path);
-    stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
@@ -1724,7 +1710,7 @@ static int config_privileges(struct fusedav_config *config) {
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
-    struct fuse_chan *ch;
+    struct fuse_chan *ch = NULL;
     char *mountpoint;
     int ret = 1;
     pthread_t lock_thread;
@@ -1767,6 +1753,7 @@ int main(int argc, char *argv[]) {
     //config.verbosity = 3;
 
     // Apply debug mode.
+    log_set_maximum_verbosity(config.verbosity);
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
     log_print(LOG_DEBUG, "Parsed options.");
@@ -1854,6 +1841,7 @@ int main(int argc, char *argv[]) {
     if (stat_cache_open(&config.cache, config.cache_path) < 0) {
         log_print(LOG_WARNING, "Failed to open the stat cache.");
         config.cache = NULL;
+        goto finish;
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 

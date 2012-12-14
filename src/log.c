@@ -20,22 +20,21 @@
 
 #include "log.h"
 
-static int minimum_verbosity;
+static int maximum_verbosity;
 
-void log_set_minimum_verbosity(int verbosity) {
-    minimum_verbosity = verbosity;
+void log_set_maximum_verbosity(int verbosity) {
+    maximum_verbosity = verbosity;
 }
 
 int log_print(int verbosity, const char *format, ...) {
-    int r;
+    int r = 0;
     va_list ap;
 
-    if (verbosity >= minimum_verbosity)
-        return 0;
-
-    va_start(ap, format);
-    r = sd_journal_printv(verbosity, format, ap);
-    va_end(ap);
+    if (verbosity <= maximum_verbosity) {
+        va_start(ap, format);
+        r = sd_journal_printv(verbosity, format, ap);
+        va_end(ap);
+    }
 
     return r;
 }

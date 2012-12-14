@@ -21,7 +21,7 @@
 
 #include <systemd/sd-journal.h>
 
-void log_set_minimum_verbosity(int verbosity);
+void log_set_maximum_verbosity(int verbosity);
 int log_print(int verbosity, const char *format, ...);
 
 #endif

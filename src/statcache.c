@@ -173,7 +173,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
     key = path2key(path, false);
 
-    //log_print(LOG_DEBUG, "CGET: %s", key);
+    log_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
@@ -189,8 +189,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (!value) {
-        if (debug)
-            log_print(LOG_DEBUG, "stat_cache_value_get miss on path: %s", path);
+        log_print(LOG_DEBUG, "stat_cache_value_get miss on path: %s", path);
         return NULL;
     }
 
@@ -207,7 +206,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         time_t directory_updated;
         int is_dir;
 
-        //log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+        log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
 
         // If that's too old, check the last update of the directory.
         directory = strip_trailing_slash(ne_path_parent(path), &is_dir);
@@ -299,9 +298,8 @@ int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cach
     value->local_generation = stat_cache_get_local_generation();
 
     key = path2key(path, false);
-    //if (debug)
-        //log_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
-        //print_stat(&value->st, "CSET");
+    log_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
+    //print_stat(&value->st, "CSET");
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
@@ -327,6 +325,9 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
     char *errptr = NULL;
 
     key = path2key(path, false);
+
+    log_print(LOG_DEBUG, "CDEL: %s", key);
+
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
     leveldb_writeoptions_destroy(options);
@@ -485,8 +486,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     time_t timestamp;
     time_t current_time;
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
+    log_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
 
     //stat_cache_list_all(cache, path_prefix);
     if (!force) {
@@ -508,15 +508,15 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     //log_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
 
     while ((entry = stat_cache_iter_current(iter))) {
-        //log_print(LOG_DEBUG, "key: %s", entry->key);
-        //log_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
+        log_print(LOG_DEBUG, "key: %s", entry->key);
+        log_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
         f(path_prefix, entry->key + iter->key_prefix_len, user);
         ++found_entries;
         free(entry);
         stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
-    //log_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
+    log_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
 
     if (found_entries == 0)
         return -STAT_CACHE_NO_DATA;
