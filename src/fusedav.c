@@ -267,7 +267,10 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
 
     if (is_deleted != NULL) {
         ev = ne_propset_value(results, &event);
-        if (ev != NULL) {
+        if (ev == NULL) {
+            *is_deleted = false;
+        }
+        else {
             log_print(LOG_DEBUG, "DAV:event=%s", ev);
             *is_deleted = (strcmp(ev, "DESTROYED") == 0);
         }
@@ -1835,6 +1838,7 @@ int main(int argc, char *argv[]) {
     if (stat_cache_open(&config.cache, config.cache_path) < 0) {
         log_print(LOG_WARNING, "Failed to open the stat cache.");
         config.cache = NULL;
+        goto finish;
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
