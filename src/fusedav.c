@@ -1753,6 +1753,7 @@ int main(int argc, char *argv[]) {
     //config.verbosity = 3;
 
     // Apply debug mode.
+    log_set_minimum_verbosity(config.verbosity);
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
     log_print(LOG_DEBUG, "Parsed options.");
