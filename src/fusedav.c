@@ -500,7 +500,14 @@ static int get_stat(const char *path, struct stat *stbuf) {
     char *parent_path;
     int is_dir = 0;
     time_t parent_children_update_ts;
-    int junk_value = 0;
+
+    struct fill_info f;
+
+    //log_print(LOG_DEBUG, "getdir(%s)", path);
+
+    f.buf = NULL;
+    f.filler = NULL;
+    f.root = path;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -548,7 +555,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         log_print(LOG_DEBUG, "Updating directory: %s", parent_path);
-        update_directory(parent_path, (parent_children_update_ts > 0), &junk_value);
+        update_directory(parent_path, (parent_children_update_ts > 0), &f);
     }
 
     // Try again to hit the file in the stat cache.
@@ -1724,7 +1731,7 @@ static int config_privileges(struct fusedav_config *config) {
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
-    struct fuse_chan *ch;
+    struct fuse_chan *ch = NULL;
     char *mountpoint;
     int ret = 1;
     pthread_t lock_thread;
