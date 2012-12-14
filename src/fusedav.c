@@ -366,6 +366,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     time_t last_updated;
     time_t timestamp;
     char *update_path = NULL;
+    int ne_result;
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -377,7 +378,10 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
 
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
-        if (simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL) == NE_OK) {
+
+        // @TODO: Server should not return 404 on no events.
+        ne_result = simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
+        if (ne_result != NE_FAILED && ne_result != NE_CONNECT && ne_result != NE_TIMEOUT) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
         }
