@@ -503,6 +503,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     struct fill_info f;
 
+    path = path_cvt(path);
     //log_print(LOG_DEBUG, "getdir(%s)", path);
 
     f.buf = NULL;
@@ -511,8 +512,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     memset(stbuf, 0, sizeof(struct stat));
 
-    //if (debug)
-    //    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
+    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
