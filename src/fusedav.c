@@ -424,7 +424,7 @@ static int dav_readdir(
 
     path = path_cvt(path);
 
-    //log_print(LOG_DEBUG, "getdir(%s)", path);
+    log_print(LOG_DEBUG, "readdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -489,11 +489,9 @@ static int get_stat(const char *path, struct stat *stbuf) {
     int is_dir = 0;
     time_t parent_children_update_ts;
 
-    //log_print(LOG_DEBUG, "getdir(%s)", path);
-
     memset(stbuf, 0, sizeof(struct stat));
 
-    //log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
+    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
@@ -547,6 +545,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
+    log_print(LOG_DEBUG, "Missed updated cache: %s", path);
+
     // If it's still not found, return that it doesn't exist.
     memset(stbuf, 0, sizeof(struct stat));
     return -ENOENT;
@@ -557,7 +557,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     int r;
     path = path_cvt(path);
 
-    //log_print(LOG_DEBUG, "getattr(%s)", path);
+    log_print(LOG_DEBUG, "getattr(%s)", path);
     r = get_stat(path, stbuf);
 
     // Zero-out unused nanosecond fields.
@@ -585,8 +585,7 @@ static int dav_unlink(const char *path) {
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "unlink(%s)", path);
+    log_print(LOG_DEBUG, "unlink(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -604,7 +603,6 @@ static int dav_unlink(const char *path) {
 
     ldb_filecache_delete(config->cache, path);
     stat_cache_delete(config->cache, path);
-    stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
