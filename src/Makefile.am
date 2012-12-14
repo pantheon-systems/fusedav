@@ -20,8 +20,9 @@ bin_PROGRAMS=fusedav
 
 fusedav_SOURCES=fusedav.c fusedav.h \
 				statcache.c statcache.h \
-				filecache.c filecache.h \
-				session.c session.h
+				ldb-filecache.c ldb-filecache.h \
+				session.c session.h \
+				log.c log.h
 
 fusedav_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS) $(FUSE_CFLAGS) -DFUSE_USE_VERSION=26
 fusedav_LDADD = -lpthread $(NEON_LIBS) $(FUSE_LIBS)

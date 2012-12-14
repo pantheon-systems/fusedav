@@ -1,8 +1,6 @@
 #ifndef foostatcachehfoo
 #define foostatcachehfoo
 
-/* $Id$ */
-
 /***
   This file is part of fusedav.
 
@@ -10,31 +8,60 @@
   under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   fusedav is distributed in the hope that it will be useful, but WITHOUT
   ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
   or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
   License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with fusedav; if not, write to the Free Software Foundation,
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***/
 
 #include <sys/stat.h>
+#include <leveldb/c.h>
 
-int stat_cache_get(const char *fn, struct stat *st);
-void stat_cache_set(const char *fn, const struct stat *st);
-void stat_cache_invalidate(const char*fn);
+#define RGEN_LEN 128
+#define STAT_CACHE_OLD_DATA 2
+#define STAT_CACHE_NO_DATA 1
 
-void dir_cache_invalidate(const char*fn);
-void dir_cache_invalidate_parent(const char *fn);
-void dir_cache_begin(const char *fn);
-void dir_cache_finish(const char *fn, int success);
-void dir_cache_add(const char *fn, const char *subdir);
-int dir_cache_enumerate(const char *fn, void (*f) (const char*fn, const char *subdir, void *user), void *user);
+#define STAT_CACHE_NEGATIVE_TTL 3
 
-void cache_free(void);
-void cache_alloc(void);
+typedef leveldb_t stat_cache_t;
+
+// Used opaquely outside this library.
+struct stat_cache_iterator {
+    leveldb_iterator_t *ldb_iter;
+    char *key_prefix;
+    size_t key_prefix_len;
+};
+
+struct stat_cache_value {
+    struct stat st;
+    unsigned long local_generation;
+    time_t updated;
+    bool prepopulated; // Added to the local cache; not from the server.
+    char remote_generation[RGEN_LEN];
+};
+
+int print_stat(struct stat *stbuf, const char *title);
+
+unsigned long stat_cache_get_local_generation(void);
+
+int stat_cache_open(stat_cache_t **cache, char *storage_path);
+int stat_cache_close(stat_cache_t *cache);
+
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);
+int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp);
+time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path);
+int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value);
+void stat_cache_value_free(struct stat_cache_value *value);
+
+int stat_cache_delete(stat_cache_t *cache, const char* path);
+int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
+int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned int minimum_local_generation);
+
+int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
 
 #endif
