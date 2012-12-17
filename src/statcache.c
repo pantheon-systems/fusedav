@@ -116,7 +116,7 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
-int stat_cache_open(stat_cache_t **c, char *cache_path) {
+int stat_cache_open(stat_cache_t **cache, char *cache_path) {
 #ifdef HAVE_LIBLEVELDB
     char *error = NULL;
     char storage_path[PATH_MAX];
@@ -145,7 +145,7 @@ int stat_cache_open(stat_cache_t **c, char *cache_path) {
     // Use a fusedav logger.
     leveldb_options_set_info_log(options, NULL);
 
-    *c = leveldb_open(options, storage_path, &error);
+    *cache = leveldb_open(options, storage_path, &error);
     if (error) {
         log_print(LOG_ERR, "ERROR opening db: %s", error);
         return -1;
@@ -154,10 +154,10 @@ int stat_cache_open(stat_cache_t **c, char *cache_path) {
     return 0;
 }
 
-int stat_cache_close(stat_cache_t *c) {
+int stat_cache_close(stat_cache_t *cache) {
 #ifdef HAVE_LIBLEVELDB
     if (c != NULL)
-        leveldb_close(c);
+        leveldb_close(cache);
 #endif
     return 0;
 }
