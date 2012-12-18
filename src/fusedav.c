@@ -167,12 +167,14 @@ static const char *path_cvt(const char *path) {
     char *r, *t;
     int l;
 
+    log_print(LOG_DEBUG, "path_cvt(%s)", path);
+
     pthread_once(&path_cvt_once, path_cvt_tsd_key_init);
 
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
         free(r);
 
-    t = malloc((l = strlen(base_directory)+strlen(path))+1);
+    t = malloc((l = strlen(base_directory) + strlen(path)) + 1);
     assert(t);
     sprintf(t, "%s%s", base_directory, path);
 
@@ -183,6 +185,8 @@ static const char *path_cvt(const char *path) {
     free(t);
 
     pthread_setspecific(path_cvt_tsd_key, r);
+
+    log_print(LOG_DEBUG, "%s=path_cvt(%s)", r, path);
 
     return r;
 }
@@ -591,7 +595,6 @@ static int dav_unlink(const char *path) {
     ne_session *session;
 
     path = path_cvt(path);
-
     log_print(LOG_DEBUG, "unlink(%s)", path);
 
     if (!(session = session_get(1)))
@@ -622,9 +625,7 @@ static int dav_rmdir(const char *path) {
     ne_session *session;
 
     path = path_cvt(path);
-
-    if (debug)
-        log_print(LOG_DEBUG, "rmdir(%s)", path);
+    log_print(LOG_DEBUG, "rmdir(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -699,8 +700,7 @@ static int dav_rename(const char *from, const char *to) {
     assert(from);
     to = path_cvt(to);
 
-    if (debug)
-        log_print(LOG_DEBUG, "rename(%s, %s)", from, to);
+    log_print(LOG_DEBUG, "rename(%s, %s)", from, to);
 
     if (!(session = session_get(1))) {
         r = -EIO;
@@ -738,10 +738,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     int ret = 0;
 
     path = path_cvt(path);
-
-    if (debug) {
-        log_print(LOG_DEBUG, "release(%s)", path);
-    }
+    log_print(LOG_DEBUG, "release(%s)", path);
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_write: error on ldb_filecache_sync: %d::%s", ret, path);
@@ -755,8 +752,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
     int ret = 0;
 
     path = path_cvt(path);
-    if (debug)
-        log_print(LOG_DEBUG, "fsync(%s)", path);
+    log_print(LOG_DEBUG, "fsync(%s)", path);
 
     if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
         goto finish;
@@ -776,8 +772,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     //ne_session *session;
 
     path = path_cvt(path);
-    if (debug)
-        log_print(LOG_DEBUG, "mknod(%s)", path);
+    log_print(LOG_DEBUG, "mknod(%s)", path);
 
     /*
     if (!(session = session_get(1)))
@@ -850,10 +845,7 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, s
     ssize_t bytes_read;
 
     path = path_cvt(path);
-
-    if (debug) {
-        log_print(LOG_DEBUG, "read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
-    }
+    log_print(LOG_DEBUG, "read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_read = ldb_filecache_read(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
@@ -869,10 +861,7 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     ssize_t bytes_written;
 
     path = path_cvt(path);
-
-    if (debug) {
-        log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
-    }
+    log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
@@ -890,8 +879,7 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "truncate(%s, %lu)", path, (unsigned long) size);
+    log_print(LOG_DEBUG, "truncate(%s, %lu)", path, (unsigned long) size);
 
     if (!(session = session_get(1)))
         ret = -EIO;
@@ -915,7 +903,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     int r = 0;
     char *date;
 
-    //log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
+    log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     if (config->ignoreutimens) {
         //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
@@ -1285,14 +1273,16 @@ static int dav_removexattr(const char *path, const char *name) {
     int r = 0;
     char dnspace[128], dname[128];
 
+    if (config->ignorexattr)
+        return 0;
+
     assert(path);
     assert(name);
 
     path = path_cvt(path);
     name = fix_xattr(name);
 
-    if (debug)
-        log_print(LOG_DEBUG, "removexattr(%s, %s)", path, name);
+    log_print(LOG_DEBUG, "removexattr(%s, %s)", path, name);
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
         r = -ENOATTR;
@@ -1377,6 +1367,8 @@ finish:
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     int ret = 0;
 
+    log_print(LOG_DEBUG, "create(%s, %04o)", path, mode);
+
     info->flags |= O_CREAT | O_TRUNC;
     ret = dav_open(path, info);
 
@@ -1384,6 +1376,8 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
         return ret;
 
     ret = dav_chmod(path, mode);
+    log_print(LOG_DEBUG, "Done: create()");
+    
     return ret;
 }
 
