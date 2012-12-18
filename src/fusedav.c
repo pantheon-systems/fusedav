@@ -1665,9 +1665,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
 
     case KEY_VERSION:
         fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
-#ifdef HAVE_LIBLEVELDB
         fprintf(stderr, "LevelDB version %d.%d\n", leveldb_major_version(), leveldb_minor_version());
-#endif
         fuse_opt_add_arg(outargs, "--version");
         fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
         exit(0);

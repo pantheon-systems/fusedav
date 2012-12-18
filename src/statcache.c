@@ -117,7 +117,6 @@ static const char *key2path(const char *key) {
 }
 
 int stat_cache_open(stat_cache_t **cache, char *cache_path) {
-#ifdef HAVE_LIBLEVELDB
     char *error = NULL;
     char storage_path[PATH_MAX];
     leveldb_cache_t *ldb_cache;
@@ -150,15 +149,12 @@ int stat_cache_open(stat_cache_t **cache, char *cache_path) {
         log_print(LOG_ERR, "ERROR opening db: %s", error);
         return -1;
     }
-#endif
     return 0;
 }
 
 int stat_cache_close(stat_cache_t *cache) {
-#ifdef HAVE_LIBLEVELDB
-    if (c != NULL)
+    if (cache != NULL)
         leveldb_close(cache);
-#endif
     return 0;
 }
 
