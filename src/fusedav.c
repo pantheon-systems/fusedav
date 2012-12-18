@@ -579,6 +579,8 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     if (S_ISREG(stbuf->st_mode) && config->file_mode)
         stbuf->st_mode = S_IFREG | config->file_mode;
 
+    log_print(LOG_DEBUG, "Done: getattr(%s)", path);
+
     return r;
 }
 
