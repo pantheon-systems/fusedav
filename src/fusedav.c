@@ -197,6 +197,8 @@ static int simple_propfind_with_redirect(
 
     int i, ret;
 
+    log_print(LOG_DEBUG, "Performing PROPFIND of depth %d on path %s.", depth, path);
+
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
 
@@ -214,6 +216,8 @@ static int simple_propfind_with_redirect(
 
         path = u->path;
     }
+
+    log_print(LOG_DEBUG, "Done with PROPFIND.");
 
     return ret;
 }
@@ -518,6 +522,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
             memset(stbuf, 0, sizeof(struct stat));
             return -ENOENT;
         }
+        log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", base_directory);
         return 0;
     }
 
