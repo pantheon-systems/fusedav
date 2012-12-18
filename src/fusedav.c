@@ -496,6 +496,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     char *parent_path;
     int is_dir = 0;
     time_t parent_children_update_ts;
+    bool is_base_directory;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -506,7 +507,28 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return -EIO;
     }
 
-    // Check if we can directly hit this file in the stat cache.
+    log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
+    is_base_directory = (strcmp(path, base_directory) == 0);
+
+    // If it's the root directory and all attributes are specified,
+    // construct a response.
+    if (is_base_directory && config->dir_mode && config->uid && config->gid) {
+        memset(stbuf, 0, sizeof(struct stat));
+        stbuf->st_mode = S_IFDIR | config->dir_mode;
+        stbuf->st_nlink = 3;
+        stbuf->st_uid = config->uid;
+        stbuf->st_gid = config->gid;
+        stbuf->st_size = 0;
+        stbuf->st_blksize = 0;
+        stbuf->st_blocks = 0;
+        stbuf->st_atime = time(NULL);
+        stbuf->st_mtime = stbuf->st_atime;
+        stbuf->st_ctime = stbuf->st_mtime;
+        log_print(LOG_DEBUG, "Used constructed stat data for base directory.");
+        return 0;
+    }
+
+    // Check if we can directly hit this entry in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path))) {
         *stbuf = response->st;
         free(response);
@@ -517,7 +539,6 @@ static int get_stat(const char *path, struct stat *stbuf) {
     log_print(LOG_DEBUG, "STAT-CACHE-MISS");
 
     // If it's the root directory, just do a single PROPFIND.
-    log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
     if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
