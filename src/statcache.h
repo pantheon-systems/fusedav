@@ -49,7 +49,7 @@ int print_stat(struct stat *stbuf, const char *title);
 
 unsigned long stat_cache_get_local_generation(void);
 
-int stat_cache_open(stat_cache_t **cache, char *storage_path);
+int stat_cache_open(stat_cache_t **cache, char *cache_path);
 int stat_cache_close(stat_cache_t *cache);
 
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);

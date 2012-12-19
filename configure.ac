@@ -1,8 +1,6 @@
 # -*- Autoconf -*-
 # Process this file with autoconf to produce a configure script.
 
-# $Id$
-
 # This file is part of fusedav.
 #
 # fusedav is free software; you can redistribute it and/or modify it
@@ -107,11 +105,10 @@ AC_FUNC_MALLOC
 AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr memchr strchr strcspn])
 
 AC_CHECK_LIB([pthread], [pthread_create])
-AC_CHECK_LIB([systemd-journal], [sd_journal_send])
-AC_CHECK_LIB([yaml], [yaml_parser_initialize])
-AC_CHECK_LIB([leveldb], [leveldb_open])
 
-#PKG_CHECK_MODULES(LIBYAML, libyaml >= 1.2 )
+PKG_CHECK_MODULES(SYSTEMD, [ libsystemd-journal ] )
+PKG_CHECK_MODULES(YAML, [ yaml-0.1 ] )
+PKG_CHECK_MODULES(LEVELDB, [ leveldb ])
 PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 
