@@ -413,7 +413,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     //log_print(LOG_DEBUG, "fetching the key");
 
     key = leveldb_iter_key(iter->ldb_iter, &klen);
-    log_print(LOG_DEBUG, "fetched key: %s", key);
+    // log_print(LOG_DEBUG, "fetched key: %s", key);
 
     //log_print(LOG_DEBUG, "fetched the key");
 
@@ -432,7 +432,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     entry = malloc(sizeof(struct stat_cache_entry));
     entry->key = key;
     entry->value = value;
-    log_print(LOG_DEBUG, "iter_current: key = %s; value = %s", key, value);
+    // log_print(LOG_DEBUG, "iter_current: key = %s; value = %s", key, value);
     return entry;
 }
 
