@@ -101,7 +101,10 @@ static char *path2key(const char *path, bool prefix) {
         ++pos;
     }
 
-    asprintf(&key, "%u%s", depth, path);
+    if (prefix)
+        asprintf(&key, "%u%s/", depth, path);
+    else
+        asprintf(&key, "%u%s", depth, path);
     return key;
 }
 
@@ -414,14 +417,14 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     //log_print(LOG_DEBUG, "fetching the key");
 
     key = leveldb_iter_key(iter->ldb_iter, &klen);
-    //log_print(LOG_DEBUG, "fetched key: %s", key);
+    log_print(LOG_DEBUG, "fetched key: %s", key);
 
     //log_print(LOG_DEBUG, "fetched the key");
 
     // If we've gone beyond the end of the prefix range, quit.
     // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
     if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
-        //log_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
+        log_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
         leveldb_iter_destroy(iter->ldb_iter);
         return NULL;
     }
@@ -433,6 +436,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     entry = malloc(sizeof(struct stat_cache_entry));
     entry->key = key;
     entry->value = value;
+    log_print(LOG_DEBUG, "iter_current: key = %s; value = %s", key, value);
     return entry;
 }
 
@@ -509,8 +513,8 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 
     while ((entry = stat_cache_iter_current(iter))) {
         log_print(LOG_DEBUG, "key: %s", entry->key);
-        log_print(LOG_DEBUG, "fn: %s", entry->key + iter->key_prefix_len);
-        f(path_prefix, entry->key + iter->key_prefix_len, user);
+        log_print(LOG_DEBUG, "fn: %s", entry->key + (iter->key_prefix_len - 1));
+        f(path_prefix, entry->key + (iter->key_prefix_len - 1), user);
         ++found_entries;
         free(entry);
         stat_cache_iter_next(iter);
