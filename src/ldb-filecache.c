@@ -51,7 +51,7 @@ struct ldb_filecache_sdata {
     bool modified;
 };
 
-// FIX ME Where to find ETAG_MAX?
+// @TODO Where to find ETAG_MAX?
 #define ETAG_MAX 256
 
 // Persistent data stored in leveldb
@@ -62,6 +62,9 @@ struct ldb_filecache_pdata {
 };
 
 static int new_cache_file(const char *cache_path, char *cache_file_path, fd_t *fd) {
+
+    log_print(LOG_DEBUG, "enter: new_cache_file(%s,%s,)", cache_path, cache_file_path);
+
     snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-XXXXXX", cache_path);
     log_print(LOG_DEBUG, "Using pattern %s", cache_file_path);
     if ((*fd = mkstemp(cache_file_path)) < 0) {
@@ -76,6 +79,9 @@ static int new_cache_file(const char *cache_path, char *cache_file_path, fd_t *f
 // Allocates a new string.
 static char *path2key(const char *path) {
     char *key = NULL;
+
+    log_print(LOG_DEBUG, "enter: path2key(%s)", path);
+
     asprintf(&key, "fc:%s", path);
     return key;
 }
@@ -86,6 +92,8 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     leveldb_readoptions_t *options;
     size_t vallen;
     char *errptr = NULL;
+
+    log_print(LOG_DEBUG, "enter:ldb_filecache_pdata_get(,%s)", path);
 
     key = path2key(path);
 
@@ -117,6 +125,8 @@ static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, con
     char *errptr = NULL;
     char *key;
     int ret = -1;
+
+    log_print(LOG_DEBUG, "enter: ldb_filecache_pdata_set(,%s,)", path);
 
     if (!pdata) {
         log_print(LOG_ERR, "ldb_filecache_pdata_set NULL pdata");
@@ -151,6 +161,8 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
     int code;
     ne_request *req = NULL;
     int ne_ret;
+
+    log_print(LOG_DEBUG, "enter: ldb_get_fresh_fd(,,%s,%s", cache_path, path);
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
@@ -216,7 +228,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
             }
 
             // Create a new temp file and read the file content into it.
-            // @TODO: Set proper flags? Or enforce in fusedav.c?
             new_cache_file(cache_path, pdata->filename, &ret_fd);
             ne_read_response_to_fd(req, ret_fd);
 
@@ -249,6 +260,8 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     int ret = -1;
     int flags = info->flags;
     struct stat_cache_value value;
+
+    log_print(LOG_DEBUG, "enter: ldb_filecache_open(%s,,%s,,%d", cache_path, path, replace);
 
     if (!(session = session_get(1))) {
         ret = -EIO;
@@ -313,22 +326,81 @@ finish:
 
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
 
+    log_print(LOG_DEBUG, "enter: ldb_filecache_close(,)");
+
     if (sdata->fd >= 0)
         close(sdata->fd);
 
     return 0;
 }
 
+#ifdef NE_LFS
+#define ne_fstat fstat64
+typedef struct stat64 struct_stat;
+#else
+#define ne_fstat fstat
+typedef struct stat struct_stat;
+#endif
+/* PUT's from fd to URI */
+static int ne_put_return_etag(ne_session *session, const char *path, int fd, char *etag)
+{
+    ne_request *req;
+    struct stat st;
+    int ret;
+    const char *value;
+
+    log_print(LOG_DEBUG, "enter: ne_put_return_etag(,%s,,)", path);
+
+    if (ne_fstat(fd, &st)) {
+        int errnum = errno;
+        char buf[200];
+        char msg[256];
+        char *error;
+
+        error = ne_strerror(errnum, buf, sizeof buf);
+        sprintf(msg, "Could not determine file size: %s", error);
+        ne_set_error(session, msg);
+        return NE_ERROR;
+    }
+
+    req = ne_request_create(session, "PUT", path);
+
+#ifdef NE_HAVE_DAV
+    ne_lock_using_resource(req, path, 0);
+    ne_lock_using_parent(req, path);
+#endif
+
+    ne_set_request_body_fd(req, fd, 0, st.st_size);
+
+    ret = ne_request_dispatch(req);
+
+    if (ret == NE_OK && ne_get_status(req)->klass != 2) {
+        ret = NE_ERROR;
+    }
+
+    // We continue to PUT the file if etag happens to be NULL; it just
+    // means ultimately that it won't go into the filecache
+    if (etag) {
+        value = ne_get_response_header(req, "etag");
+        strncpy(etag, value, ETAG_MAX);
+        log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
+    }
+    ne_request_destroy(req);
+
+    return ret;
+}
+
 int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
-    //struct ldb_filecache_pdata *pdata = NULL;
+    char *etag;
+    struct ldb_filecache_pdata *pdata = NULL;
     ne_session *session;
     struct stat_cache_value value;
 
     assert(sdata);
 
-    log_print(LOG_DEBUG, "ldb_filecache_sync(%s)", path);
+    log_print(LOG_DEBUG, "enter: ldb_filecache_sync(,%s,)", path);
 
     if (!sdata->writable) {
         // errno = EBADF; why?
@@ -356,24 +428,36 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         goto finish;
     }
 
-    //pdata = ldb_filecache_pdata_get(cache, path);
 
-    // JB FIXME replace ne_put with our own version which also returns the
-    // ETAG information.
-    //pdata->last_server_update = time(NULL);
-    // FIXME! Generate ETAG. Or rewrite ne_put to put file, and get etag back
-    //generate_etag(pdata->etag, sdata->fd);
-
-    // @TODO: Replace PUT with something that gets the ETag returned by Valhalla.
     // Write this data to the persistent cache.
+    // Update the file cache
+    pdata = ldb_filecache_pdata_get(cache, path);
+    if (pdata == NULL) {
+        pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
+        if (pdata == NULL) {
+            log_print(LOG_ERR, "calloc of pdata failed");
+        }
+        strncpy(pdata->filename, sdata->filename, PATH_MAX);
+    }
 
-    log_print(LOG_DEBUG, "About to PUT file.");
-
-    if (ne_put(session, path, sdata->fd)) {
+    if (pdata) {
+        etag = pdata->etag;
+    }
+    else {
+        etag = NULL;
+    }
+    if (ne_put_return_etag(session, path, sdata->fd, etag)) {
         log_print(LOG_ERR, "PUT failed: %s", ne_get_error(session));
         errno = ENOENT;
         ret = -1;
         goto finish;
+    }
+
+    if (pdata) {
+        // Point the persistent cache to the new file content.
+        pdata->last_server_update = time(NULL);
+        ldb_filecache_pdata_set(cache, path, pdata);
+        log_print(LOG_DEBUG, "PUT: etag = %s", pdata->etag);
     }
 
     // Update stat cache.
@@ -405,7 +489,7 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     ssize_t ret = -1;
 
-    log_print(LOG_DEBUG, "ldb_filecache_read");
+    log_print(LOG_DEBUG, "enter: ldb_filecache_read(,,,)");
 
     // ensure data is present and fresh
     // ETAG exchange
@@ -428,6 +512,8 @@ finish:
 ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     ssize_t ret = -1;
+
+    log_print(LOG_DEBUG, "enter: ldb_filecache_write(,,,)");
 
     if (!sdata->writable) {
         errno = EBADF;
@@ -457,7 +543,7 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 
     assert(sdata);
 
-    log_print(LOG_DEBUG, "release(%s)", path);
+    log_print(LOG_DEBUG, "enter: ldb_filecache_release(,%s,)", path);
 
     if ((ret = ldb_filecache_sync(cache, path, info)) < 0) {
         log_print(LOG_ERR, "ldb_filecache_unref: ldb_filecache_sync returns error %d", ret);
@@ -479,6 +565,8 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
 
+    log_print(LOG_DEBUG, "enter: ldb_filecache_truncate(,,)");
+
     if ((ret = ftruncate(sdata->fd, s)) < 0) {
         log_print(LOG_ERR, "ldb_filecache_truncate: error on ftruncate %d", ret);
     }
@@ -491,6 +579,8 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     char *key;
     int ret = 0;
     char *errptr = NULL;
+
+    log_print(LOG_DEBUG, "enter: ldb_filecache_delete(,%s)", path);
 
     key = path2key(path);
     options = leveldb_writeoptions_create();
@@ -509,6 +599,9 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
 
 int ldb_filecache_init(char *cache_path) {
     char path[PATH_MAX];
+
+    log_print(LOG_DEBUG, "enter: ldb_filecache_init(%s)", cache_path);
+
     snprintf(path, PATH_MAX, "%s/files", cache_path);
     if (mkdir(path, 0770) == -1) {
         if (errno != EEXIST) {
@@ -518,3 +611,4 @@ int ldb_filecache_init(char *cache_path) {
     }
     return 0;
 }
+
