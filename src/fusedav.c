@@ -387,9 +387,8 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
 
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
 
-        // @TODO: Server should not return 404 on no events.
         ne_result = simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
-        if (ne_result != NE_FAILED && ne_result != NE_CONNECT && ne_result != NE_TIMEOUT) {
+        if (ne_result == NE_OK) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
         }
@@ -406,7 +405,8 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         log_print(LOG_DEBUG, "Replacing directory data: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
-        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL) != NE_OK) {
+        ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
+        if (ne_result != NE_OK) {
             log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
             return -ENOENT;
         }
@@ -541,6 +541,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // If it's the root directory, just do a single PROPFIND.
     if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
+        // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_delete(config->cache, path);
             log_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
