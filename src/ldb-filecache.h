@@ -38,5 +38,6 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s);
 int ldb_filecache_delete(ldb_filecache_t *cache, const char *path);
 int ldb_filecache_init(char *cache_path);
+void ldb_filecache_cleanup(ldb_filecache_t *cache);
 
 #endif

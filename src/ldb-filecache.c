@@ -86,6 +86,17 @@ static char *path2key(const char *path) {
     return key;
 }
 
+// Does *not* allocate a new string.
+static const char *key2path(const char *key) {
+    size_t pos = 0;
+    while (key[pos]) {
+        if (key[pos] == ':')
+            return key + pos + 1;
+        ++pos;
+    }
+    return NULL;
+}
+
 static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cache, const char *path) {
     struct ldb_filecache_pdata *pdata = NULL;
     char *key;
@@ -196,7 +207,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
 
         code = ne_get_status(req)->code;
         if (code == 304) {
-            log_print(LOG_DEBUG, "Got 304 on %s", path);
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: Got 304 on %s", path);
 
             // Gobble up any remaining data in the response.
             ne_discard_response(req);
@@ -214,6 +225,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
             bool unlink_old = false;
             const char *etag = NULL;
 
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: Got 200 on %s", path);
             if (pdata == NULL) {
                 pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
 
@@ -241,6 +253,9 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
             if (unlink_old)
                 unlink(old_filename);
             goto finish;
+        }
+        else {
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: neither code 304 nor 200: %d", code);
         }
 
         ne_ret = ne_end_request(req);
@@ -320,6 +335,7 @@ fail:
         free(sdata);
 
 finish:
+
     return ret;
 }
 
@@ -612,3 +628,39 @@ int ldb_filecache_init(char *cache_path) {
     return 0;
 }
 
+void ldb_filecache_cleanup(ldb_filecache_t *cache) {
+    leveldb_iterator_t *iter = NULL;
+    leveldb_readoptions_t *options;
+    struct ldb_filecache_pdata *value;
+    size_t klen;
+    const char *iterkey;
+
+    log_print(LOG_DEBUG, "enter: ldb_filecache_cleanup(cache %p)", cache);
+
+    options = leveldb_readoptions_create();
+    iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
+
+    leveldb_iter_seek_to_first(iter);
+
+    while (leveldb_iter_valid(iter)) {
+        iterkey = leveldb_iter_key(iter, &klen);
+
+        if (strstr(iterkey, "fc:")) {
+            value = ldb_filecache_pdata_get(cache, key2path(iterkey));
+            if (value) {
+                log_print(LOG_DEBUG, "filecache_list_all: timestamp: %ul", value->last_server_update);
+                // Needs fixing ...
+                if (value->last_server_update < 1355963057) {
+                    log_print(LOG_INFO, "filecache_list_all: Unlinking %s", value->filename);
+                    unlink(value->filename);
+                }
+                free(value);
+            }
+        }
+
+        leveldb_iter_next(iter);
+    }
+
+    leveldb_iter_destroy(iter);
+}
