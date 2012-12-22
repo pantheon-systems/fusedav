@@ -1399,7 +1399,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
     ret = dav_chmod(path, mode);
     log_print(LOG_DEBUG, "Done: create()");
-    
+
     return ret;
 }
 
@@ -1728,6 +1728,21 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
+static void *cache_cleanup(void *ptr) {
+
+    ldb_filecache_t *cache = (ldb_filecache_t *)ptr;
+
+    log_print(LOG_DEBUG, "enter cache_cleanup");
+
+    while (1) {
+        log_print(LOG_DEBUG, "before ldb_filecache_cleanup");
+        ldb_filecache_cleanup(cache);
+        log_print(LOG_DEBUG, "after ldb_filecache_cleanup");
+        sleep(60);
+    }
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -1735,6 +1750,7 @@ int main(int argc, char *argv[]) {
     char *mountpoint;
     int ret = 1;
     pthread_t lock_thread;
+    pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
 
@@ -1791,7 +1807,7 @@ int main(int argc, char *argv[]) {
     }
 
     //fuse_opt_add_arg(&args, "-o atomic_o_trunc");
-    
+
     if (debug)
         log_print(LOG_DEBUG, "Parsed command line.");
 
@@ -1865,6 +1881,8 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
+
+    pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config.cache);
 
     if (debug)
         log_print(LOG_DEBUG, "Entering main FUSE loop.");
