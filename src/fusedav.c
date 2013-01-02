@@ -1882,7 +1882,7 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
-    pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config.cache);
+    pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, config.cache);
 
     if (debug)
         log_print(LOG_DEBUG, "Entering main FUSE loop.");
