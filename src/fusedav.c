@@ -763,7 +763,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     log_print(LOG_DEBUG, "release(%s)", path);
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
-        log_print(LOG_ERR, "dav_write: error on ldb_filecache_sync: %d::%s", ret, path);
+        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
     }
 
     return ret;
@@ -777,6 +777,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
     log_print(LOG_DEBUG, "fsync(%s)", path);
 
     if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
+        log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
         goto finish;
     }
 
@@ -886,7 +887,7 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
-        log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
+        log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
         goto finish;
     }
 
@@ -1399,7 +1400,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
     ret = dav_chmod(path, mode);
     log_print(LOG_DEBUG, "Done: create()");
-    
+
     return ret;
 }
 
@@ -1791,7 +1792,7 @@ int main(int argc, char *argv[]) {
     }
 
     //fuse_opt_add_arg(&args, "-o atomic_o_trunc");
-    
+
     if (debug)
         log_print(LOG_DEBUG, "Parsed command line.");
 
