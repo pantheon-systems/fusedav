@@ -86,7 +86,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
     int code;
     ne_request *req = NULL;
     int ne_ret;
-    
+
     pdata = ldb_filecache_pdata_get(cache, path);
 
     if (pdata != NULL)
@@ -99,6 +99,9 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
 
     if (cached_file_is_fresh) {
         ret_fd = open(pdata->filename, O_APPEND);
+        if (ret_fd < 0) {
+            log_print(LOG_ERR, "ldb_get_fresh_fd: open returns < 0: errno: %d, %s", errno, strerror(errno));
+        }
         goto finish;
     }
 
@@ -115,13 +118,14 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
     do {
         ne_ret = ne_begin_request(req);
         if (ne_ret != NE_OK) {
+            log_print(LOG_ERR, "ldb_get_fresh_fd: ne_begin_request is not NE_OK");
             goto finish;
         }
 
         code = ne_get_status(req)->code;
         if (code == 304) {
             log_print(LOG_DEBUG, "Got 304 on %s", path);
-            
+
             // Gobble up any remaining data in the response.
             ne_discard_response(req);
 
@@ -131,6 +135,9 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
 
             // @TODO: Set proper flags? Or enforce in fusedav.c?
             ret_fd = open(pdata->filename, O_APPEND);
+            if (ret_fd < 0) {
+                log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 returns < 0");
+            }
             goto finish;
         }
         else if (code == 200) {
@@ -141,6 +148,10 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
 
             if (pdata == NULL) {
                 pdata = malloc(sizeof(struct ldb_filecache_pdata));
+                if (pdata == NULL) {
+                    log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
+                    goto finish;
+                }
                 memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
 
                 // Fill in ETag.
@@ -155,7 +166,10 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache, const 
 
             // Create a new temp file and read the file content into it.
             // @TODO: Set proper flags? Or enforce in fusedav.c?
-            new_cache_file(cache_path, pdata->filename, &ret_fd);
+            if (new_cache_file(cache_path, pdata->filename, &ret_fd) < 0) {
+                log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
+                goto finish;
+            }
             ne_read_response_to_fd(req, ret_fd);
 
             // Point the persistent cache to the new file content.
@@ -206,6 +220,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         // Create a new file to write into.
         sdata->modified = true;
         if (new_cache_file(cache_path, sdata->filename, &sdata->fd) < 0) {
+            log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
             goto fail;
         }
 
@@ -226,12 +241,16 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     else {
         // Get a file descriptor pointing to a guaranteed-fresh file.
         sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path);
+        if (sdata->fd < 0) {
+            log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd");
+            goto fail;
+        }
     }
 
     if (flags & O_RDONLY || flags & O_RDWR) sdata->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
 
-    if (sdata->fd > 0) {
+    if (sdata->fd >= 0) {
         log_print(LOG_DEBUG, "Setting fh to session data structure with fd %d.", sdata->fd);
         info->fh = (uint64_t) sdata;
         ret = 0;
@@ -390,7 +409,7 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
     log_print(LOG_DEBUG, "release(%s)", path);
 
     if ((ret = ldb_filecache_sync(cache, path, info)) < 0) {
-        log_print(LOG_ERR, "ldb_filecache_unref: ldb_filecache_sync returns error %d", ret);
+        log_print(LOG_ERR, "ldb_filecache_release: ldb_filecache_sync returns error %d", ret);
         goto finish;
     }
 
