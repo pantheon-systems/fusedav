@@ -1875,7 +1875,7 @@ int main(int argc, char *argv[]) {
     if (debug)
         log_print(LOG_DEBUG, "Entering main FUSE loop...");
 
-    if (multithread) {
+    if (config.multithread) {
         log_print(LOG_DEBUG, "...multithreaded");
         if (fuse_loop_mt(fuse) < 0) {
             log_print(LOG_CRIT, "Error occurred while trying to enter main FUSE loop.");
