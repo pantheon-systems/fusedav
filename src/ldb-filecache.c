@@ -391,13 +391,14 @@ static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, con
     char *key;
     int ret = -1;
 
-    log_print(LOG_DEBUG, "ldb_filecache_pdata_set: path=%s ; cachefile=%s", path, pdata->filename);
     if (!pdata) {
         if (debug) {
             log_print(LOG_ERR, "ldb_filecache_pdata_set NULL pdata");
         }
         goto finish;
     }
+
+    log_print(LOG_DEBUG, "ldb_filecache_pdata_set: path=%s ; cachefile=%s", path, pdata->filename);
 
     key = path2key(path);
     options = leveldb_writeoptions_create();
