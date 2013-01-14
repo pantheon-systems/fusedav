@@ -36,8 +36,9 @@
 #include <sys/statfs.h>
 #include <getopt.h>
 #include <attr/xattr.h>
-
 #include <sys/types.h>
+#include <syscall.h>
+
 #include <grp.h>
 #include <pwd.h>
 
@@ -84,6 +85,8 @@ int lock_thread_exit = 0;
 
 #define CLOCK_SKEW 10 // seconds
 
+#define gettid() syscall(SYS_gettid)
+
 struct fill_info {
     void *buf;
     fuse_fill_dir_t filler;
@@ -114,6 +117,7 @@ struct fusedav_config {
     bool progressive_propfind;
     bool refresh_dir_for_file_stat;
     bool ignorexattr;
+    bool multithread;
 };
 
 enum {
@@ -144,6 +148,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
      FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
      FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
+     FUSEDAV_OPT("multithread",                    multithread, false),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -760,7 +765,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     int ret = 0;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "release(%s)", path);
+    log_print(LOG_DEBUG, "dav_release: release(%s, tid=%u)", path, gettid());
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
@@ -774,7 +779,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
     int ret = 0;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "fsync(%s)", path);
+    log_print(LOG_DEBUG, "dav_fsync(%s, tid=%u)", path, gettid());
 
     if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
@@ -816,8 +821,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
         return -EACCES;
     }
 
-    if (debug)
-        log_print(LOG_DEBUG, "mknod(%s):PUT complete", path);
+    log_print(LOG_ERR, "mknod(%s):PUT complete", path); // change back to DEBUG
 
     close(fd);
     */
@@ -848,7 +852,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     int ret = 0;
 
     assert(info);
-    log_print(LOG_DEBUG, "dav_open: open(%s)", path);
+    log_print(LOG_DEBUG, "dav_open: open(%s, tid=%u)", path, gettid());
 
     path = path_cvt(path);
 
@@ -858,7 +862,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     }
 
     if (debug) {
-        log_print(LOG_ERR, "dav_open: after ldb_filecache_open");
+        log_print(LOG_DEBUG, "dav_open: after ldb_filecache_open");
     }
 
     return ret;
@@ -884,7 +888,7 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     ssize_t bytes_written;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    log_print(LOG_DEBUG, "write(%s, %lu+%lu, tid=%u)", path, (unsigned long) offset, (unsigned long) size, gettid());
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
@@ -1390,7 +1394,7 @@ finish:
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     int ret = 0;
 
-    log_print(LOG_DEBUG, "create(%s, %04o)", path, mode);
+    log_print(LOG_DEBUG, "create(%s, %04o, tid=%u)", path, mode, gettid());
 
     info->flags |= O_CREAT | O_TRUNC;
     ret = dav_open(path, info);
@@ -1675,6 +1679,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    Protocol and performance options:\n"
                 "        -o progressive_propfind\n"
                 "        -o refresh_dir_for_file_stat\n"
+                "        -o multithread\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
@@ -1868,10 +1873,21 @@ int main(int argc, char *argv[]) {
     log_print(LOG_DEBUG, "Opened stat cache.");
 
     if (debug)
-        log_print(LOG_DEBUG, "Entering main FUSE loop.");
-    if (fuse_loop_mt(fuse) < 0) {
-        log_print(LOG_CRIT, "Error occurred while trying to enter main FUSE loop.");
-        goto finish;
+        log_print(LOG_DEBUG, "Entering main FUSE loop...");
+
+    if (multithread) {
+        log_print(LOG_DEBUG, "...multithreaded");
+        if (fuse_loop_mt(fuse) < 0) {
+            log_print(LOG_CRIT, "Error occurred while trying to enter main FUSE loop.");
+            goto finish;
+        }
+    }
+    else {
+        log_print(LOG_DEBUG, "...single-threaded");
+        if (fuse_loop(fuse) < 0) {
+            log_print(LOG_CRIT, "Error occurred while trying to enter main FUSE loop.");
+            goto finish;
+        }
     }
 
     if (debug)
