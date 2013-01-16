@@ -85,8 +85,6 @@ int lock_thread_exit = 0;
 
 #define CLOCK_SKEW 10 // seconds
 
-#define gettid() syscall(SYS_gettid)
-
 struct fill_info {
     void *buf;
     fuse_fill_dir_t filler;
@@ -762,7 +760,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_release: release(%s, tid=%u)", path, gettid());
+    log_print(LOG_DEBUG, "CALLBACK: dav_release: release(%s)", path);
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
@@ -777,7 +775,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_fsync(%s, tid=%u)", path, gettid());
+    log_print(LOG_DEBUG, "CALLBACK: dav_fsync(%s)", path);
 
     if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
@@ -887,7 +885,7 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_write(%s, %lu+%lu, tid=%u)", path, (unsigned long) offset, (unsigned long) size, gettid());
+    log_print(LOG_DEBUG, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
