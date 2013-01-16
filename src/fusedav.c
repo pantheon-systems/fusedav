@@ -115,7 +115,7 @@ struct fusedav_config {
     bool progressive_propfind;
     bool refresh_dir_for_file_stat;
     bool ignorexattr;
-    bool multithread;
+    bool singlethread;
 };
 
 enum {
@@ -146,7 +146,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
      FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
      FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
-     FUSEDAV_OPT("multithread",                    multithread, true),
+     FUSEDAV_OPT("singlethread",                   singlethread, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -1669,7 +1669,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    Protocol and performance options:\n"
                 "        -o progressive_propfind\n"
                 "        -o refresh_dir_for_file_stat\n"
-                "        -o multithread\n"
+                "        -o singlethread\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
@@ -1858,17 +1858,17 @@ int main(int argc, char *argv[]) {
 
     log_print(LOG_DEBUG, "Entering main FUSE loop...");
 
-    if (config.multithread) {
-        log_print(LOG_DEBUG, "...multithreaded");
-        if (fuse_loop_mt(fuse) < 0) {
-            log_print(LOG_CRIT, "Error occurred while trying to enter multi-threaded FUSE loop.");
+    if (config.singlethread) {
+        log_print(LOG_DEBUG, "...singlethreaded");
+        if (fuse_loop(fuse) < 0) {
+            log_print(LOG_CRIT, "Error occurred while trying to enter single-threaded FUSE loop.");
             goto finish;
         }
     }
     else {
-        log_print(LOG_DEBUG, "...single-threaded");
-        if (fuse_loop(fuse) < 0) {
-            log_print(LOG_CRIT, "Error occurred while trying to enter single-threaded FUSE loop.");
+        log_print(LOG_DEBUG, "...multi-threaded");
+        if (fuse_loop_mt(fuse) < 0) {
+            log_print(LOG_CRIT, "Error occurred while trying to enter multi-threaded FUSE loop.");
             goto finish;
         }
     }
