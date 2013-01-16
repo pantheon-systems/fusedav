@@ -83,6 +83,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
         ldb_filecache_t *cache, const char *path) {
 
     struct stat_cache_value value;
+    struct ldb_filecache_pdata *pdata;
 
     log_print(LOG_DEBUG, "create_file: on %s", path);
     sdata->modified = true;
@@ -92,6 +93,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
         return -1;
     }
 
+    // Prepopulate stat cache.
     value.st.st_mode = 0660 | S_IFREG;
     value.st.st_nlink = 1;
     value.st.st_size = 0;
@@ -104,7 +106,20 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     value.st.st_gid = getgid();
     value.prepopulated = false;
     stat_cache_value_set(cache, path, &value);
-    log_print(LOG_DEBUG, "Updated stat cache for %d : %s :: .", sdata->fd, path, sdata->filename);
+    log_print(LOG_DEBUG, "Updated stat cache for %d : %s : %s.", sdata->fd, path, sdata->filename);
+
+    // Prepopulate file cache.
+    pdata = malloc(sizeof(struct ldb_filecache_pdata));
+    if (pdata == NULL) {
+        log_print(LOG_ERR, "create_file: malloc returns NULL for pdata");
+        return -1;
+    }
+    memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
+    strncpy(pdata->filename, sdata->filename, sizeof(pdata->filename));
+    pdata->last_server_update = time(NULL);
+    ldb_filecache_pdata_set(cache, path, pdata);
+    free(pdata);
+    log_print(LOG_DEBUG, "Updated file cache for %d : %s : %s.", sdata->fd, path, sdata->filename);
 
     return 0;
 }
@@ -113,7 +128,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         const char *cache_path, const char *path, int flags) {
     struct ldb_filecache_pdata *pdata;
     bool cached_file_is_fresh = false;
-    fd_t ret_fd = -1;
+    fd_t ret_fd = -1;  // Triggers -EBADFD from open if returned.
     int code;
     ne_request *req = NULL;
     int ne_ret;
@@ -238,7 +253,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, bool replace) {
     ne_session *session;
     struct ldb_filecache_sdata *sdata;
-    int ret = -1;
+    int ret = -EBADF;
     int flags = info->flags;
 
     log_print(LOG_DEBUG, "ldb_filecache_open: %s", path);
@@ -364,9 +379,7 @@ ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t
     if (!sdata->writable) {
         errno = EBADF;
         ret = 0;
-        if (debug) {
-            log_print(LOG_DEBUG, "ldb_filecache_write: not writable");
-        }
+        log_print(LOG_DEBUG, "ldb_filecache_write: not writable");
         goto finish;
     }
 
@@ -392,9 +405,7 @@ static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, con
     int ret = -1;
 
     if (!pdata) {
-        if (debug) {
-            log_print(LOG_ERR, "ldb_filecache_pdata_set NULL pdata");
-        }
+        log_print(LOG_ERR, "ldb_filecache_pdata_set NULL pdata");
         goto finish;
     }
 
@@ -472,18 +483,14 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     if (!sdata->writable) {
         // errno = EBADF; why?
         ret = 0;
-        if (debug) {
-            log_print(LOG_DEBUG, "ldb_filecache_sync: not writable");
-        }
+        log_print(LOG_DEBUG, "ldb_filecache_sync: not writable");
         goto finish;
     }
 
     log_print(LOG_DEBUG, "Checking if file (%s) was modified.", path);
     if (!sdata->modified) {
         ret = 0;
-        if (debug) {
-            log_print(LOG_DEBUG, "ldb_filecache_sync: not modified");
-        }
+        log_print(LOG_DEBUG, "ldb_filecache_sync: not modified");
         goto finish;
     }
 
@@ -521,6 +528,9 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         ret = -1;
         goto finish;
     }
+
+    // If the PUT succeeded, the file isn't locally modified.
+    sdata->modified = 0;
 
     // Update stat cache.
     // @TODO: Use actual mode.
