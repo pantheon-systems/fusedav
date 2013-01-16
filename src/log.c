@@ -16,7 +16,18 @@
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***/
 
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <systemd/sd-journal.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <unistd.h>
+#include <syscall.h>
+#include <assert.h>
 
 #include "log.h"
 
@@ -29,10 +40,14 @@ void log_set_maximum_verbosity(int verbosity) {
 int log_print(int verbosity, const char *format, ...) {
     int r = 0;
     va_list ap;
+    char *formatwithtid;
 
     if (verbosity <= maximum_verbosity) {
         va_start(ap, format);
-        r = sd_journal_printv(verbosity, format, ap);
+        asprintf(&formatwithtid, "[tid=%lu] %s", syscall(SYS_gettid), format);
+        assert(formatwithtid);
+        r = sd_journal_printv(verbosity, formatwithtid, ap);
+        free(formatwithtid);
         va_end(ap);
     }
 
