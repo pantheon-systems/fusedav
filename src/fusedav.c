@@ -36,8 +36,9 @@
 #include <sys/statfs.h>
 #include <getopt.h>
 #include <attr/xattr.h>
-
 #include <sys/types.h>
+#include <syscall.h>
+
 #include <grp.h>
 #include <pwd.h>
 
@@ -114,6 +115,7 @@ struct fusedav_config {
     bool progressive_propfind;
     bool refresh_dir_for_file_stat;
     bool ignorexattr;
+    bool multithread;
 };
 
 enum {
@@ -144,6 +146,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
      FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
      FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
+     FUSEDAV_OPT("multithread",                    multithread, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -215,8 +218,7 @@ static int simple_propfind_with_redirect(
         if (!session_is_local(u))
             break;
 
-        if (debug)
-            log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
+        log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
 
         path = u->path;
     }
@@ -245,8 +247,7 @@ static int proppatch_with_redirect(
         if (!session_is_local(u))
             break;
 
-        if (debug)
-            log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
+        log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
 
         path = u->path;
     }
@@ -432,7 +433,7 @@ static int dav_readdir(
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "readdir(%s)", path);
+    log_print(LOG_DEBUG, "CALLBACK: dav_readdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -474,11 +475,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
 
     path = strdup(u->path);
 
-    //log_print(LOG_DEBUG, "getattr_propfind_callback: %s", fn);
-
     strip_trailing_slash(path, &is_dir);
-
-    //log_print(LOG_DEBUG, "stripped: %s (isdir: %d)", fn, is_dir);
 
     fill_stat(st, results, NULL, is_dir);
 
@@ -617,7 +614,8 @@ static int dav_unlink(const char *path) {
     ne_session *session;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "unlink(%s)", path);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_unlink(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -647,7 +645,8 @@ static int dav_rmdir(const char *path) {
     ne_session *session;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "rmdir(%s)", path);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_rmdir(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -679,7 +678,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "mkdir(%s, %04o)", path, mode);
+    log_print(LOG_DEBUG, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -722,7 +721,7 @@ static int dav_rename(const char *from, const char *to) {
     assert(from);
     to = path_cvt(to);
 
-    log_print(LOG_DEBUG, "rename(%s, %s)", from, to);
+    log_print(LOG_DEBUG, "CALLBACK: dav_rename(%s, %s)", from, to);
 
     if (!(session = session_get(1))) {
         r = -EIO;
@@ -760,7 +759,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     int ret = 0;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "release(%s)", path);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_release: release(%s)", path);
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
@@ -774,7 +774,8 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
     int ret = 0;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "fsync(%s)", path);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_fsync(%s)", path);
 
     if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
@@ -790,12 +791,9 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
 
-    //char tempfile[PATH_MAX];
-    //int fd;
-    //ne_session *session;
-
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "mknod(%s)", path);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_mknod(%s)", path);
 
     /*
     if (!(session = session_get(1)))
@@ -816,8 +814,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
         return -EACCES;
     }
 
-    if (debug)
-        log_print(LOG_DEBUG, "mknod(%s):PUT complete", path);
+    log_print(LOG_ERR, "mknod(%s):PUT complete", path); // change back to DEBUG
 
     close(fd);
     */
@@ -843,32 +840,35 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     return 0;
 }
 
-static int dav_open(const char *path, struct fuse_file_info *info) {
+static int do_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
     assert(info);
-    log_print(LOG_DEBUG, "dav_open: open(%s)", path);
-
-    path = path_cvt(path);
 
     if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, info->flags & O_TRUNC)) < 0) {
-        log_print(LOG_ERR, "dav_open: Failed ldb_filecache_open");
+        log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
         return ret;
     }
 
-    if (debug) {
-        log_print(LOG_ERR, "dav_open: after ldb_filecache_open");
-    }
+    log_print(LOG_DEBUG, "do_open: after ldb_filecache_open");
 
     return ret;
+}
+
+
+static int dav_open(const char *path, struct fuse_file_info *info) {
+    path = path_cvt(path);
+    log_print(LOG_DEBUG, "CALLBACK: dav_open: open(%s)", path);
+    return do_open(path, info);
 }
 
 static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_read = ldb_filecache_read(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
@@ -884,7 +884,8 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     ssize_t bytes_written;
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
@@ -902,7 +903,7 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "truncate(%s, %lu)", path, (unsigned long) size);
+    log_print(LOG_DEBUG, "CALLBACK: dav_truncate(%s, %lu)", path, (unsigned long) size);
 
     if (!(session = session_get(1)))
         ret = -EIO;
@@ -926,8 +927,6 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     int r = 0;
     char *date;
 
-    log_print(LOG_DEBUG, "utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
-
     if (config->ignoreutimens) {
         //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
         return r;
@@ -936,6 +935,8 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     assert(path);
 
     path = path_cvt(path);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
@@ -1036,8 +1037,7 @@ static int dav_listxattr(
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "listxattr(%s, .., %lu)", path, (unsigned long) size);
+    log_print(LOG_DEBUG, "listxattr(%s, .., %lu)", path, (unsigned long) size);
 
     if (list) {
         l.list = list;
@@ -1355,8 +1355,7 @@ static int dav_chmod(const char *path, mode_t mode) {
 
     path = path_cvt(path);
 
-    if (debug)
-        log_print(LOG_DEBUG, "chmod(%s, %04o)", path, mode);
+    log_print(LOG_DEBUG, "chmod(%s, %04o)", path, mode);
 
     ops[0].name = &executable;
     ops[0].type = ne_propset;
@@ -1390,10 +1389,12 @@ finish:
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     int ret = 0;
 
-    log_print(LOG_DEBUG, "create(%s, %04o)", path, mode);
+    path = path_cvt(path);
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
     info->flags |= O_CREAT | O_TRUNC;
-    ret = dav_open(path, info);
+    ret = do_open(path, info);
 
     if (ret < 0)
         return ret;
@@ -1518,8 +1519,7 @@ static int create_lock(int lock_timeout) {
     lock->timeout = lock_timeout;
     lock->owner = strdup(owner);
 
-    if (debug)
-        log_print(LOG_DEBUG, "Acquiring lock...");
+    log_print(LOG_DEBUG, "Acquiring lock...");
 
     for (i = 0; i < MAX_REDIRECTS; i++) {
         const ne_uri *u;
@@ -1533,8 +1533,7 @@ static int create_lock(int lock_timeout) {
         if (!session_is_local(u))
             break;
 
-        if (debug)
-            log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", lock->uri.path, u->path);
+        log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", lock->uri.path, u->path);
 
         free(lock->uri.path);
         lock->uri.path = strdup(u->path);
@@ -1563,8 +1562,7 @@ static int remove_lock(void) {
     if (!(session = session_get(0)))
         return -1;
 
-    if (debug)
-        log_print(LOG_DEBUG, "Removing lock...");
+    log_print(LOG_DEBUG, "Removing lock...");
 
     if (ne_unlock(session, lock)) {
         log_print(LOG_ERR, "UNLOCK failed: %s", ne_get_error(session));
@@ -1579,8 +1577,7 @@ static void *lock_thread_func(void *p) {
     ne_session *session;
     sigset_t block;
 
-    if (debug)
-        log_print(LOG_DEBUG, "lock_thread entering");
+    log_print(LOG_DEBUG, "lock_thread entering");
 
     if (!(session = session_get(1)))
         return NULL;
@@ -1613,8 +1610,7 @@ static void *lock_thread_func(void *p) {
         sleep(t);
     }
 
-    if (debug)
-        log_print(LOG_DEBUG, "lock_thread exiting");
+    log_print(LOG_DEBUG, "lock_thread exiting");
 
     return NULL;
 }
@@ -1624,14 +1620,12 @@ int file_exists_or_set_null(char **path) {
 
     if ((file = fopen(*path, "r"))) {
         fclose(file);
-        if (debug)
-            log_print(LOG_DEBUG, "file_exists_or_set_null(%s): found", *path);
+        log_print(LOG_DEBUG, "file_exists_or_set_null(%s): found", *path);
         return 0;
     }
     free(*path);
     *path = NULL;
-    if (debug)
-        log_print(LOG_DEBUG, "file_exists_or_set_null(%s): not found", *path);
+    log_print(LOG_DEBUG, "file_exists_or_set_null(%s): not found", *path);
     return 0;
 }
 
@@ -1675,6 +1669,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    Protocol and performance options:\n"
                 "        -o progressive_propfind\n"
                 "        -o refresh_dir_for_file_stat\n"
+                "        -o multithread\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
@@ -1793,8 +1788,7 @@ int main(int argc, char *argv[]) {
 
     //fuse_opt_add_arg(&args, "-o atomic_o_trunc");
 
-    if (debug)
-        log_print(LOG_DEBUG, "Parsed command line.");
+    log_print(LOG_DEBUG, "Parsed command line.");
 
     if (!config.uri) {
         log_print(LOG_CRIT, "Missing the required URI argument.");
@@ -1805,22 +1799,19 @@ int main(int argc, char *argv[]) {
         log_print(LOG_CRIT, "Failed to initialize the session URI.");
         goto finish;
     }
-    if (debug)
-        log_print(LOG_DEBUG, "Set session URI and configuration.");
+    log_print(LOG_DEBUG, "Set session URI and configuration.");
 
     if (!(ch = fuse_mount(mountpoint, &args))) {
         log_print(LOG_CRIT, "Failed to mount FUSE file system.");
         goto finish;
     }
-    if (debug)
-        log_print(LOG_DEBUG, "Mounted the FUSE file system.");
+    log_print(LOG_DEBUG, "Mounted the FUSE file system.");
 
     if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), &config))) {
         log_print(LOG_CRIT, "Failed to create FUSE object.");
         goto finish;
     }
-    if (debug)
-        log_print(LOG_DEBUG, "Created the FUSE object.");
+    log_print(LOG_DEBUG, "Created the FUSE object.");
 
     if (config.lock_on_mount && create_lock(config.lock_timeout) >= 0) {
         int r;
@@ -1830,16 +1821,14 @@ int main(int argc, char *argv[]) {
         }
 
         lock_thread_running = 1;
-        if (debug)
-            log_print(LOG_DEBUG, "Acquired lock.");
+        log_print(LOG_DEBUG, "Acquired lock.");
     }
 
     if (config.nodaemon) {
         log_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
     }
     else {
-        if (debug)
-            log_print(LOG_DEBUG, "Attempting to daemonize.");
+        log_print(LOG_DEBUG, "Attempting to daemonize.");
         if (fuse_daemonize(/* run in foreground */ 0) < 0) {
             log_print(LOG_CRIT, "Failed to daemonize.");
             goto finish;
@@ -1867,15 +1856,24 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
-    if (debug)
-        log_print(LOG_DEBUG, "Entering main FUSE loop.");
-    if (fuse_loop_mt(fuse) < 0) {
-        log_print(LOG_CRIT, "Error occurred while trying to enter main FUSE loop.");
-        goto finish;
+    log_print(LOG_DEBUG, "Entering main FUSE loop...");
+
+    if (config.multithread) {
+        log_print(LOG_DEBUG, "...multithreaded");
+        if (fuse_loop_mt(fuse) < 0) {
+            log_print(LOG_CRIT, "Error occurred while trying to enter multi-threaded FUSE loop.");
+            goto finish;
+        }
+    }
+    else {
+        log_print(LOG_DEBUG, "...single-threaded");
+        if (fuse_loop(fuse) < 0) {
+            log_print(LOG_CRIT, "Error occurred while trying to enter single-threaded FUSE loop.");
+            goto finish;
+        }
     }
 
-    if (debug)
-        log_print(LOG_DEBUG, "Exiting cleanly.");
+    log_print(LOG_DEBUG, "Exiting cleanly.");
 
     ret = 0;
 
@@ -1887,34 +1885,27 @@ finish:
         remove_lock();
         ne_lockstore_destroy(lock_store);
 
-        if (debug)
-            log_print(LOG_DEBUG, "Freed lock.");
+        log_print(LOG_DEBUG, "Freed lock.");
     }
 
     if (ch != NULL) {
-        if (debug)
-            log_print(LOG_DEBUG, "Unmounting: %s", mountpoint);
+        log_print(LOG_DEBUG, "Unmounting: %s", mountpoint);
         fuse_unmount(mountpoint, ch);
     }
-    if (debug)
-        log_print(LOG_DEBUG, "Unmounted.");
+    log_print(LOG_DEBUG, "Unmounted.");
 
     if (fuse)
         fuse_destroy(fuse);
-    if (debug)
-        log_print(LOG_DEBUG, "Destroyed FUSE object.");
+    log_print(LOG_DEBUG, "Destroyed FUSE object.");
 
     fuse_opt_free_args(&args);
-    if (debug)
-        log_print(LOG_DEBUG, "Freed arguments.");
+    log_print(LOG_DEBUG, "Freed arguments.");
 
     //File_Cache_close_all(config.cache);
-    //if (debug)
-        //log_print(LOG_DEBUG, "Closed file cache.");
+    //log_print(LOG_DEBUG, "Closed file cache.");
 
     session_free();
-    if (debug)
-        log_print(LOG_DEBUG, "Freed session.");
+    log_print(LOG_DEBUG, "Freed session.");
 
     if (stat_cache_close(config.cache) < 0)
         log_print(LOG_ERR, "Failed to close the stat cache.");
