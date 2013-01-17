@@ -488,6 +488,9 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     if (sdata->fd >= 0)
         close(sdata->fd);
 
+    if (sdata != NULL)
+        free(sdata);
+
     return 0;
 }
 
@@ -619,6 +622,3 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
 
     return ret;
 }
-
-
-

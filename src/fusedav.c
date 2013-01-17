@@ -492,6 +492,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     ne_session *session;
     struct stat_cache_value *response;
     char *parent_path;
+    char *nepp;
     int is_dir = 0;
     time_t parent_children_update_ts;
     bool is_base_directory;
@@ -554,7 +555,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // directory stat data to, in turn, update the desired file stat data.
 
     // If it's not found, check the freshness of its directory.
-    parent_path = strip_trailing_slash(ne_path_parent(path), &is_dir);
+    nepp = ne_path_parent(path);
+    parent_path = strip_trailing_slash(nepp, &is_dir);
 
     log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
     parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path);
@@ -565,6 +567,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
         log_print(LOG_DEBUG, "Updating directory: %s", parent_path);
         update_directory(parent_path, (parent_children_update_ts > 0));
     }
+
+    free(nepp);
 
     // Try again to hit the file in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path))) {
