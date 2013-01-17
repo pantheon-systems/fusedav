@@ -1732,10 +1732,10 @@ static void *cache_cleanup(void *ptr) {
     log_print(LOG_DEBUG, "enter cache_cleanup");
 
     while (1) {
+        sleep(3600);
         log_print(LOG_DEBUG, "before ldb_filecache_cleanup");
         ldb_filecache_cleanup(cache);
         log_print(LOG_DEBUG, "after ldb_filecache_cleanup");
-        sleep(60);
     }
     return NULL;
 }

@@ -251,6 +251,8 @@ int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t ti
         leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
     leveldb_writeoptions_destroy(options);
 
+    free(key);
+
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
@@ -279,6 +281,8 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
         free(errptr);
         r = 0;
     }
+
+    free(key);
 
     if (value == NULL) return 0;
 
