@@ -1,0 +1,51 @@
+{
+   fuse_destroy-runs-on-exit
+   Memcheck:Leak
+   ...
+   fun:fuse_new_common
+   fun:main
+}
+{
+   session_free-runs-on-exit
+   Memcheck:Leak
+   ...
+   fun:session_set_uri
+   fun:main
+}
+{
+   ne_sock_exit-cannot-call-gnutls_global_deinit
+   Memcheck:Leak
+   ...
+   fun:ne_sock_init
+   fun:main
+}
+{
+   fuse_unmount-runs-on-exit
+   Memcheck:Leak
+   ...
+   fun:fuse_mount_common
+   fun:main
+}
+{
+   mountpoint-freed-on-exit
+   Memcheck:Leak
+   ...
+   fun:fuse_opt_parse
+   fun:fuse_parse_cmdline
+   fun:main
+}
+{
+   fuse_opt_free_args-runs-on-exit
+   Memcheck:Leak
+   ...
+   fun:fuse_opt_parse
+   fun:main
+}
+{
+   leveldb_options_destroy-runs-on-exit
+   Memcheck:Leak
+   ...
+   fun:leveldb_options_create
+   fun:stat_cache_open
+   fun:main
+}
