@@ -30,6 +30,11 @@
 
 typedef leveldb_t stat_cache_t;
 
+struct stat_cache_supplemental {
+    leveldb_cache_t *lru;
+    leveldb_options_t *options;
+};
+
 // Used opaquely outside this library.
 struct stat_cache_iterator {
     leveldb_iterator_t *ldb_iter;
@@ -49,8 +54,8 @@ int print_stat(struct stat *stbuf, const char *title);
 
 unsigned long stat_cache_get_local_generation(void);
 
-int stat_cache_open(stat_cache_t **cache, char *cache_path);
-int stat_cache_close(stat_cache_t *cache);
+int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path);
+int stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental);
 
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path);
 int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp);
