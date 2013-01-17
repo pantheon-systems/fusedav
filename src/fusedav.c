@@ -1725,6 +1725,21 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
+static void *cache_cleanup(void *ptr) {
+
+    ldb_filecache_t *cache = (ldb_filecache_t *)ptr;
+
+    log_print(LOG_DEBUG, "enter cache_cleanup");
+
+    while (1) {
+        log_print(LOG_DEBUG, "before ldb_filecache_cleanup");
+        ldb_filecache_cleanup(cache);
+        log_print(LOG_DEBUG, "after ldb_filecache_cleanup");
+        sleep(60);
+    }
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -1732,6 +1747,7 @@ int main(int argc, char *argv[]) {
     char *mountpoint;
     int ret = 1;
     pthread_t lock_thread;
+    pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
 
@@ -1857,6 +1873,11 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
+    if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, config.cache)) {
+        log_print(LOG_WARNING, "Failed to create cache cleanup thread.");
+        goto finish;
+    }
+
     log_print(LOG_DEBUG, "Entering main FUSE loop...");
 
     if (config.singlethread) {
@@ -1895,7 +1916,7 @@ finish:
     }
     if (mountpoint != NULL)
         free(mountpoint);
-    
+
     log_print(LOG_DEBUG, "Unmounted.");
 
     if (fuse)

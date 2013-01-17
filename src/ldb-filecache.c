@@ -620,5 +620,50 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
     return ret;
 }
 
+// Does *not* allocate a new string.
+static const char *key2path(const char *key) {
+    size_t pos = 0;
+    while (key[pos]) {
+        if (key[pos] == ':')
+            return key + pos + 1;
+        ++pos;
+    }
+    return NULL;
+}
 
+void ldb_filecache_cleanup(ldb_filecache_t *cache) {
+    leveldb_iterator_t *iter = NULL;
+    leveldb_readoptions_t *options;
+    struct ldb_filecache_pdata *value;
+    size_t klen;
+    const char *iterkey;
 
+    log_print(LOG_DEBUG, "enter: ldb_filecache_cleanup(cache %p)", cache);
+
+    options = leveldb_readoptions_create();
+    iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
+
+    leveldb_iter_seek_to_first(iter);
+
+    while (leveldb_iter_valid(iter)) {
+        iterkey = leveldb_iter_key(iter, &klen);
+
+        if (strstr(iterkey, "fc:")) {
+            value = ldb_filecache_pdata_get(cache, key2path(iterkey));
+            if (value) {
+                log_print(LOG_DEBUG, "filecache_list_all: timestamp: %ul", value->last_server_update);
+                // Needs fixing ...
+                if (value->last_server_update < 1355963057) {
+                    log_print(LOG_INFO, "filecache_list_all: Unlinking %s", value->filename);
+                    unlink(value->filename);
+                }
+                free(value);
+            }
+        }
+
+        leveldb_iter_next(iter);
+    }
+
+    leveldb_iter_destroy(iter);
+}
