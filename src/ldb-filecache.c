@@ -653,8 +653,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache) {
             value = ldb_filecache_pdata_get(cache, key2path(iterkey));
             if (value) {
                 log_print(LOG_DEBUG, "filecache_list_all: timestamp: %ul", value->last_server_update);
-                // Needs fixing ...
-                if (value->last_server_update < 1355963057) {
+                if (time(NULL) - value->last_server_update > 3600) {
                     log_print(LOG_INFO, "filecache_list_all: Unlinking %s", value->filename);
                     unlink(value->filename);
                 }
