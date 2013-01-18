@@ -482,11 +482,14 @@ finish:
 
 // close the file
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
+    int ret;
 
     log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d).", sdata->fd);
 
     if (sdata->fd >= 0)
-        close(sdata->fd);
+        ret = close(sdata->fd);
+
+    log_print(LOG_DEBUG, "ldb_filecache_close: close returns %d %s", ret, strerror(ret));
 
     return 0;
 }
@@ -507,11 +510,12 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 
     log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
 
-    ldb_filecache_close(sdata);
-
     ret = 0;
 
 finish:
+
+    // close, even on error
+    ldb_filecache_close(sdata);
 
     log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path);
 
@@ -550,15 +554,20 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
 
     ret = ne_request_dispatch(req);
 
+    if (ret != NE_OK) {
+        log_print(LOG_WARNING, "ne_put_return_etag: ne_request_dispatch returns error (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+    }
+
     if (ret == NE_OK && ne_get_status(req)->klass != 2) {
         ret = NE_ERROR;
     }
 
     // We continue to PUT the file if etag happens to be NULL; it just
-    // means ultimately that it won't go into the filecache
-    if (etag) {
+    // means ultimately that it won't trigger a 304 on next access
+    if (ret == NE_OK && etag) {
         value = ne_get_response_header(req, "etag");
-        strncpy(etag, value, ETAG_MAX);
+        if (value) strncpy(etag, value, ETAG_MAX);
+        else etag[0] = '\0';
         log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
     }
     ne_request_destroy(req);
@@ -594,7 +603,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "Seeking.");
+    log_print(LOG_DEBUG, "Seeking fd=%d", sdata->fd);
     if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
         log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
         ret = -1;
@@ -628,7 +637,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     }
 
     if (ne_put_return_etag(session, path, sdata->fd, etag)) {
-        log_print(LOG_ERR, "PUT failed: %s", ne_get_error(session));
+        log_print(LOG_ERR, "ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
         errno = ENOENT;
         ret = -1;
         goto finish;
@@ -638,7 +647,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         // Point the persistent cache to the new file content.
         pdata->last_server_update = time(NULL);
         ldb_filecache_pdata_set(cache, path, pdata);
-        log_print(LOG_DEBUG, "PUT: etag = %s", pdata->etag);
+        if (pdata->etag) log_print(LOG_DEBUG, "PUT: etag = %s", pdata->etag);
     }
 
     log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
