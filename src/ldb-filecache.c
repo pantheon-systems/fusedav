@@ -323,6 +323,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                 etag = ne_get_response_header(req, "ETag");
                 log_print(LOG_DEBUG, "Got ETag: %s", etag);
                 strncpy(pdata->etag, etag, ETAG_MAX);
+                pdata->etag[ETAG_MAX] = '\0'; // length of etag is ETAG_MAX + 1 to accomodate null terminator
             }
             else {
                 strncpy(old_filename, pdata->filename, PATH_MAX);
@@ -482,11 +483,14 @@ finish:
 
 // close the file
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
+    int ret = -1;
 
     log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d).", sdata->fd);
 
     if (sdata->fd >= 0)
-        close(sdata->fd);
+        ret = close(sdata->fd);
+
+    log_print(LOG_DEBUG, "ldb_filecache_close: close returns %d %s", ret, strerror(ret));
 
     if (sdata != NULL)
         free(sdata);
@@ -510,13 +514,74 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 
     log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
 
-    ldb_filecache_close(sdata);
-
     ret = 0;
 
 finish:
 
+    // close, even on error
+    ldb_filecache_close(sdata);
+
     log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path);
+
+    return ret;
+}
+
+/* PUT's from fd to URI */
+/* Our modification to include etag support on put */
+static int ne_put_return_etag(ne_session *session, const char *path, int fd, char *etag)
+{
+    ne_request *req;
+    struct stat st;
+    int ret;
+    const char *value;
+
+    log_print(LOG_DEBUG, "enter: ne_put_return_etag(,%s,,)", path);
+
+    assert(etag);
+
+    if (fstat(fd, &st)) {
+        int errnum = errno;
+        char buf[200];
+        char msg[256];
+        char *error;
+
+        error = ne_strerror(errnum, buf, sizeof buf);
+        sprintf(msg, "Could not determine file size: %s", error);
+        ne_set_error(session, msg);
+        return NE_ERROR;
+    }
+
+    req = ne_request_create(session, "PUT", path);
+
+    ne_lock_using_resource(req, path, 0);
+    ne_lock_using_parent(req, path);
+
+    ne_set_request_body_fd(req, fd, 0, st.st_size);
+
+    ret = ne_request_dispatch(req);
+
+    if (ret != NE_OK) {
+        log_print(LOG_WARNING, "ne_put_return_etag: ne_request_dispatch returns error (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+    }
+
+    if (ret == NE_OK && ne_get_status(req)->klass != 2) {
+        ret = NE_ERROR;
+    }
+
+    // We continue to PUT the file if etag happens to be NULL; it just
+    // means ultimately that it won't trigger a 304 on next access
+    if (ret == NE_OK) {
+        value = ne_get_response_header(req, "etag");
+        if (value) {
+            strncpy(etag, value, ETAG_MAX);
+            etag[ETAG_MAX] = '\0';
+        }
+        log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
+    }
+    else {
+        etag[0] = '\0';
+    }
+    ne_request_destroy(req);
 
     return ret;
 }
@@ -525,7 +590,7 @@ finish:
 int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
-    //struct ldb_filecache_pdata *pdata = NULL;
+    struct ldb_filecache_pdata *pdata = NULL;
     ne_session *session;
     struct stat_cache_value value;
 
@@ -548,7 +613,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "Seeking.");
+    log_print(LOG_DEBUG, "Seeking fd=%d", sdata->fd);
     if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
         log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
         ret = -1;
@@ -563,25 +628,31 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         goto finish;
     }
 
-    //pdata = ldb_filecache_pdata_get(cache, path);
-
-    // JB FIXME replace ne_put with our own version which also returns the
-    // ETAG information.
-    //pdata->last_server_update = time(NULL);
-    // FIXME! Generate ETAG. Or rewrite ne_put to put file, and get etag back
-    //generate_etag(pdata->etag, sdata->fd);
-
-    // @TODO: Replace PUT with something that gets the ETag returned by Valhalla.
     // Write this data to the persistent cache.
+    // Update the file cache
+    pdata = ldb_filecache_pdata_get(cache, path);
+    if (pdata == NULL) {
+        pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
+        if (pdata == NULL) {
+            log_print(LOG_ERR, "ldb_filecache_sync: calloc of pdata failed");
+            goto finish;
+        }
+        strncpy(pdata->filename, sdata->filename, PATH_MAX);
+    }
 
-    log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
-
-    if (ne_put(session, path, sdata->fd)) {
-        log_print(LOG_ERR, "PUT failed: %s", ne_get_error(session));
+    if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
+        log_print(LOG_ERR, "ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
         errno = ENOENT;
         ret = -1;
         goto finish;
     }
+
+    // Point the persistent cache to the new file content.
+    pdata->last_server_update = time(NULL);
+    ldb_filecache_pdata_set(cache, path, pdata);
+    log_print(LOG_DEBUG, "PUT: etag = %s", pdata->etag);
+
+    log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
     // If the PUT succeeded, the file isn't locally modified.
     sdata->modified = 0;
