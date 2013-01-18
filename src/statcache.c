@@ -119,11 +119,9 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
-int stat_cache_open(stat_cache_t **cache, char *cache_path) {
+int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path) {
     char *error = NULL;
     char storage_path[PATH_MAX];
-    leveldb_cache_t *ldb_cache;
-    leveldb_options_t *options;
 
     // Check that a directory is set.
     if (!cache_path) {
@@ -134,30 +132,37 @@ int stat_cache_open(stat_cache_t **cache, char *cache_path) {
 
     snprintf(storage_path, PATH_MAX, "%s/leveldb", cache_path);
 
-    options = leveldb_options_create();
+    supplemental->options = leveldb_options_create();
 
-    // Initialize LevelDB's own cache.
-    ldb_cache = leveldb_cache_create_lru(100 * 1048576); // 100MB
-    leveldb_options_set_cache(options, ldb_cache);
+    // Initialize LevelDB's LRU cache.
+    supplemental->lru = leveldb_cache_create_lru(100 * 1048576); // 100MB
+    leveldb_options_set_cache(supplemental->options, supplemental->lru);
 
     // Create the database if missing.
-    leveldb_options_set_create_if_missing(options, true);
-    leveldb_options_set_error_if_exists(options, false);
+    leveldb_options_set_create_if_missing(supplemental->options, true);
+    leveldb_options_set_error_if_exists(supplemental->options, false);
 
     // Use a fusedav logger.
-    leveldb_options_set_info_log(options, NULL);
+    leveldb_options_set_info_log(supplemental->options, NULL);
 
-    *cache = leveldb_open(options, storage_path, &error);
+    *cache = leveldb_open(supplemental->options, storage_path, &error);
     if (error) {
         log_print(LOG_ERR, "ERROR opening db: %s", error);
         return -1;
     }
+
     return 0;
 }
 
-int stat_cache_close(stat_cache_t *cache) {
+int stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental) {
     if (cache != NULL)
         leveldb_close(cache);
+    if (supplemental.options != NULL) {
+        leveldb_options_destroy(supplemental.options);
+        log_print(LOG_DEBUG, "leveldb_options_destroy");
+    }
+    if (supplemental.lru != NULL)
+        leveldb_cache_destroy(supplemental.lru);
     return 0;
 }
 
@@ -246,6 +251,8 @@ int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t ti
         leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
     leveldb_writeoptions_destroy(options);
 
+    free(key);
+
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
@@ -274,6 +281,8 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
         free(errptr);
         r = 0;
     }
+
+    free(key);
 
     if (value == NULL) return 0;
 

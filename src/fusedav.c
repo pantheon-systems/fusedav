@@ -106,6 +106,7 @@ struct fusedav_config {
     bool ignoreutimens;
     char *cache_path;
     stat_cache_t *cache;
+    struct stat_cache_supplemental cache_supplemental;
     uid_t uid;
     gid_t gid;
     mode_t dir_mode;
@@ -491,6 +492,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     ne_session *session;
     struct stat_cache_value *response;
     char *parent_path;
+    char *nepp;
     int is_dir = 0;
     time_t parent_children_update_ts;
     bool is_base_directory;
@@ -553,7 +555,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // directory stat data to, in turn, update the desired file stat data.
 
     // If it's not found, check the freshness of its directory.
-    parent_path = strip_trailing_slash(ne_path_parent(path), &is_dir);
+    nepp = ne_path_parent(path);
+    parent_path = strip_trailing_slash(nepp, &is_dir);
 
     log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
     parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path);
@@ -564,6 +567,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
         log_print(LOG_DEBUG, "Updating directory: %s", parent_path);
         update_directory(parent_path, (parent_children_update_ts > 0));
     }
+
+    free(nepp);
 
     // Try again to hit the file in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path))) {
@@ -1735,7 +1740,7 @@ int main(int argc, char *argv[]) {
     int fail = 0;
 
     if (ne_sock_init()) {
-        log_print(LOG_CRIT, "Failed to initialize libneon.");
+        log_print(LOG_CRIT, "Failed to set libneon thread-safety locks.");
         ++fail;
     }
 
@@ -1849,7 +1854,7 @@ int main(int argc, char *argv[]) {
     log_print(LOG_DEBUG, "Opened ldb file cache.");
 
     // Open the stat cache.
-    if (stat_cache_open(&config.cache, config.cache_path) < 0) {
+    if (stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path) < 0) {
         log_print(LOG_WARNING, "Failed to open the stat cache.");
         config.cache = NULL;
         goto finish;
@@ -1892,6 +1897,9 @@ finish:
         log_print(LOG_DEBUG, "Unmounting: %s", mountpoint);
         fuse_unmount(mountpoint, ch);
     }
+    if (mountpoint != NULL)
+        free(mountpoint);
+    
     log_print(LOG_DEBUG, "Unmounted.");
 
     if (fuse)
@@ -1901,13 +1909,13 @@ finish:
     fuse_opt_free_args(&args);
     log_print(LOG_DEBUG, "Freed arguments.");
 
-    //File_Cache_close_all(config.cache);
-    //log_print(LOG_DEBUG, "Closed file cache.");
-
     session_free();
     log_print(LOG_DEBUG, "Freed session.");
 
-    if (stat_cache_close(config.cache) < 0)
+    ne_sock_exit();
+    log_print(LOG_DEBUG, "Unset libneon thread-safety locks.");
+
+    if (stat_cache_close(config.cache, config.cache_supplemental) < 0)
         log_print(LOG_ERR, "Failed to close the stat cache.");
 
     return ret;
