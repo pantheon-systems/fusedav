@@ -188,6 +188,7 @@ static void session_destroy(void *s) {
 }
 
 static void session_tsd_key_init(void) {
+    log_print(LOG_DEBUG, "session_tsd_key_init()");
     pthread_key_create(&session_tsd_key, session_destroy);
 }
 
