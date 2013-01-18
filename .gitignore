@@ -16,3 +16,4 @@ config.h.in
 /src/fusedav
 /src/Makefile
 /stamp-h1
+*~

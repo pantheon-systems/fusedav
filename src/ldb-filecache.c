@@ -492,6 +492,9 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
 
     log_print(LOG_DEBUG, "ldb_filecache_close: close returns %d %s", ret, strerror(ret));
 
+    if (sdata != NULL)
+        free(sdata);
+
     return 0;
 }
 
@@ -690,6 +693,3 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
 
     return ret;
 }
-
-
-
