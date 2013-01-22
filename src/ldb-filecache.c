@@ -651,6 +651,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     pdata->last_server_update = time(NULL);
     ldb_filecache_pdata_set(cache, path, pdata);
     log_print(LOG_DEBUG, "PUT: etag = %s", pdata->etag);
+    free(pdata);
 
     log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
