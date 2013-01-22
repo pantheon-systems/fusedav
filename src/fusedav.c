@@ -752,6 +752,8 @@ static int dav_rename(const char *from, const char *to) {
     stat_cache_delete(config->cache, to);
     stat_cache_delete_parent(config->cache, to);
 
+    ldb_filecache_delete(config->cache, from);
+
 finish:
 
     free(_from);
@@ -864,7 +866,16 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "CALLBACK: dav_open: open(%s)", path);
+
+    // There are circumstances where we read a write-only file, so if write-only
+    // is specified, change to read-write. Otherwise, a read on that file will
+    // return an EBADF.
+    if (info->flags & O_WRONLY) {
+        info->flags &= ~O_WRONLY;
+        info->flags |= O_RDWR;
+    }
+
+    log_print(LOG_DEBUG, "CALLBACK: dav_open: open(%s, %x)", path, info->flags);
     return do_open(path, info);
 }
 
@@ -1899,7 +1910,7 @@ finish:
     }
     if (mountpoint != NULL)
         free(mountpoint);
-    
+
     log_print(LOG_DEBUG, "Unmounted.");
 
     if (fuse)
