@@ -507,7 +507,7 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 
     log_print(LOG_DEBUG, "ldb_filecache_release: %s : %d", path, sdata->fd);
 
-    if ((ret = ldb_filecache_sync(cache, path, info)) < 0) {
+    if ((ret = ldb_filecache_sync(cache, path, info, true)) < 0) {
         log_print(LOG_ERR, "ldb_filecache_release: ldb_filecache_sync returns error %d", ret);
         goto finish;
     }
@@ -587,7 +587,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
 }
 
 // top-level sync call
-int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
+int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
     struct ldb_filecache_pdata *pdata = NULL;
@@ -606,57 +606,63 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "Checking if file (%s) was modified.", path);
-    if (!sdata->modified) {
-        ret = 0;
-        log_print(LOG_DEBUG, "ldb_filecache_sync: not modified");
-        goto finish;
-    }
-
-    log_print(LOG_DEBUG, "Seeking fd=%d", sdata->fd);
-    if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
-        log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
-        ret = -1;
-        goto finish;
-    }
-
-    log_print(LOG_DEBUG, "Getting libneon session.");
-    if (!(session = session_get(1))) {
-        errno = EIO;
-        ret = -1;
-        log_print(LOG_ERR, "ldb_filecache_sync: failed session");
-        goto finish;
-    }
-
-    // Write this data to the persistent cache.
-    // Update the file cache
-    pdata = ldb_filecache_pdata_get(cache, path);
-    if (pdata == NULL) {
-        pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
-        if (pdata == NULL) {
-            log_print(LOG_ERR, "ldb_filecache_sync: calloc of pdata failed");
+    if (do_put) {
+        log_print(LOG_DEBUG, "Checking if file (%s) was modified.", path);
+        if (!sdata->modified) {
+            ret = 0;
+            log_print(LOG_DEBUG, "ldb_filecache_sync: not modified");
             goto finish;
         }
-        strncpy(pdata->filename, sdata->filename, PATH_MAX);
-    }
 
-    if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
-        log_print(LOG_ERR, "ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
-        errno = ENOENT;
-        ret = -1;
-        goto finish;
+        log_print(LOG_DEBUG, "Seeking fd=%d", sdata->fd);
+        if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
+            log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
+            ret = -1;
+            goto finish;
+        }
+    
+        log_print(LOG_DEBUG, "Getting libneon session.");
+        if (!(session = session_get(1))) {
+            errno = EIO;
+            ret = -1;
+            log_print(LOG_ERR, "ldb_filecache_sync: failed session");
+            goto finish;
+        }
+    
+        // Write this data to the persistent cache.
+        // Update the file cache
+        pdata = ldb_filecache_pdata_get(cache, path);
+        if (pdata == NULL) {
+            pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
+            if (pdata == NULL) {
+                log_print(LOG_ERR, "ldb_filecache_sync: calloc of pdata failed");
+                goto finish;
+            }
+            strncpy(pdata->filename, sdata->filename, PATH_MAX);
+        }
+
+        log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
+
+        if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
+            log_print(LOG_ERR, "ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
+            errno = ENOENT;
+            ret = -1;
+            goto finish;
+        }
+
+        log_print(LOG_DEBUG, "PUT: etag = %s", pdata->etag);
+
+        // If the PUT succeeded, the file isn't locally modified.
+        sdata->modified = 0;
+    }
+    else {
+        strncpy(pdata->etag, "\0", 1);
     }
 
     // Point the persistent cache to the new file content.
     pdata->last_server_update = time(NULL);
     ldb_filecache_pdata_set(cache, path, pdata);
-    log_print(LOG_DEBUG, "PUT: etag = %s", pdata->etag);
     free(pdata);
-
-    log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
-
-    // If the PUT succeeded, the file isn't locally modified.
-    sdata->modified = 0;
 
     // Update stat cache.
     // @TODO: Use actual mode.
