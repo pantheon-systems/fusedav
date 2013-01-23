@@ -721,6 +721,7 @@ static int dav_rename(const char *from, const char *to) {
     int r = 0;
     struct stat st;
     char fn[PATH_MAX], *_from;
+    struct stat_cache_value *entry = NULL;
 
     from = _from = strdup(path_cvt(from));
     assert(from);
@@ -742,19 +743,23 @@ static int dav_rename(const char *from, const char *to) {
     }
 
     if (ne_move(session, 1, from, to)) {
-        log_print(LOG_ERR, "MOVE failed: %s", ne_get_error(session));
+        log_print(LOG_WARNING, "MOVE failed: %s", ne_get_error(session));
         r = -ENOENT;
         goto finish;
     }
 
+    entry = stat_cache_value_get(config->cache, from);
+    if (stat_cache_value_set(config->cache, to, entry) < 0) {
+        r = -EIO;
+        goto finish;
+    }
     stat_cache_delete(config->cache, from);
-    stat_cache_delete_parent(config->cache, from);
-    stat_cache_delete(config->cache, to);
-    stat_cache_delete_parent(config->cache, to);
-
     ldb_filecache_delete(config->cache, from);
 
 finish:
+
+    if (entry != NULL)
+        free(entry);
 
     free(_from);
 
@@ -784,7 +789,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
 
     log_print(LOG_DEBUG, "CALLBACK: dav_fsync(%s)", path);
 
-    if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
+    if ((ret = ldb_filecache_sync(config->cache, path, info, true)) < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
         goto finish;
     }
@@ -897,6 +902,7 @@ finish:
 }
 
 static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     ssize_t bytes_written;
 
     path = path_cvt(path);
@@ -908,12 +914,18 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
         goto finish;
     }
 
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
+        return -EIO;
+    }
+
 finish:
 
    return bytes_written;
 }
 
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
     ne_session *session;
 
@@ -927,6 +939,12 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
     if (ldb_filecache_truncate(info, size) < 0) {
         ret = -errno;
+        goto finish;
+    }
+
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
+        ret = -EIO;
         goto finish;
     }
 
