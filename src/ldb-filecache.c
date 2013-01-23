@@ -40,6 +40,9 @@
 
 #define REFRESH_INTERVAL 3
 
+// Remove filecache files older than 8 days
+#define AGE_OUT_THRESHOLD 691200
+
 typedef int fd_t;
 
 // Session data
@@ -86,19 +89,66 @@ static char *path2key(const char *path) {
     return key;
 }
 
+// get an entry from the ldb cache
+static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cache, const char *path) {
+    struct ldb_filecache_pdata *pdata = NULL;
+    char *key;
+    leveldb_readoptions_t *options;
+    size_t vallen;
+    char *errptr = NULL;
+
+    log_print(LOG_DEBUG, "Entered ldb_filecache_pdata_get: path=%s", path);
+
+    key = path2key(path);
+
+    options = leveldb_readoptions_create();
+    pdata = (struct ldb_filecache_pdata *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
+    leveldb_readoptions_destroy(options);
+    free(key);
+
+    if (errptr != NULL) {
+        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
+        free(errptr);
+        return NULL;
+    }
+
+    if (!pdata) {
+        log_print(LOG_DEBUG, "ldb_filecache_pdata_get miss on path: %s", path);
+        return NULL;
+    }
+
+    if (vallen != sizeof(struct ldb_filecache_pdata)) {
+        log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct ldb_filecache_pdata));
+    }
+
+    log_print(LOG_DEBUG, "Returning from ldb_filecache_pdata_get: path=%s :: cachefile=%s", path, pdata->filename);
+
+    return pdata;
+}
+
 // deletes entry from ldb cache
 int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     leveldb_writeoptions_t *options;
     char *key;
     int ret = 0;
     char *errptr = NULL;
+    struct ldb_filecache_pdata *pdata;
 
     log_print(LOG_DEBUG, "ldb_filecache_delete: path (%s).", path);
+
+    pdata = ldb_filecache_pdata_get(cache, path);
+
     key = path2key(path);
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
     leveldb_writeoptions_destroy(options);
     free(key);
+
+    if (pdata) {
+        unlink(pdata->filename);
+        log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", pdata->filename);
+        free(pdata);
+    }
 
     if (errptr != NULL) {
         log_print(LOG_ERR, "ERROR: leveldb_delete: %s", errptr);
@@ -200,43 +250,6 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     log_print(LOG_DEBUG, "Updated file cache for %d : %s : %s.", sdata->fd, path, sdata->filename);
 
     return 0;
-}
-
-// get an entry from the ldb cache
-static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cache, const char *path) {
-    struct ldb_filecache_pdata *pdata = NULL;
-    char *key;
-    leveldb_readoptions_t *options;
-    size_t vallen;
-    char *errptr = NULL;
-
-    log_print(LOG_DEBUG, "Entered ldb_filecache_pdata_get: path=%s", path);
-
-    key = path2key(path);
-
-    options = leveldb_readoptions_create();
-    pdata = (struct ldb_filecache_pdata *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
-    leveldb_readoptions_destroy(options);
-    free(key);
-
-    if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
-        free(errptr);
-        return NULL;
-    }
-
-    if (!pdata) {
-        log_print(LOG_DEBUG, "ldb_filecache_pdata_get miss on path: %s", path);
-        return NULL;
-    }
-
-    if (vallen != sizeof(struct ldb_filecache_pdata)) {
-        log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct ldb_filecache_pdata));
-    }
-
-    log_print(LOG_DEBUG, "Returning from ldb_filecache_pdata_get: path=%s :: cachefile=%s", path, pdata->filename);
-
-    return pdata;
 }
 
 // Get a file descriptor pointing to the latest full copy of the file.
@@ -709,7 +722,7 @@ static const char *key2path(const char *key) {
 void ldb_filecache_cleanup(ldb_filecache_t *cache) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
-    struct ldb_filecache_pdata *value;
+    struct ldb_filecache_pdata *pdata;
     size_t klen;
     const char *iterkey;
     const char *path;
@@ -728,17 +741,17 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache) {
 
         if (strstr(iterkey, "fc:")) {
             path = key2path(iterkey);
-            value = ldb_filecache_pdata_get(cache, path);
-            if (value) {
-                if (time(NULL) - value->last_server_update > 3600) {
-                    log_print(LOG_INFO, "filecache_list_all: Unlinking %s", value->filename);
-                    unlink(value->filename);
+            pdata = ldb_filecache_pdata_get(cache, path);
+            if (pdata) {
+                if (time(NULL) - pdata->last_server_update > AGE_OUT_THRESHOLD) {
+                    log_print(LOG_DEBUG, "ldb_filecache_cleanup: Unlinking %s", pdata->filename);
+                    unlink(pdata->filename);
                     ret = ldb_filecache_delete(cache, path);
                     if (ret) {
                         log_print(LOG_WARNING, "ldb_filecache_cleanup: failed to remove entry \"%s\" from ldb cache", path);
                     }
                 }
-                free(value);
+                free(pdata);
             }
         }
         leveldb_iter_next(iter);

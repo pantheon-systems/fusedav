@@ -85,6 +85,9 @@ int lock_thread_exit = 0;
 
 #define CLOCK_SKEW 10 // seconds
 
+// Run cache cleanup once a day.
+#define CACHE_CLEANUP_INTERVAL 86400
+
 struct fill_info {
     void *buf;
     fuse_fill_dir_t filler;
@@ -636,7 +639,9 @@ static int dav_unlink(const char *path) {
         return -ENOENT;
     }
 
-    ldb_filecache_delete(config->cache, path);
+    if (ldb_filecache_delete(config->cache, path)) {
+        log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
+    }
     stat_cache_delete(config->cache, path);
 
     return 0;
@@ -747,12 +752,18 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
+    // TODO: change from's record/files to belong to 'to'
     stat_cache_delete(config->cache, from);
     stat_cache_delete_parent(config->cache, from);
     stat_cache_delete(config->cache, to);
     stat_cache_delete_parent(config->cache, to);
 
-    ldb_filecache_delete(config->cache, from);
+    if (ldb_filecache_delete(config->cache, to)) {
+        log_print(LOG_WARNING, "dav_rename: ldb_filecache_delete failed");
+    }
+    if (ldb_filecache_delete(config->cache, from)) {
+        log_print(LOG_WARNING, "dav_rename: ldb_filecache_delete failed");
+    }
 
 finish:
 
@@ -1741,13 +1752,16 @@ static int config_privileges(struct fusedav_config *config) {
 }
 
 static void *cache_cleanup(void *ptr) {
-
     ldb_filecache_t *cache = (ldb_filecache_t *)ptr;
 
     log_print(LOG_DEBUG, "enter cache_cleanup");
 
     while (1) {
-        sleep(3600);
+        // Sleep first rather than kicking off cleanup at startup
+        if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
+            log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
+            return NULL;
+        }
         ldb_filecache_cleanup(cache);
     }
     return NULL;
@@ -1790,14 +1804,14 @@ int main(int argc, char *argv[]) {
         goto finish;
 
     memset(&config, 0, sizeof(config));
+    // default verbosity: LOG_NOTICE
+    config.verbosity = 5;
 
     // Parse options.
     if (!fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
         goto finish;
     }
-
-    //config.verbosity = 3;
 
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);
