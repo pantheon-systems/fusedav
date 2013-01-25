@@ -222,7 +222,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         const char *cache_path, const char *path, int flags) {
     struct ldb_filecache_pdata *pdata;
     bool cached_file_is_fresh = false;
-    fd_t ret_fd = -1;  // Triggers -EBADFD from open if returned.
+    fd_t ret_fd = -EBADFD;
     int code;
     ne_request *req = NULL;
     int ne_ret;
@@ -337,6 +337,11 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             }
             goto finish;
         }
+        else if (code == 404) {
+            log_print(LOG_WARNING, "ldb_get_fresh_fd: File expected to exist returns 404.");
+            ret_fd = -ENOENT;
+            goto finish;
+        }
         else {
             // Not sure what to do here; goto finish, or try the loop another time?
             log_print(LOG_WARNING, "ldb_get_fresh_fd: returns %d; expected 304 or 200", code);
@@ -388,6 +393,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, flags);
         if (sdata->fd < 0) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd");
+            ret = sdata->fd;
             goto fail;
         }
     }
