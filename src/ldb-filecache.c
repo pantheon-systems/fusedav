@@ -576,6 +576,13 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     return ret;
 }
 
+static void unlock(int fd) {
+    log_print(LOG_INFO, "ldb_filecache_sync: releasing shared file lock on fd %d", fd);
+    if (flock(fd, LOCK_UN)) {
+        log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d", fd);
+    }
+}
+
 // top-level sync call
 int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
@@ -606,8 +613,8 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             log_print(LOG_ERR, "ldb_filecache_sync: calloc of pdata failed");
             goto finish;
         }
-        log_print(LOG_INFO, "ldb_filecache_sync:: filename %s : %s : %s", path, sdata->filename, pdata->filename);
         strncpy(pdata->filename, sdata->filename, PATH_MAX);
+        log_print(LOG_INFO, "ldb_filecache_sync:: filename %s : %s : %s", path, sdata->filename, pdata->filename);
     }
     else {
         log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d): cachefile=%s", path, sdata->fd, pdata->filename);
@@ -625,6 +632,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
             log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
             ret = -1;
+            unlock(sdata->fd);
             goto finish;
         }
 
@@ -633,6 +641,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             errno = EIO;
             ret = -1;
             log_print(LOG_ERR, "ldb_filecache_sync: failed session");
+            unlock(sdata->fd);
             goto finish;
         }
 
@@ -642,6 +651,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             log_print(LOG_ERR, "ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
             errno = ENOENT;
             ret = -1;
+            unlock(sdata->fd);
             goto finish;
         }
 
@@ -650,10 +660,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         // If the PUT succeeded, the file isn't locally modified.
         sdata->modified = false;
 
-        log_print(LOG_INFO, "ldb_filecache_sync: releasing shared file lock on fd %d", sdata->fd);
-        if (flock(sdata->fd, LOCK_UN)) {
-            log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d", sdata->fd);
-        }
+        unlock(sdata->fd);
     }
     else {
         // If we don't PUT the file, we don't have an etag, so zero it out
