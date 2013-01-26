@@ -890,7 +890,7 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
     assert(info);
 
-    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, info->flags & O_TRUNC)) < 0) {
+    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
         return ret;
     }
@@ -1453,6 +1453,7 @@ finish:
 }
 
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
     path = path_cvt(path);
@@ -1466,6 +1467,12 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
         return ret;
 
     ret = dav_chmod(path, mode);
+
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
+        return -EIO;
+    }
+
     log_print(LOG_DEBUG, "Done: create()");
 
     return ret;

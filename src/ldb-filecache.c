@@ -226,6 +226,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     int code;
     ne_request *req = NULL;
     int ne_ret;
+    struct stat cache_file_stat;
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
@@ -233,16 +234,19 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         log_print(LOG_INFO, "ldb_get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
 
     // Is it usable as-is?
-    if (pdata != NULL && (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL) {
+    if ((flags & O_TRUNC) || (pdata != NULL && (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL)) {
         cached_file_is_fresh = true;
     }
 
     if (cached_file_is_fresh) {
-        log_print(LOG_INFO, "ldb_get_fresh_fd: file is fresh: %s::%s", path, pdata->filename);
+        log_print(LOG_INFO, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
         ret_fd = open(pdata->filename, flags);
         if (ret_fd < 0) {
             log_print(LOG_ERR, "ldb_get_fresh_fd: open returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
         }
+
+        fstat(ret_fd, &cache_file_stat);
+        log_print(LOG_INFO, "ldb_get_fresh_fd: Opened cache file with length %lu", cache_file_stat.st_size);
 
         goto finish;
     }
@@ -267,7 +271,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
         code = ne_get_status(req)->code;
         if (code == 304) {
-            log_print(LOG_DEBUG, "Got 304 on %s", path);
+            log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
 
             // Gobble up any remaining data in the response.
             ne_discard_response(req);
@@ -359,9 +363,9 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 }
 
 // top-level open call
-int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, bool replace) {
+int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     ne_session *session;
-    struct ldb_filecache_sdata *sdata;
+    struct ldb_filecache_sdata *sdata = NULL;
     int ret = -EBADF;
     int flags = info->flags;
 
@@ -381,10 +385,10 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     memset(sdata, 0, sizeof(struct ldb_filecache_sdata));
 
-    if (replace) {
+    if (flags & O_CREAT) {
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {
-            log_print(LOG_ERR, "ldb_filecache_open: Failed on replace for %s", path);
+            log_print(LOG_ERR, "ldb_filecache_open: Failed on create for %s", path);
             goto fail;
         }
     }
@@ -480,8 +484,12 @@ finish:
 // close the file
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     int ret = -1;
+    struct stat cache_file_stat;
 
     log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d).", sdata->fd);
+
+    fstat(sdata->fd, &cache_file_stat);
+    log_print(LOG_INFO, "ldb_filecache_close: Cache file has length %lu", cache_file_stat.st_size);
 
     if (sdata->fd >= 0)
         ret = close(sdata->fd);
@@ -596,6 +604,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_pdata *pdata = NULL;
     ne_session *session;
     struct stat_cache_value value;
+    struct stat cache_file_stat;
 
     assert(sdata);
 
@@ -675,7 +684,9 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     // Point the persistent cache to the new file content.
     pdata->last_server_update = time(NULL);
-    log_print(LOG_INFO, "ldb_filecache_sync: Updating file cache for %s : %s.", path, pdata->filename);
+
+    fstat(sdata->fd, &cache_file_stat);
+    log_print(LOG_INFO, "ldb_filecache_sync: Updating file cache for %s : %s (size %lu)", path, pdata->filename, cache_file_stat.st_size);
     ldb_filecache_pdata_set(cache, path, pdata);
 
     // Update stat cache.
