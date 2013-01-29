@@ -226,7 +226,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     int code;
     ne_request *req = NULL;
     int ne_ret;
-    struct stat cache_file_stat;
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
@@ -244,10 +243,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         if (ret_fd < 0) {
             log_print(LOG_ERR, "ldb_get_fresh_fd: open returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
         }
-
-        fstat(ret_fd, &cache_file_stat);
-        log_print(LOG_INFO, "ldb_get_fresh_fd: Opened cache file with length %lu", cache_file_stat.st_size);
-
         goto finish;
     }
 
@@ -276,23 +271,21 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             // Gobble up any remaining data in the response.
             ne_discard_response(req);
 
-            if (pdata == NULL) {
-                log_print(LOG_ERR, "ldb_get_fresh_fd: pdata NULL on 304");
-                goto finish;
+            if (pdata != NULL) {
+                // Mark the cache item as revalidated at the current time.
+                pdata->last_server_update = time(NULL);
+                log_print(LOG_INFO, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s.", path, pdata->filename);
+                ldb_filecache_pdata_set(cache, path, pdata);
+    
+                // @TODO: Set proper flags? Or enforce in fusedav.c?
+                ret_fd = open(pdata->filename, flags);
+                if (ret_fd < 0) {
+                    log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %d returns < 0", pdata->filename, flags);
+                }
             }
-
-            // Mark the cache item as revalidated at the current time.
-            pdata->last_server_update = time(NULL);
-            log_print(LOG_INFO, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s.", path, pdata->filename);
-            ldb_filecache_pdata_set(cache, path, pdata);
-
-            // @TODO: Set proper flags? Or enforce in fusedav.c?
-            ret_fd = open(pdata->filename, flags);
-            if (ret_fd < 0) {
-                log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %d returns < 0", pdata->filename, flags);
+            else {
+                log_print(LOG_WARNING, "ldb_get_fresh_fd: Got 304 without If-None-Match");
             }
-
-            goto finish;
         }
         else if (code == 200) {
             // Archive the old temp file path for unlinking after replacement.
@@ -304,25 +297,33 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                 pdata = malloc(sizeof(struct ldb_filecache_pdata));
                 if (pdata == NULL) {
                     log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
+                    ne_end_request(req);
                     goto finish;
                 }
                 memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
-
-                // Fill in ETag.
-                etag = ne_get_response_header(req, "ETag");
-                log_print(LOG_DEBUG, "Got ETag: %s", etag);
-                strncpy(pdata->etag, etag, ETAG_MAX);
-                pdata->etag[ETAG_MAX] = '\0'; // length of etag is ETAG_MAX + 1 to accomodate null terminator
             }
             else {
                 strncpy(old_filename, pdata->filename, PATH_MAX);
                 unlink_old = true;
             }
 
+            // Fill in ETag.
+            etag = ne_get_response_header(req, "ETag");
+            if (etag != NULL) {
+                log_print(LOG_DEBUG, "Got ETag: %s", etag);
+                strncpy(pdata->etag, etag, ETAG_MAX);
+                pdata->etag[ETAG_MAX] = '\0'; // length of etag is ETAG_MAX + 1 to accomodate this null terminator
+            }
+            else {
+                log_print(LOG_DEBUG, "Got no ETag in response.");
+                pdata->etag[0] = '\0';
+            }
+
             // Create a new temp file and read the file content into it.
             // @TODO: Set proper flags? Or enforce in fusedav.c?
             if (new_cache_file(cache_path, pdata->filename, &ret_fd) < 0) {
                 log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
+                ne_end_request(req);
                 goto finish;
             }
             ne_read_response_to_fd(req, ret_fd);
@@ -339,12 +340,10 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                 unlink(old_filename);
                 log_print(LOG_DEBUG, "ldb_get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
-            goto finish;
         }
         else if (code == 404) {
             log_print(LOG_WARNING, "ldb_get_fresh_fd: File expected to exist returns 404.");
             ret_fd = -ENOENT;
-            goto finish;
         }
         else {
             // Not sure what to do here; goto finish, or try the loop another time?
