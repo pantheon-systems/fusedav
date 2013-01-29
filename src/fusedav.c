@@ -743,14 +743,15 @@ static int dav_rename(const char *from, const char *to) {
 
     fd = ldb_filecache_fd(config->cache, from);
     if (fd < 0) {
-        log_print(LOG_ERR, "dav_rename: open returns < 0 on \"%s\": errno: %d, %s", from, errno, strerror(errno));
+        log_print(LOG_INFO, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
     }
-
-    log_print(LOG_INFO, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
-    if (flock(fd, LOCK_EX)) {
-        log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d:%s", fd, from);
+    else {
+        log_print(LOG_INFO, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
+        if (flock(fd, LOCK_EX)) {
+            log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d:%s", fd, from);
+        }
+        log_print(LOG_INFO, "dav_rename: acquired exclusive file lock on fd %d", fd);
     }
-    log_print(LOG_INFO, "dav_rename: acquired exclusive file lock on fd %d", fd);
 
     if (!(session = session_get(1))) {
         r = -EIO;
@@ -774,13 +775,13 @@ static int dav_rename(const char *from, const char *to) {
 
     entry = stat_cache_value_get(config->cache, from, true);
     log_print(LOG_INFO, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
-    if (stat_cache_value_set(config->cache, to, entry) < 0) {
+    if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
         r = -EIO;
         goto finish;
     }
     stat_cache_delete(config->cache, from);
 
-    if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
+    if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
         log_print(LOG_INFO, "dav_rename: No local file cache data to move (or move failed).");
         ldb_filecache_delete(config->cache, to);
     }
