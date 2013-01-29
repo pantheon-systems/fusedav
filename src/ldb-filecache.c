@@ -226,7 +226,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     int code;
     ne_request *req = NULL;
     int ne_ret;
-    struct stat cache_file_stat;
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
