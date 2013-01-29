@@ -226,7 +226,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     int code;
     ne_request *req = NULL;
     int ne_ret;
-    struct stat cache_file_stat;
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
@@ -296,7 +295,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
             if (pdata == NULL) {
                 pdata = malloc(sizeof(struct ldb_filecache_pdata));
-                if (pdata != NULL) {
+                if (pdata == NULL) {
                     log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
                     ne_end_request(req);
                     goto finish;
