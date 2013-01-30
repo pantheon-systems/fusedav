@@ -82,3 +82,10 @@
    fun:start_thread
    fun:clone
 }
+{
+   free-runs-later
+   Memcheck:Leak
+   fun:leveldb_get
+   fun:stat_cache_value_get
+   fun:get_stat
+}
