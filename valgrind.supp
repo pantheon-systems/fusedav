@@ -85,7 +85,20 @@
 {
    free-runs-later
    Memcheck:Leak
+   ...
    fun:leveldb_get
    fun:stat_cache_value_get
    fun:get_stat
+   ...
+}
+{
+   leveldb-CompactMemTable
+   Memcheck:Cond
+   ...
+   fun:_ZN7leveldb6DBImpl15CompactMemTableEv
+   fun:_ZN7leveldb6DBImpl20BackgroundCompactionEv
+   fun:_ZN7leveldb6DBImpl14BackgroundCallEv
+   fun:_ZN7leveldb12_GLOBAL__N_18PosixEnv15BGThreadWrapperEPv
+   fun:start_thread
+   fun:clone
 }

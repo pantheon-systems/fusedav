@@ -133,6 +133,8 @@ static ne_session *session_open(int with_lock) {
 
     extern ne_lock_store *lock_store;
 
+    log_print(LOG_NOTICE, "Opening session.");
+
     if (!b_uri)
         return NULL;
 
@@ -183,6 +185,9 @@ static ne_session *session_open(int with_lock) {
 
 static void session_destroy(void *s) {
     ne_session *session = s;
+
+    log_print(LOG_NOTICE, "Destroying session.");
+
     assert(s);
     ne_session_destroy(session);
 }
