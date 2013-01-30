@@ -533,7 +533,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
     }
 
     // Check if we can directly hit this entry in the stat cache.
-    if ((response = stat_cache_value_get(config->cache, path, false))) {
+    response = stat_cache_value_get(config->cache, path, false);
+    if (response != NULL) {
         *stbuf = response->st;
         free(response);
         //print_stat(stbuf, "get_stat from cache");
