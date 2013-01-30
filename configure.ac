@@ -18,7 +18,10 @@
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 
 AC_PREREQ([2.68])
-AC_INIT([fusedav],[0.2],[david (at) davidstrauss (dot) net])
+
+define([gitcommit], esyscmd([sh -c "git rev-parse --short HEAD|tr -d '\n'"]))dnl
+AC_DEFINE(GIT_COMMIT, "gitcommit", [Git Commit])
+AC_INIT([fusedav],[2.0.gitcommit],[david@davidstrauss.net])
 AC_CONFIG_SRCDIR([src/fusedav.c])
 AC_CONFIG_HEADERS([config.h])
 AM_INIT_AUTOMAKE([foreign 1.11 -Wall])
