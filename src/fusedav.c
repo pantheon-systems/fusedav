@@ -1847,14 +1847,14 @@ int main(int argc, char *argv[]) {
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);
     debug = (config.verbosity >= 7);
-    log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
+    log_print(LOG_INFO, "Log verbosity: %d.", config.verbosity);
     log_print(LOG_DEBUG, "Parsed options.");
 
     if (config.ignoreutimens)
-        log_print(LOG_NOTICE, "Ignoring utimens requests.");
+        log_print(LOG_INFO, "Ignoring utimens requests.");
 
     if (config.ignorexattr)
-        log_print(LOG_NOTICE, "Ignoring extended attributes.");
+        log_print(LOG_INFO, "Ignoring extended attributes.");
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
@@ -1931,7 +1931,7 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
-    log_print(LOG_DEBUG, "Entering main FUSE loop...");
+    log_print(LOG_NOTICE, "Startup complete. Entering main FUSE loop.");
 
     if (config.singlethread) {
         log_print(LOG_DEBUG, "...singlethreaded");
@@ -1948,7 +1948,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    log_print(LOG_DEBUG, "Exiting cleanly.");
+    log_print(LOG_NOTICE, "Left main FUSE loop. Shutting down.");
 
     ret = 0;
 
@@ -1970,7 +1970,7 @@ finish:
     if (mountpoint != NULL)
         free(mountpoint);
 
-    log_print(LOG_DEBUG, "Unmounted.");
+    log_print(LOG_NOTICE, "Unmounted.");
 
     if (fuse)
         fuse_destroy(fuse);
@@ -1987,6 +1987,8 @@ finish:
 
     if (stat_cache_close(config.cache, config.cache_supplemental) < 0)
         log_print(LOG_ERR, "Failed to close the stat cache.");
+
+    log_print(LOG_NOTICE, "Shutdown was successful. Exiting.");
 
     return ret;
 }
