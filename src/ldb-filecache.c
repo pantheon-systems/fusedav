@@ -219,36 +219,33 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
 
 // Get a file descriptor pointing to the latest full copy of the file.
 static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
-        const char *cache_path, const char *path, int flags) {
-    struct ldb_filecache_pdata *pdata;
-    bool cached_file_is_fresh = false;
+        const char *cache_path, const char *path, struct ldb_filecache_pdata *pdata, int flags) {
     fd_t ret_fd = -EBADFD;
     int code;
     ne_request *req = NULL;
     int ne_ret;
 
-    pdata = ldb_filecache_pdata_get(cache, path);
-
     if (pdata != NULL)
         log_print(LOG_INFO, "ldb_get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
 
     // Is it usable as-is?
-    if ((flags & O_TRUNC) || (pdata != NULL && (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL)) {
-        cached_file_is_fresh = true;
-    }
-
-    if (cached_file_is_fresh) {
+    // We should have guaranteed that if O_TRUNC is specified and pdata is NULL we don't get here.
+    // For O_TRUNC, we just want to open a truncated cache file and not bother getting a copy from
+    // the server.
+    // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
+    if (pdata != NULL && ( (flags & O_TRUNC) || ((time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
         log_print(LOG_INFO, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
         ret_fd = open(pdata->filename, flags);
         if (ret_fd < 0) {
             log_print(LOG_ERR, "ldb_get_fresh_fd: open returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
         }
+        // We're done; no need to access the server...
         goto finish;
     }
 
     req = ne_request_create(session, "GET", path);
     if (!req) {
-        log_print(LOG_ERR, "ldb_get_fresh_fd: Failed ne_request_create on GET");
+        log_print(LOG_ERR, "ldb_get_fresh_fd: Failed ne_request_create on GET on %s", path);
         goto finish;
     }
 
@@ -264,6 +261,13 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             goto finish;
         }
 
+        // If we get a 304, the cache file has the same contents as the file on the server, so
+        // just open the cache file without bothering to re-GET the contents from the server.
+        // If we get a 200, the cache file is stale and we need to update its contents from
+        // the server.
+        // We should not get a 404 here; either the open included O_CREAT and we create a new
+        // file, or the getattr/get_stat calls in fusedav.c should have detected the file was
+        // missing and handled it there.
         code = ne_get_status(req)->code;
         if (code == 304) {
             log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
@@ -276,8 +280,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                 pdata->last_server_update = time(NULL);
                 log_print(LOG_INFO, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s.", path, pdata->filename);
                 ldb_filecache_pdata_set(cache, path, pdata);
-    
-                // @TODO: Set proper flags? Or enforce in fusedav.c?
+
                 ret_fd = open(pdata->filename, flags);
                 if (ret_fd < 0) {
                     log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %d returns < 0", pdata->filename, flags);
@@ -364,6 +367,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 // top-level open call
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     ne_session *session;
+    struct ldb_filecache_pdata *pdata = NULL;
     struct ldb_filecache_sdata *sdata = NULL;
     int ret = -EBADF;
     int flags = info->flags;
@@ -384,7 +388,23 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     memset(sdata, 0, sizeof(struct ldb_filecache_sdata));
 
-    if (flags & O_CREAT) {
+    // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
+    // the second time. (Unlike on a linux file system, where the second time open
+    // is called with O_CREAT, the flag is there but is ignored.) So O_CREAT here
+    // means new file.
+
+    // If O_TRUNC is called, it is possible that there is no entry in the filecache.
+    // I believe the use-case for this is: prior to conversion to fusedav, a file
+    // was on the server. After conversion to fusedav, on first access, it is not
+    // in the cache, so we need to create a new cache file for it (or it has aged
+    // out of the cache.) If it is in the cache, we let ldb_get_fresh_fd handle it.
+
+    pdata = ldb_filecache_pdata_get(cache, path);
+    if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
+        if ((flags & O_CREAT) && (pdata != NULL)) {
+            // This will orphan the previous filecache file
+            log_print(LOG_WARNING, "ldb_filecache_open: creating a file that already has a cache entry: %s", path);
+        }
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on create for %s", path);
@@ -393,9 +413,9 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     else {
         // Get a file descriptor pointing to a guaranteed-fresh file.
-        sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, flags);
+        sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, pdata, flags);
         if (sdata->fd < 0) {
-            log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd");
+            log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
             ret = sdata->fd;
             goto fail;
         }
@@ -418,6 +438,9 @@ fail:
     if (sdata != NULL)
         free(sdata);
 
+    if (pdata != NULL)
+        free(pdata);
+
 finish:
     return ret;
 }
@@ -428,10 +451,6 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
     ssize_t ret = -1;
 
     log_print(LOG_DEBUG, "ldb_filecache_read: fd=%d", sdata->fd);
-
-    // ensure data is present and fresh
-    // ETAG exchange
-    //
 
     if ((ret = pread(sdata->fd, buf, size, offset)) < 0) {
         ret = -errno;
