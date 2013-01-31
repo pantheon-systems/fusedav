@@ -229,7 +229,8 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         log_print(LOG_INFO, "ldb_get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
 
     // Is it usable as-is?
-    if (pdata != NULL && ((time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL)) {
+    // We should have guaranteed that if O_TRUNC and pdata is NULL we don't get here.
+    if (pdata != NULL && ( (flags & O_TRUNC) || ((time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
         log_print(LOG_INFO, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
         ret_fd = open(pdata->filename, flags);
         if (ret_fd < 0) {
