@@ -229,7 +229,10 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         log_print(LOG_INFO, "ldb_get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
 
     // Is it usable as-is?
-    // We should have guaranteed that if O_TRUNC and pdata is NULL we don't get here.
+    // We should have guaranteed that if O_TRUNC is specified and pdata is NULL we don't get here.
+    // For O_TRUNC, we just want to open a truncated cache file and not bother getting a copy from
+    // the server.
+    // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
     if (pdata != NULL && ( (flags & O_TRUNC) || ((time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
         log_print(LOG_INFO, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
         ret_fd = open(pdata->filename, flags);
@@ -242,7 +245,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
     req = ne_request_create(session, "GET", path);
     if (!req) {
-        log_print(LOG_ERR, "ldb_get_fresh_fd: Failed ne_request_create on GET");
+        log_print(LOG_ERR, "ldb_get_fresh_fd: Failed ne_request_create on GET on %s", path);
         goto finish;
     }
 
@@ -258,6 +261,13 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             goto finish;
         }
 
+        // If we get a 304, the cache file has the same contents as the file on the server, so
+        // just open the cache file without bothering to re-GET the contents from the server.
+        // If we get a 200, the cache file is stale and we need to update its contents from
+        // the server.
+        // We should not get a 404 here; either the open included O_CREAT and we create a new
+        // file, or the getattr/get_stat calls in fusedav.c should have detected the file was
+        // missing and handled it there.
         code = ne_get_status(req)->code;
         if (code == 304) {
             log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
@@ -387,7 +397,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     // I believe the use-case for this is: prior to conversion to fusedav, a file
     // was on the server. After conversion to fusedav, on first access, it is not
     // in the cache, so we need to create a new cache file for it (or it has aged
-    // out of the cache.)
+    // out of the cache.) If it is in the cache, we let ldb_get_fresh_fd handle it.
 
     pdata = ldb_filecache_pdata_get(cache, path);
     if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
@@ -437,10 +447,6 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
     ssize_t ret = -1;
 
     log_print(LOG_DEBUG, "ldb_filecache_read: fd=%d", sdata->fd);
-
-    // ensure data is present and fresh
-    // ETAG exchange
-    //
 
     if ((ret = pread(sdata->fd, buf, size, offset)) < 0) {
         ret = -errno;
