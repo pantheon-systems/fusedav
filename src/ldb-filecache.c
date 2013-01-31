@@ -217,30 +217,13 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     return pdata;
 }
 
-static bool in_cache(ldb_filecache_t *cache, const char *path) {
-    struct ldb_filecache_pdata *pdata;
-
-    pdata = ldb_filecache_pdata_get(cache, path);
-
-    if (pdata != NULL) {
-        free(pdata);
-        return true;
-    }
-    else {
-        return false;
-    }
-}
-
 // Get a file descriptor pointing to the latest full copy of the file.
 static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
-        const char *cache_path, const char *path, int flags) {
-    struct ldb_filecache_pdata *pdata;
+        const char *cache_path, const char *path, struct ldb_filecache_pdata *pdata, int flags) {
     fd_t ret_fd = -EBADFD;
     int code;
     ne_request *req = NULL;
     int ne_ret;
-
-    pdata = ldb_filecache_pdata_get(cache, path);
 
     if (pdata != NULL)
         log_print(LOG_INFO, "ldb_get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
@@ -373,6 +356,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 // top-level open call
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     ne_session *session;
+    struct ldb_filecache_pdata *pdata = NULL;
     struct ldb_filecache_sdata *sdata = NULL;
     int ret = -EBADF;
     int flags = info->flags;
@@ -404,7 +388,8 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     // in the cache, so we need to create a new cache file for it (or it has aged
     // out of the cache.)
 
-    if ((flags & O_CREAT) || ((flags & O_TRUNC) && !in_cache(cache, path))) {
+    pdata = ldb_filecache_pdata_get(cache, path);
+    if ((flags & O_CREAT) || ((flags & O_TRUNC) && pdata == NULL)) {
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on create for %s", path);
@@ -413,7 +398,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     else {
         // Get a file descriptor pointing to a guaranteed-fresh file.
-        sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, flags);
+        sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, pdata, flags);
         if (sdata->fd < 0) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
             ret = sdata->fd;
@@ -437,6 +422,9 @@ fail:
 
     if (sdata != NULL)
         free(sdata);
+
+    if (pdata != NULL)
+        free(pdata);
 
 finish:
     return ret;
