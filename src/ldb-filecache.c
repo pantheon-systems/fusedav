@@ -390,7 +390,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     // out of the cache.)
 
     pdata = ldb_filecache_pdata_get(cache, path);
-    if ((flags & O_CREAT) || ((flags & O_TRUNC) && pdata == NULL)) {
+    if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on create for %s", path);
