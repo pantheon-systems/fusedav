@@ -217,11 +217,19 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     return pdata;
 }
 
+static bool in_cache(ldb_filecache_t *cache, const char *path) {
+    struct ldb_filecache_pdata *pdata;
+
+    pdata = ldb_filecache_pdata_get(cache, path);
+
+    if (pdata != NULL) return true;
+    else return false;
+}
+
 // Get a file descriptor pointing to the latest full copy of the file.
 static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         const char *cache_path, const char *path, int flags) {
     struct ldb_filecache_pdata *pdata;
-    bool cached_file_is_fresh = false;
     fd_t ret_fd = -EBADFD;
     int code;
     ne_request *req = NULL;
@@ -233,16 +241,13 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         log_print(LOG_INFO, "ldb_get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
 
     // Is it usable as-is?
-    if ((flags & O_TRUNC) || (pdata != NULL && (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL)) {
-        cached_file_is_fresh = true;
-    }
-
-    if (cached_file_is_fresh) {
+    if (pdata != NULL && ((time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL)) {
         log_print(LOG_INFO, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
         ret_fd = open(pdata->filename, flags);
         if (ret_fd < 0) {
             log_print(LOG_ERR, "ldb_get_fresh_fd: open returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
         }
+        // We're done; no need to access the server...
         goto finish;
     }
 
@@ -276,8 +281,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                 pdata->last_server_update = time(NULL);
                 log_print(LOG_INFO, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s.", path, pdata->filename);
                 ldb_filecache_pdata_set(cache, path, pdata);
-    
-                // @TODO: Set proper flags? Or enforce in fusedav.c?
+
                 ret_fd = open(pdata->filename, flags);
                 if (ret_fd < 0) {
                     log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %d returns < 0", pdata->filename, flags);
@@ -384,7 +388,18 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     memset(sdata, 0, sizeof(struct ldb_filecache_sdata));
 
-    if (flags & O_CREAT) {
+    // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
+    // the second time. (Unlike on a linux file system, where the second time open
+    // is called with O_CREAT, the flag is there but is ignored.) So O_CREAT here
+    // means new file.
+
+    // If O_TRUNC is called, it is possible that there is no entry in the filecache.
+    // I believe the use-case for this is: prior to conversion to fusedav, a file
+    // was on the server. After conversion to fusedav, on first access, it is not
+    // in the cache, so we need to create a new cache file for it (or it has aged
+    // out of the cache.)
+
+    if ((flags & O_CREAT) || ((flags & O_TRUNC) && !in_cache(cache, path))) {
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on create for %s", path);
@@ -395,7 +410,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         // Get a file descriptor pointing to a guaranteed-fresh file.
         sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, flags);
         if (sdata->fd < 0) {
-            log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd");
+            log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
             ret = sdata->fd;
             goto fail;
         }

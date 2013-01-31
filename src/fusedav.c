@@ -914,7 +914,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         info->flags |= O_RDWR;
     }
 
-    log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%d)", path, info->flags, info->flags & O_TRUNC);
+    log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
     return do_open(path, info);
 }
 
