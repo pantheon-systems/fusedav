@@ -222,8 +222,13 @@ static bool in_cache(ldb_filecache_t *cache, const char *path) {
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
-    if (pdata != NULL) return true;
-    else return false;
+    if (pdata != NULL) {
+        free(pdata);
+        return true;
+    }
+    else {
+        return false;
+    }
 }
 
 // Get a file descriptor pointing to the latest full copy of the file.
