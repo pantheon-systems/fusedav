@@ -34,6 +34,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/statfs.h>
+#include <sys/file.h>
 #include <getopt.h>
 #include <attr/xattr.h>
 #include <sys/types.h>
@@ -86,7 +87,8 @@ int lock_thread_exit = 0;
 #define CLOCK_SKEW 10 // seconds
 
 // Run cache cleanup once a day.
-#define CACHE_CLEANUP_INTERVAL 86400
+// #define CACHE_CLEANUP_INTERVAL 86400
+#define CACHE_CLEANUP_INTERVAL 60
 
 struct fill_info {
     void *buf;
@@ -342,10 +344,13 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
     fill_stat(&value.st, results, &is_deleted, is_dir);
     value.prepopulated = false;
 
-    if (is_deleted)
+    if (is_deleted) {
+        log_print(LOG_DEBUG, "Removing path: %s", path);
         stat_cache_delete(config->cache, path);
-    else
+    }
+    else {
         stat_cache_value_set(config->cache, path, &value);
+    }
 
     free(path);
 }
@@ -506,6 +511,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
+        log_print(LOG_DEBUG, "get_stat(%s): returns EIO", path);
         return -EIO;
     }
 
@@ -531,10 +537,13 @@ static int get_stat(const char *path, struct stat *stbuf) {
     }
 
     // Check if we can directly hit this entry in the stat cache.
-    if ((response = stat_cache_value_get(config->cache, path))) {
+    response = stat_cache_value_get(config->cache, path, false);
+    if (response != NULL) {
         *stbuf = response->st;
         free(response);
         //print_stat(stbuf, "get_stat from cache");
+        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
+        else log_print(LOG_DEBUG, "get_stat(%s): 1. returns 0", path);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
@@ -548,6 +557,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
             stat_cache_delete(config->cache, path);
             log_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
             memset(stbuf, 0, sizeof(struct stat));
+            log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
             return -ENOENT;
         }
         log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", base_directory);
@@ -574,10 +584,12 @@ static int get_stat(const char *path, struct stat *stbuf) {
     free(nepp);
 
     // Try again to hit the file in the stat cache.
-    if ((response = stat_cache_value_get(config->cache, path))) {
+    if ((response = stat_cache_value_get(config->cache, path, true))) {
         log_print(LOG_DEBUG, "Hit updated cache: %s", path);
         *stbuf = response->st;
         free(response);
+        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 2. returns ENOENT", path);
+        else log_print(LOG_DEBUG, "get_stat(%s): 2. returns 0", path);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
@@ -585,6 +597,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // If it's still not found, return that it doesn't exist.
     memset(stbuf, 0, sizeof(struct stat));
+    log_print(LOG_DEBUG, "get_stat(%s): 3. returns ENOENT", path);
     return -ENOENT;
 }
 
@@ -593,7 +606,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     int r;
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "getattr(%s)", path);
+    log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
     r = get_stat(path, stbuf);
 
     // Zero-out unused nanosecond fields.
@@ -623,7 +636,7 @@ static int dav_unlink(const char *path) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_unlink(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_unlink(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -724,17 +737,32 @@ static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     int r = 0;
+    int fd;
     struct stat st;
     char fn[PATH_MAX], *_from;
+    struct stat_cache_value *entry = NULL;
 
     from = _from = strdup(path_cvt(from));
     assert(from);
     to = path_cvt(to);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_rename(%s, %s)", from, to);
+    log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
+
+    fd = ldb_filecache_fd(config->cache, from);
+    if (fd < 0) {
+        log_print(LOG_DEBUG, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
+    }
+    else {
+        log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
+        if (flock(fd, LOCK_EX)) {
+            log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d:%s", fd, from);
+        }
+        log_print(LOG_DEBUG, "dav_rename: acquired exclusive file lock on fd %d", fd);
+    }
 
     if (!(session = session_get(1))) {
         r = -EIO;
+        log_print(LOG_WARNING, "dav_rename: failed to get session for %d:%s", fd, from);
         goto finish;
     }
 
@@ -747,25 +775,31 @@ static int dav_rename(const char *from, const char *to) {
     }
 
     if (ne_move(session, 1, from, to)) {
-        log_print(LOG_ERR, "MOVE failed: %s", ne_get_error(session));
+        log_print(LOG_WARNING, "dav_rename: MOVE failed: %s", ne_get_error(session));
         r = -ENOENT;
         goto finish;
     }
 
-    // TODO: change from's record/files to belong to 'to'
-    stat_cache_delete(config->cache, from);
-    stat_cache_delete_parent(config->cache, from);
-    stat_cache_delete(config->cache, to);
-    stat_cache_delete_parent(config->cache, to);
-
-    if (ldb_filecache_delete(config->cache, to)) {
-        log_print(LOG_WARNING, "dav_rename: ldb_filecache_delete failed");
+    entry = stat_cache_value_get(config->cache, from, true);
+    log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
+    if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
+        r = -EIO;
+        goto finish;
     }
-    if (ldb_filecache_delete(config->cache, from)) {
-        log_print(LOG_WARNING, "dav_rename: ldb_filecache_delete failed");
+    stat_cache_delete(config->cache, from);
+
+    if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
+        log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
+        ldb_filecache_delete(config->cache, to);
     }
 
 finish:
+
+    if (entry != NULL)
+        free(entry);
+
+    // Also releases lock.
+    if (fd > 0) close(fd);
 
     free(_from);
 
@@ -778,7 +812,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_release: release(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
@@ -795,7 +829,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
 
     log_print(LOG_DEBUG, "CALLBACK: dav_fsync(%s)", path);
 
-    if ((ret = ldb_filecache_sync(config->cache, path, info)) < 0) {
+    if ((ret = ldb_filecache_sync(config->cache, path, info, true)) < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
         goto finish;
     }
@@ -864,7 +898,7 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
     assert(info);
 
-    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, info->flags & O_TRUNC)) < 0) {
+    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
         return ret;
     }
@@ -886,7 +920,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         info->flags |= O_RDWR;
     }
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_open: open(%s, %x)", path, info->flags);
+    log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%d)", path, info->flags, info->flags & O_TRUNC);
     return do_open(path, info);
 }
 
@@ -895,7 +929,7 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, s
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    log_print(LOG_INFO, "CALLBACK: dav_read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_read = ldb_filecache_read(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
@@ -908,15 +942,21 @@ finish:
 }
 
 static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     ssize_t bytes_written;
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
         goto finish;
+    }
+
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
+        return -EIO;
     }
 
 finish:
@@ -925,6 +965,7 @@ finish:
 }
 
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
     ne_session *session;
 
@@ -938,6 +979,12 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
     if (ldb_filecache_truncate(info, size) < 0) {
         ret = -errno;
+        goto finish;
+    }
+
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
+        ret = -EIO;
         goto finish;
     }
 
@@ -1401,7 +1448,7 @@ static int dav_chmod(const char *path, mode_t mode) {
     }
 
     // @TODO: Before public release: Lock for concurrency.
-    value = stat_cache_value_get(config->cache, path);
+    value = stat_cache_value_get(config->cache, path, true);
     if (value != NULL) {
         value->st.st_mode = mode;
         stat_cache_value_set(config->cache, path, value);
@@ -1414,6 +1461,7 @@ finish:
 }
 
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
     path = path_cvt(path);
@@ -1427,6 +1475,12 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
         return ret;
 
     ret = dav_chmod(path, mode);
+
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
+        return -EIO;
+    }
+
     log_print(LOG_DEBUG, "Done: create()");
 
     return ret;
@@ -1820,10 +1874,10 @@ int main(int argc, char *argv[]) {
     log_print(LOG_DEBUG, "Parsed options.");
 
     if (config.ignoreutimens)
-        log_print(LOG_NOTICE, "Ignoring utimens requests.");
+        log_print(LOG_DEBUG, "Ignoring utimens requests.");
 
     if (config.ignorexattr)
-        log_print(LOG_NOTICE, "Ignoring extended attributes.");
+        log_print(LOG_DEBUG, "Ignoring extended attributes.");
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
@@ -1905,7 +1959,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "Entering main FUSE loop...");
+    log_print(LOG_NOTICE, "Startup complete. Entering main FUSE loop.");
 
     if (config.singlethread) {
         log_print(LOG_DEBUG, "...singlethreaded");
@@ -1922,7 +1976,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    log_print(LOG_DEBUG, "Exiting cleanly.");
+    log_print(LOG_NOTICE, "Left main FUSE loop. Shutting down.");
 
     ret = 0;
 
@@ -1944,7 +1998,7 @@ finish:
     if (mountpoint != NULL)
         free(mountpoint);
 
-    log_print(LOG_DEBUG, "Unmounted.");
+    log_print(LOG_NOTICE, "Unmounted.");
 
     if (fuse)
         fuse_destroy(fuse);
@@ -1961,6 +2015,8 @@ finish:
 
     if (stat_cache_close(config.cache, config.cache_supplemental) < 0)
         log_print(LOG_ERR, "Failed to close the stat cache.");
+
+    log_print(LOG_NOTICE, "Shutdown was successful. Exiting.");
 
     return ret;
 }

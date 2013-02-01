@@ -44,7 +44,7 @@ int log_print(int verbosity, const char *format, ...) {
 
     if (verbosity <= maximum_verbosity) {
         va_start(ap, format);
-        asprintf(&formatwithtid, "[tid=%lu] %s", syscall(SYS_gettid), format);
+        asprintf(&formatwithtid, "[%s] [tid=%lu] %s", PACKAGE_VERSION, syscall(SYS_gettid), format);
         assert(formatwithtid);
         r = sd_journal_printv(verbosity, formatwithtid, ap);
         free(formatwithtid);
