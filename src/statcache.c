@@ -91,20 +91,36 @@ static char *path2key(const char *path, bool prefix) {
     char *key = NULL;
     unsigned int depth = 0;
     size_t pos = 0;
+    bool slash_found = false;
+    size_t last_slash_pos = 0;
+
+    log_print(LOG_DEBUG, "path2key(%s, %i)", path, prefix);
 
     if (prefix)
         ++depth;
 
     while (path[pos]) {
-        if (path[pos] == '/')
+        if (path[pos] == '/') {
             ++depth;
+            last_slash_pos = pos;
+            slash_found = true;
+        }
         ++pos;
     }
 
-    if (prefix)
-        asprintf(&key, "%u%s/", depth, path);
-    else
+    // If the given path ended with a slash and a prefix was requested,
+    // ignore the trailing slash for depth purposes and avoid adding a
+    // second trailing slash.
+    if (prefix && slash_found && last_slash_pos == pos - 1) {
+        depth--;
         asprintf(&key, "%u%s", depth, path);
+    }
+    else if (prefix) {
+        asprintf(&key, "%u%s/", depth, path);
+    }
+    else {
+        asprintf(&key, "%u%s", depth, path);
+    }
     return key;
 }
 
