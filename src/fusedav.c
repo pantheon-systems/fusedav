@@ -165,6 +165,13 @@ int file_exists_or_set_null(char **path);
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
 
+static void sigsegv_handler(int signum) {
+    assert(signum == 11);
+    log_print(LOG_CRIT, "Segmentation fault.");
+    signal(signum, SIG_DFL);
+    kill(getpid(), signum);
+}
+
 static void path_cvt_tsd_key_init(void) {
     pthread_key_create(&path_cvt_tsd_key, free);
 }
@@ -1819,6 +1826,8 @@ int main(int argc, char *argv[]) {
     pthread_t lock_thread;
     int lock_thread_running = 0;
     int fail = 0;
+
+    signal(SIGSEGV, sigsegv_handler);
 
     if (ne_sock_init()) {
         log_print(LOG_CRIT, "Failed to set libneon thread-safety locks.");
