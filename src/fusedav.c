@@ -39,6 +39,7 @@
 #include <attr/xattr.h>
 #include <sys/types.h>
 #include <syscall.h>
+#include <sys/prctl.h>
 
 #include <grp.h>
 #include <pwd.h>
@@ -168,6 +169,13 @@ int file_exists_or_set_null(char **path);
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
 
+static void sigsegv_handler(int signum) {
+    assert(signum == 11);
+    log_print(LOG_CRIT, "Segmentation fault.");
+    signal(signum, SIG_DFL);
+    kill(getpid(), signum);
+}
+
 static void path_cvt_tsd_key_init(void) {
     pthread_key_create(&path_cvt_tsd_key, free);
 }
@@ -263,9 +271,8 @@ static int proppatch_with_redirect(
 
 
 static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *is_deleted, int is_dir) {
-    const char *e, *gcl, *glm, *cd, *ev;
-    //const char *rt;
-    //const ne_propname resourcetype = { "DAV:", "resourcetype" };
+    const char *rt, *e, *gcl, *glm, *cd, *ev;
+    const ne_propname resourcetype = { "DAV:", "resourcetype" };
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
@@ -274,11 +281,17 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
 
     assert(st && results);
 
-    //rt = ne_propset_value(results, &resourcetype);
+    rt = ne_propset_value(results, &resourcetype);
     e = ne_propset_value(results, &executable);
     gcl = ne_propset_value(results, &getcontentlength);
     glm = ne_propset_value(results, &getlastmodified);
     cd = ne_propset_value(results, &creationdate);
+
+    // If it's a collection, force the type to directory.
+    log_print(LOG_DEBUG, "fill_stat: resourcetype=%s", rt);
+    if (rt && strstr(rt, "collection")) {
+        is_dir = 1;
+    }
 
     if (is_deleted != NULL) {
         ev = ne_propset_value(results, &event);
@@ -339,6 +352,8 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
 
     //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
 
+    // @TODO: Consider whether the is_dir check here is worth keeping
+    // now that we check whether it's a collection.
     strip_trailing_slash(path, &is_dir);
 
     fill_stat(&value.st, results, &is_deleted, is_dir);
@@ -1804,6 +1819,9 @@ static int config_privileges(struct fusedav_config *config) {
         log_print(LOG_DEBUG, "Set euid to %d.", u->pw_uid);
     }
 
+    // Ensure the core is still dumpable.
+    prctl(PR_SET_DUMPABLE, 1);
+
     return 0;
 }
 
@@ -1835,6 +1853,8 @@ int main(int argc, char *argv[]) {
     int fail = 0;
     // Allow for different verbosity levels for different sections of code
     char section_verbosity_levels[] = "000000000006000000000";
+
+    signal(SIGSEGV, sigsegv_handler);
 
     if (ne_sock_init()) {
         log_print(LOG_CRIT, "Failed to set libneon thread-safety locks.");
