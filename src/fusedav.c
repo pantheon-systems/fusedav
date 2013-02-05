@@ -39,6 +39,7 @@
 #include <attr/xattr.h>
 #include <sys/types.h>
 #include <syscall.h>
+#include <sys/prctl.h>
 
 #include <grp.h>
 #include <pwd.h>
@@ -1802,6 +1803,9 @@ static int config_privileges(struct fusedav_config *config) {
         }
         log_print(LOG_DEBUG, "Set euid to %d.", u->pw_uid);
     }
+
+    // Ensure the core is still dumpable.
+    prctl(PR_SET_DUMPABLE, 1);
 
     return 0;
 }
