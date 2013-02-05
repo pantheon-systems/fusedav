@@ -440,6 +440,7 @@ static int dav_readdir(
     struct fill_info f;
     int ret;
 
+    log_print(LOG_DEBUG, "JB: dav_readdir()");
     path = path_cvt(path);
 
     log_print(LOG_DEBUG, "CALLBACK: dav_readdir(%s)", path);
@@ -604,6 +605,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 static int dav_getattr(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
+    log_print(LOG_DEBUG, "JB: getattr(%s)", path);
     path = path_cvt(path);
 
     log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
@@ -920,7 +922,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         info->flags |= O_RDWR;
     }
 
-    log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%d)", path, info->flags, info->flags & O_TRUNC);
+    log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
     return do_open(path, info);
 }
 
@@ -1806,7 +1808,7 @@ static int config_privileges(struct fusedav_config *config) {
 }
 
 static void *cache_cleanup(void *ptr) {
-    ldb_filecache_t *cache = (ldb_filecache_t *)ptr;
+    struct fusedav_config *config = (struct fusedav_config *)ptr;
 
     log_print(LOG_DEBUG, "enter cache_cleanup");
 
@@ -1816,7 +1818,7 @@ static void *cache_cleanup(void *ptr) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
         }
-        ldb_filecache_cleanup(cache);
+        ldb_filecache_cleanup(config->cache, config->cache_path);
     }
     return NULL;
 }
@@ -1831,6 +1833,8 @@ int main(int argc, char *argv[]) {
     pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
+    // Allow for different verbosity levels for different sections of code
+    char section_verbosity_levels[] = "000000000006000000000";
 
     if (ne_sock_init()) {
         log_print(LOG_CRIT, "Failed to set libneon thread-safety locks.");
@@ -1869,8 +1873,10 @@ int main(int argc, char *argv[]) {
 
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);
+    log_set_section_verbosity(section_verbosity_levels);
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
+    log_print(LOG_DEBUG, "Log section verbosity: %s.", section_verbosity_levels);
     log_print(LOG_DEBUG, "Parsed options.");
 
     if (config.ignoreutimens)
@@ -1954,7 +1960,7 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
-    if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, config.cache)) {
+    if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config)) {
         log_print(LOG_WARNING, "Failed to create cache cleanup thread.");
         goto finish;
     }
