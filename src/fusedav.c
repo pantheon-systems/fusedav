@@ -259,9 +259,8 @@ static int proppatch_with_redirect(
 
 
 static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *is_deleted, int is_dir) {
-    const char *e, *gcl, *glm, *cd, *ev;
-    //const char *rt;
-    //const ne_propname resourcetype = { "DAV:", "resourcetype" };
+    const char *rt, *e, *gcl, *glm, *cd, *ev;
+    const ne_propname resourcetype = { "DAV:", "resourcetype" };
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
@@ -270,11 +269,17 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
 
     assert(st && results);
 
-    //rt = ne_propset_value(results, &resourcetype);
+    rt = ne_propset_value(results, &resourcetype);
     e = ne_propset_value(results, &executable);
     gcl = ne_propset_value(results, &getcontentlength);
     glm = ne_propset_value(results, &getlastmodified);
     cd = ne_propset_value(results, &creationdate);
+
+    // If it's a collection, force the type to directory.
+    log_print(LOG_DEBUG, "fill_stat: resourcetype=%s", rt);
+    if (rt && strstr(rt, "collection")) {
+        is_dir = 1;
+    }
 
     if (is_deleted != NULL) {
         ev = ne_propset_value(results, &event);
@@ -335,6 +340,8 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
 
     //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
 
+    // @TODO: Consider whether the is_dir check here is worth keeping
+    // now that we check whether it's a collection.
     strip_trailing_slash(path, &is_dir);
 
     fill_stat(&value.st, results, &is_deleted, is_dir);
