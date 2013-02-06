@@ -454,7 +454,6 @@ static int dav_readdir(
     struct fill_info f;
     int ret;
 
-    log_print(LOG_DEBUG, "JB: dav_readdir()");
     path = path_cvt(path);
 
     log_print(LOG_DEBUG, "CALLBACK: dav_readdir(%s)", path);
@@ -619,7 +618,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 static int dav_getattr(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
-    log_print(LOG_DEBUG, "JB: getattr(%s)", path);
+
     path = path_cvt(path);
 
     log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
