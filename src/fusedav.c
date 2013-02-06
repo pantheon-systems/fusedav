@@ -87,6 +87,9 @@ int lock_thread_exit = 0;
 
 #define CLOCK_SKEW 10 // seconds
 
+// Run cache cleanup once a day.
+#define CACHE_CLEANUP_INTERVAL 86400
+
 struct fill_info {
     void *buf;
     fuse_fill_dir_t filler;
@@ -356,7 +359,7 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
     value.prepopulated = false;
 
     if (is_deleted) {
-        log_print(LOG_INFO, "Removing path: %s", path);
+        log_print(LOG_DEBUG, "Removing path: %s", path);
         stat_cache_delete(config->cache, path);
     }
     else {
@@ -518,15 +521,15 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     memset(stbuf, 0, sizeof(struct stat));
 
-    log_print(LOG_INFO, "get_stat(%s, stbuf)", path);
+    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
-        log_print(LOG_INFO, "get_stat(%s): returns EIO", path);
+        log_print(LOG_DEBUG, "get_stat(%s): returns EIO", path);
         return -EIO;
     }
 
-    log_print(LOG_INFO, "Checking if path %s matches base directory: %s", path, base_directory);
+    log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
     is_base_directory = (strcmp(path, base_directory) == 0);
 
     // If it's the root directory and all attributes are specified,
@@ -543,7 +546,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
         stbuf->st_atime = time(NULL);
         stbuf->st_mtime = stbuf->st_atime;
         stbuf->st_ctime = stbuf->st_mtime;
-        log_print(LOG_INFO, "Used constructed stat data for base directory.");
+        log_print(LOG_DEBUG, "Used constructed stat data for base directory.");
         return 0;
     }
 
@@ -553,8 +556,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
         *stbuf = response->st;
         free(response);
         //print_stat(stbuf, "get_stat from cache");
-        if (stbuf->st_mode == 0) log_print(LOG_INFO, "get_stat(%s): 1. returns ENOENT", path);
-        else log_print(LOG_INFO, "get_stat(%s): 1. returns 0", path);
+        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
+        else log_print(LOG_DEBUG, "get_stat(%s): 1. returns 0", path);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
@@ -562,16 +565,16 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // If it's the root directory, just do a single PROPFIND.
     if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
-        log_print(LOG_INFO, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
+        log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
         // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_delete(config->cache, path);
             log_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
             memset(stbuf, 0, sizeof(struct stat));
-            log_print(LOG_INFO, "get_stat(%s): 1. returns ENOENT", path);
+            log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
             return -ENOENT;
         }
-        log_print(LOG_INFO, "Zero-depth PROPFIND succeeded: %s", base_directory);
+        log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", base_directory);
         return 0;
     }
 
@@ -588,7 +591,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
-        log_print(LOG_INFO, "Updating directory: %s", parent_path);
+        log_print(LOG_DEBUG, "Updating directory: %s", parent_path);
         update_directory(parent_path, (parent_children_update_ts > 0));
     }
 
@@ -599,25 +602,26 @@ static int get_stat(const char *path, struct stat *stbuf) {
         log_print(LOG_DEBUG, "Hit updated cache: %s", path);
         *stbuf = response->st;
         free(response);
-        if (stbuf->st_mode == 0) log_print(LOG_INFO, "get_stat(%s): 2. returns ENOENT", path);
-        else log_print(LOG_INFO, "get_stat(%s): 2. returns 0", path);
+        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 2. returns ENOENT", path);
+        else log_print(LOG_DEBUG, "get_stat(%s): 2. returns 0", path);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
-    log_print(LOG_INFO, "Missed updated cache: %s", path);
+    log_print(LOG_DEBUG, "Missed updated cache: %s", path);
 
     // If it's still not found, return that it doesn't exist.
     memset(stbuf, 0, sizeof(struct stat));
-    log_print(LOG_INFO, "get_stat(%s): 3. returns ENOENT", path);
+    log_print(LOG_DEBUG, "get_stat(%s): 3. returns ENOENT", path);
     return -ENOENT;
 }
 
 static int dav_getattr(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
+
     path = path_cvt(path);
 
-    log_print(LOG_INFO, "CALLBACK: getattr(%s)", path);
+    log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
     r = get_stat(path, stbuf);
 
     // Zero-out unused nanosecond fields.
@@ -663,7 +667,9 @@ static int dav_unlink(const char *path) {
         return -ENOENT;
     }
 
-    ldb_filecache_delete(config->cache, path);
+    if (ldb_filecache_delete(config->cache, path)) {
+        log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
+    }
     stat_cache_delete(config->cache, path);
 
     return 0;
@@ -759,14 +765,14 @@ static int dav_rename(const char *from, const char *to) {
 
     fd = ldb_filecache_fd(config->cache, from);
     if (fd < 0) {
-        log_print(LOG_INFO, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
+        log_print(LOG_DEBUG, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
     }
     else {
-        log_print(LOG_INFO, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
+        log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
         if (flock(fd, LOCK_EX)) {
-            log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d:%s", fd, from);
+            log_print(LOG_WARNING, "dav_rename: error acquiring exclusive file lock on fd %d:%s", fd, from);
         }
-        log_print(LOG_INFO, "dav_rename: acquired exclusive file lock on fd %d", fd);
+        log_print(LOG_DEBUG, "dav_rename: acquired exclusive file lock on fd %d", fd);
     }
 
     if (!(session = session_get(1))) {
@@ -790,7 +796,7 @@ static int dav_rename(const char *from, const char *to) {
     }
 
     entry = stat_cache_value_get(config->cache, from, true);
-    log_print(LOG_INFO, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
+    log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
     if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
         r = -EIO;
         goto finish;
@@ -798,7 +804,7 @@ static int dav_rename(const char *from, const char *to) {
     stat_cache_delete(config->cache, from);
 
     if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
-        log_print(LOG_INFO, "dav_rename: No local file cache data to move (or move failed).");
+        log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
         ldb_filecache_delete(config->cache, to);
     }
 
@@ -1817,6 +1823,22 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
+static void *cache_cleanup(void *ptr) {
+    struct fusedav_config *config = (struct fusedav_config *)ptr;
+
+    log_print(LOG_DEBUG, "enter cache_cleanup");
+
+    while (1) {
+        // Sleep first rather than kicking off cleanup at startup
+        if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
+            log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
+            return NULL;
+        }
+        ldb_filecache_cleanup(config->cache, config->cache_path);
+    }
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -1824,6 +1846,7 @@ int main(int argc, char *argv[]) {
     char *mountpoint;
     int ret = 1;
     pthread_t lock_thread;
+    pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
 
@@ -1855,6 +1878,8 @@ int main(int argc, char *argv[]) {
         goto finish;
 
     memset(&config, 0, sizeof(config));
+    // default verbosity: LOG_NOTICE
+    config.verbosity = 5;
 
     // Parse options.
     if (!fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
@@ -1862,19 +1887,17 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    //config.verbosity = 3;
-
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);
     debug = (config.verbosity >= 7);
-    log_print(LOG_INFO, "Log verbosity: %d.", config.verbosity);
+    log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
     log_print(LOG_DEBUG, "Parsed options.");
 
     if (config.ignoreutimens)
-        log_print(LOG_INFO, "Ignoring utimens requests.");
+        log_print(LOG_DEBUG, "Ignoring utimens requests.");
 
     if (config.ignorexattr)
-        log_print(LOG_INFO, "Ignoring extended attributes.");
+        log_print(LOG_DEBUG, "Ignoring extended attributes.");
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
@@ -1950,6 +1973,11 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
+
+    if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config)) {
+        log_print(LOG_WARNING, "Failed to create cache cleanup thread.");
+        goto finish;
+    }
 
     log_print(LOG_NOTICE, "Startup complete. Entering main FUSE loop.");
 
