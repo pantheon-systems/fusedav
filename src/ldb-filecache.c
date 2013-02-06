@@ -51,8 +51,7 @@
 #define REFRESH_INTERVAL 3
 
 // Remove filecache files older than 8 days
-// #define AGE_OUT_THRESHOLD 691200
-#define AGE_OUT_THRESHOLD 60
+#define AGE_OUT_THRESHOLD 691200
 
 typedef int fd_t;
 
