@@ -569,12 +569,8 @@ finish:
 // close the file
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     int ret = -1;
-    struct stat cache_file_stat;
 
     log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d).", sdata->fd);
-
-    fstat(sdata->fd, &cache_file_stat);
-    log_print(LOG_DEBUG, "ldb_filecache_close: Cache file has length %lu", cache_file_stat.st_size);
 
     if (sdata->fd >= 0)
         ret = close(sdata->fd);
@@ -687,7 +683,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_pdata *pdata = NULL;
     ne_session *session;
     struct stat_cache_value value;
-    struct stat cache_file_stat;
     char *local_etag;
 
     assert(sdata);
@@ -764,12 +759,10 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         if (pdata) strncpy(pdata->etag, "", 1);
     }
 
-    fstat(sdata->fd, &cache_file_stat);
-
     if (pdata) {
         // Point the persistent cache to the new file content.
         pdata->last_server_update = time(NULL);
-        log_print(LOG_DEBUG, "ldb_filecache_sync: Updating file cache for %s : %s : (size %lu) : timestamp: %ul", path, pdata->filename, cache_file_stat.st_size, pdata->last_server_update);
+        log_print(LOG_DEBUG, "ldb_filecache_sync: Updating file cache for %s : %s : timestamp: %ul", path, pdata->filename, pdata->last_server_update);
         ldb_filecache_pdata_set(cache, path, pdata);
     }
 
