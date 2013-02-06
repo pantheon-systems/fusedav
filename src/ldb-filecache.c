@@ -359,8 +359,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     finish:
         if (req != NULL)
             ne_request_destroy(req);
-        if (pdata != NULL)
-            free(pdata);
         return ret_fd;
 }
 
