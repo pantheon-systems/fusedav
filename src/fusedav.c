@@ -772,7 +772,7 @@ static int dav_rename(const char *from, const char *to) {
     else {
         log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
         if (flock(fd, LOCK_EX)) {
-            log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d:%s", fd, from);
+            log_print(LOG_WARNING, "dav_rename: error acquiring exclusive file lock on fd %d:%s", fd, from);
         }
         log_print(LOG_DEBUG, "dav_rename: acquired exclusive file lock on fd %d", fd);
     }
@@ -1851,8 +1851,6 @@ int main(int argc, char *argv[]) {
     pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
-    // Allow for different verbosity levels for different sections of code
-    char section_verbosity_levels[] = "000000000006000000000";
 
     signal(SIGSEGV, sigsegv_handler);
 
@@ -1893,10 +1891,8 @@ int main(int argc, char *argv[]) {
 
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);
-    log_set_section_verbosity(section_verbosity_levels);
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
-    log_print(LOG_DEBUG, "Log section verbosity: %s.", section_verbosity_levels);
     log_print(LOG_DEBUG, "Parsed options.");
 
     if (config.ignoreutimens)

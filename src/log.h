@@ -22,8 +22,6 @@
 #include <systemd/sd-journal.h>
 
 void log_set_maximum_verbosity(int verbosity);
-void log_set_section_verbosity(char *section_levels);
 int log_print(int verbosity, const char *format, ...);
-int log_print_sections(int verbosity, int code_section, const char *format, ...);
 
 #endif

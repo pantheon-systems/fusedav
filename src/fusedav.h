@@ -27,11 +27,6 @@ extern int debug;
 #define __unused
 #endif
 
-// Allow different debug levels for different sections of the code
-#define VERBOSITY_SECTIONS 21
-#define SECTION_STAT 1
-#define SECTION_FILECACHE 11
-
 // @TODO: Move this elsewhere.
 char *strip_trailing_slash(char *fn, int *is_dir);
 
