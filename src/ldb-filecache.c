@@ -66,9 +66,6 @@ struct ldb_filecache_sdata {
 // FIX ME Where to find ETAG_MAX?
 #define ETAG_MAX 256
 
-// Make sure this is set to 0 during production!
-static int debug_cache_cleanup = 0;
-
 // Persistent data stored in leveldb
 struct ldb_filecache_pdata {
     char filename[PATH_MAX];
@@ -903,16 +900,6 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
     // leveldb_iter_seek_to_first(iter);
     leveldb_iter_seek(iter, "fc:", 3);
 
-    if (debug_cache_cleanup) {
-        char cache_file_path[PATH_MAX];
-        int idx;
-        int fd;
-        for (idx = 0; idx < 1000; idx++) {
-            new_cache_file(cache_path, cache_file_path, &fd);
-            if (fd > 0) close(fd);
-        }
-        sleep(10);
-    }
     starttime = time(NULL);
 
     while (leveldb_iter_valid(iter)) {
