@@ -591,6 +591,7 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
 // top-level close/release call
 int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
+    struct ldb_filecache_pdata *pdata = NULL;
     int ret = -1;
 
     assert(sdata);
