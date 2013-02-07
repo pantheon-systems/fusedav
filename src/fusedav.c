@@ -88,7 +88,8 @@ int lock_thread_exit = 0;
 #define CLOCK_SKEW 10 // seconds
 
 // Run cache cleanup once a day.
-#define CACHE_CLEANUP_INTERVAL 86400
+// JB RESTORE! #define CACHE_CLEANUP_INTERVAL 86400
+#define CACHE_CLEANUP_INTERVAL 60
 
 struct fill_info {
     void *buf;
@@ -662,14 +663,18 @@ static int dav_unlink(const char *path) {
     if (!S_ISREG(st.st_mode))
         return -EISDIR;
 
+    log_print(LOG_INFO, "dav_unlink: calling ne_delete on %s", path);
     if (ne_delete(session, path)) {
         log_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
         return -ENOENT;
     }
 
+    log_print(LOG_INFO, "dav_unlink: calling ldb_filecache_delete on %s", path);
     if (ldb_filecache_delete(config->cache, path)) {
         log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
     }
+
+    log_print(LOG_INFO, "dav_unlink: calling stat_cache_delete on %s", path);
     stat_cache_delete(config->cache, path);
 
     return 0;
@@ -684,7 +689,7 @@ static int dav_rmdir(const char *path) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_rmdir(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_rmdir(%s)", path);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -703,7 +708,8 @@ static int dav_rmdir(const char *path) {
     }
 
     stat_cache_delete(config->cache, path);
-    stat_cache_delete_parent(config->cache, path);
+    // JB. Seems incorrect
+    // stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
@@ -827,7 +833,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     path = path_cvt(path);
 
-    log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
+    // JB TMPlog_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
+    log_print(LOG_DEBUG, "CALLBACK: dav_release: release(%s)", path);
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
@@ -935,7 +942,8 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         info->flags |= O_RDWR;
     }
 
-    log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
+    // JB TMP log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
+    log_print(LOG_DEBUG, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
     return do_open(path, info);
 }
 
@@ -962,7 +970,8 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
 
     path = path_cvt(path);
 
-    log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    // JB TMP log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    log_print(LOG_DEBUG, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
@@ -1835,6 +1844,7 @@ static void *cache_cleanup(void *ptr) {
             return NULL;
         }
         ldb_filecache_cleanup(config->cache, config->cache_path);
+        stat_cache_prune(config->cache, config->cache_path);
     }
     return NULL;
 }

@@ -53,6 +53,9 @@
 // Remove filecache files older than 8 days
 #define AGE_OUT_THRESHOLD 691200
 
+// Entries for stat and file cache are in the ldb cache; fc: designates filecache entries
+static const char * filecache_prefix = "fc:";
+
 typedef int fd_t;
 
 // Session data
@@ -71,6 +74,9 @@ struct ldb_filecache_pdata {
     char filename[PATH_MAX];
     char etag[ETAG_MAX + 1];
     time_t last_server_update;
+    // By keeping a reference count, we can prevent cache cleanup from unlinking an open file;
+    // This will also cut down on the number of .fuse_hidden files we accumulate
+    int references;
 };
 
 int ldb_filecache_init(char *cache_path) {
@@ -94,7 +100,7 @@ int ldb_filecache_init(char *cache_path) {
 // Allocates a new string.
 static char *path2key(const char *path) {
     char *key = NULL;
-    asprintf(&key, "fc:%s", path);
+    asprintf(&key, "%s%s", filecache_prefix, path);
     return key;
 }
 
@@ -122,7 +128,7 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     }
 
     if (!pdata) {
-        log_print(LOG_DEBUG, "ldb_filecache_pdata_get miss on path: %s", path);
+        log_print(LOG_DEBUG, "ldb_filecache_pdata_get miss on path: %s:%s", key, path);
         return NULL;
     }
 
@@ -143,7 +149,7 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     char *errptr = NULL;
     struct ldb_filecache_pdata *pdata;
 
-    log_print(LOG_DEBUG, "ldb_filecache_delete: path (%s).", path);
+    log_print(LOG_INFO, "ldb_filecache_delete: path (%s).", path);
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
@@ -155,7 +161,7 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
 
     if (pdata) {
         unlink(pdata->filename);
-        log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", pdata->filename);
+        log_print(LOG_INFO, "ldb_filecache_delete: unlinking %s", pdata->filename);
         free(pdata);
     }
 
@@ -426,8 +432,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     finish:
         if (req != NULL)
             ne_request_destroy(req);
-        if (pdata != NULL)
-            free(pdata);
         return ret_fd;
 }
 
@@ -495,6 +499,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         log_print(LOG_DEBUG, "Setting fd to session data structure with fd %d for %s.", sdata->fd, path);
         info->fh = (uint64_t) sdata;
         ret = 0;
+        if (pdata) ++(pdata->references);
         goto finish;
     }
 
@@ -605,6 +610,11 @@ finish:
 
     // close, even on error
     ldb_filecache_close(sdata);
+
+    pdata = ldb_filecache_pdata_get(cache, path);
+    if (pdata != NULL) {
+        --(pdata->references);
+    }
 
     log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path);
 
@@ -805,11 +815,11 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
 
 // Does *not* allocate a new string.
 static const char *key2path(const char *key) {
-    size_t pos = 0;
-    while (key[pos]) {
-        if (key[pos] == ':')
-            return key + pos + 1;
-        ++pos;
+    char *prefix;
+    prefix = strstr(key, filecache_prefix);
+    // Looking for "fc:" (filecache_prefix) at the beginning of the key
+    if (prefix == key) {
+        return key + 3;
     }
     return NULL;
 }
@@ -874,7 +884,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
 void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
-    struct ldb_filecache_pdata *pdata;
+    const struct ldb_filecache_pdata *pdata;
     size_t klen;
     const char *iterkey;
     const char *path;
@@ -891,7 +901,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
     leveldb_readoptions_destroy(options);
 
     // leveldb_iter_seek_to_first(iter);
-    leveldb_iter_seek(iter, "fc:", 3);
+    leveldb_iter_seek(iter, filecache_prefix, 3);
 
     starttime = time(NULL);
 
@@ -899,12 +909,16 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
         // We need the key to get the path in case we need to remove the entry from the filecache
         iterkey = leveldb_iter_key(iter, &klen);
         path = key2path(iterkey);
-        pdata = ldb_filecache_pdata_get(cache, path);
+        // if path is null, we've gone past the filecache entries
+        if (path == NULL) break;
+        pdata = (const struct ldb_filecache_pdata *)leveldb_iter_value(iter, &klen);
+        // pdata = ldb_filecache_pdata_get(cache, path);
         log_print(LOG_DEBUG, "ldb_filecache_cleanup: Visiting %s", path);
         if (pdata) {
             ++cached_files;
             strncpy(fname, pdata->filename, PATH_MAX);
-            if (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD) {
+            // references > 0 would indicate someone has the file open, so don't unlink it.
+            if ((pdata->references == 0) && (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD)) {
                 log_print(LOG_DEBUG, "ldb_filecache_cleanup: Unlinking %s", fname);
                 ret = ldb_filecache_delete(cache, path);
                 if (ret) {
@@ -924,7 +938,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
                     log_print(LOG_NOTICE, "ldb_filecache_cleanup: failed to update timestamp on \"%s\" for \"%s\" from ldb cache: %d - %s", fname, path, errno, strerror(errno));
                 }
             }
-            free(pdata);
+            // free(pdata);
         }
         else {
             char *base;
@@ -936,7 +950,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
             // ... if base is NULL(because slash was not found) or it does not equal files, then we have an error
             // (If it does equal files, we have the directory as an entry in the filecache, and we want to ignore it.)
             if (!base || strcmp(base, "files")) {
-                log_print(LOG_WARNING, "ldb_filecache_cleanup: pulled NULL pdata out of cache for %s %s", path, base);
+                log_print(LOG_WARNING, "ldb_filecache_cleanup: pulled NULL pdata out of cache for %s:%s %s", path, iterkey, base);
             }
             else {
                 log_print(LOG_DEBUG, "ldb_filecache_cleanup: NULL in cache is directory %s", path);

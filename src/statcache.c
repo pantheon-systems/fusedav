@@ -352,7 +352,7 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
 
     key = path2key(path, false);
 
-    log_print(LOG_DEBUG, "CDEL: %s", key);
+    log_print(LOG_INFO, "stat_cache_delete: %s", key);
 
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
@@ -371,6 +371,7 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
 int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     char *p;
 
+    log_print(LOG_INFO, "stat_cache_delete_parent: %s", path);
     if ((p = ne_path_parent(path))) {
         int l = strlen(p);
 
@@ -555,6 +556,7 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 
+    log_print(LOG_INFO, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
@@ -566,4 +568,36 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     stat_cache_iterator_free(iter);
 
     return 0;
+}
+
+void stat_cache_prune(stat_cache_t *cache, const char *cache_path) {
+    leveldb_readoptions_t *options;
+    struct leveldb_iterator_t *iter;
+    const char *iterkey;
+    size_t klen;
+    char filename[PATH_MAX] = "";
+    char *basename = NULL;
+
+    log_print(LOG_INFO, "stat_cache_prune(cache %p, path %s)", cache, cache_path);
+
+    options = leveldb_readoptions_create();
+    iter = leveldb_create_iterator(cache, options);
+    leveldb_readoptions_destroy(options);
+
+    // leveldb_iter_seek_to_first(iter);
+    leveldb_iter_seek_to_first(iter);
+
+    while (leveldb_iter_valid(iter)) {
+        // We need the key to get the path in case we need to remove the entry from the filecache
+        iterkey = leveldb_iter_key(iter, &klen);
+        basename = strstr(iterkey, "/files");
+        if (basename) strncpy(filename, basename + 1, PATH_MAX);
+        // log_print(LOG_INFO, "1. stat_cache_prune: k:%s :: bd:%s", iterkey, filename);
+        basename = strrchr(filename, '/');
+        if (basename) basename[0] = '\0';
+        log_print(LOG_INFO, "2. stat_cache_prune: k:%s :: bd:%s", iterkey, filename);
+        leveldb_iter_next(iter);
+    }
+
+    leveldb_iter_destroy(iter);
 }
