@@ -235,10 +235,36 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
     if (pdata != NULL && ( (flags & O_TRUNC) || ((time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
         log_print(LOG_DEBUG, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
-        ret_fd = open(pdata->filename, flags);
+        // Open first with O_TRUNC off, if it was set
+        ret_fd = open(pdata->filename, flags & ~O_TRUNC);
         if (ret_fd < 0) {
-            log_print(LOG_ERR, "ldb_get_fresh_fd: open returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
+            if (flags & O_TRUNC) {
+                log_print(LOG_ERR, "ldb_get_fresh_fd: open on O_TRUNC returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
+            }
+            else {
+                log_print(LOG_ERR, "ldb_get_fresh_fd: open on fresh file returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
+            }
+            // @TODO: if we get ENOENT, then just create a new cache file and change pdata->filename to its name
         }
+        if (flags & O_TRUNC) {
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquiring shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            if (flock(ret_fd, LOCK_SH)) {
+                log_print(LOG_WARNING, "ldb_get_fresh_fd: error obtaining shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            }
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquired shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: truncating fd %d:%s::%s", ret_fd, path, pdata->filename);
+            if (ftruncate(ret_fd, 0)) {
+                log_print(LOG_WARNING, "ldb_get_fresh_fd: ftruncate failed; errno %d %s -- %d:%s::%s", errno, strerror(errno), ret_fd, path, pdata->filename);
+            }
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: releasing shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            if (flock(ret_fd, LOCK_UN)) {
+                log_print(LOG_WARNING, "ldb_get_fresh_fd: error releasing shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            }
+        }
+        else {
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: O_TRUNC not specified on fd %d:%s::%s", ret_fd, path, pdata->filename);
+        }
+
         // We're done; no need to access the server...
         goto finish;
     }
@@ -488,7 +514,7 @@ ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t
         goto finish;
     }
 
-    log_print(LOG_INFO, "ldb_filecache_write: acquiring shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, "ldb_filecache_write: acquiring shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_SH)) {
         log_print(LOG_WARNING, "ldb_filecache_write: error acquiring shared file lock on fd %d", sdata->fd);
     }
@@ -509,7 +535,7 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d).", sdata->fd);
 
     fstat(sdata->fd, &cache_file_stat);
-    log_print(LOG_INFO, "ldb_filecache_close: Cache file has length %lu", cache_file_stat.st_size);
+    log_print(LOG_DEBUG, "ldb_filecache_close: Cache file has length %lu", cache_file_stat.st_size);
 
     if (sdata->fd >= 0)
         ret = close(sdata->fd);
@@ -558,6 +584,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     struct stat st;
     int ret;
     const char *value;
+    int myerrno;
 
     log_print(LOG_DEBUG, "enter: ne_put_return_etag(,%s,,)", path);
 
@@ -580,12 +607,25 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     ne_lock_using_resource(req, path, 0);
     ne_lock_using_parent(req, path);
 
+    /* There are a couple of cases where neon gives an "error" which is not from the
+     * kernel, but is derived by neon. For instance, if in the process of PUT'ing a file
+     * an intervening truncate happens, we get the "Premature EOF" error. We are
+     * downgrading these types of errors to notices, since they do not indicate
+     * functional errors.
+     */
+    errno = 0;
     ne_set_request_body_fd(req, fd, 0, st.st_size);
+    myerrno = errno;
 
     ret = ne_request_dispatch(req);
 
     if (ret != NE_OK) {
-        log_print(LOG_WARNING, "ne_put_return_etag: ne_request_dispatch returns error (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+        if (myerrno == 0) {
+            log_print(LOG_NOTICE, "ne_put_return_etag: ne_request_dispatch returns notice (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+        }
+        else {
+            log_print(LOG_WARNING, "ne_put_return_etag: ne_request_dispatch returns error (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+        }
     }
 
     if (ret == NE_OK && ne_get_status(req)->klass != 2) {
@@ -611,7 +651,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
 }
 
 static void unlock(int fd) {
-    log_print(LOG_INFO, "ldb_filecache_sync: releasing shared file lock on fd %d", fd);
+    log_print(LOG_DEBUG, "ldb_filecache_sync: releasing shared file lock on fd %d", fd);
     if (flock(fd, LOCK_UN)) {
         log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d", fd);
     }
@@ -649,7 +689,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             goto finish;
         }
         strncpy(pdata->filename, sdata->filename, PATH_MAX);
-        log_print(LOG_INFO, "ldb_filecache_sync:: filename %s : %s : %s", path, sdata->filename, pdata->filename);
+        log_print(LOG_DEBUG, "ldb_filecache_sync:: filename %s : %s : %s", path, sdata->filename, pdata->filename);
     }
     else {
         log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d): cachefile=%s", path, sdata->fd, pdata->filename);
@@ -745,8 +785,20 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
 
+    log_print(LOG_DEBUG, "ldb_filecache_truncate: acquiring shared file lock on fd %d", sdata->fd);
+    if (flock(sdata->fd, LOCK_SH)) {
+        log_print(LOG_WARNING, "ldb_filecache_truncate: error obtaining shared file lock on fd %d", sdata->fd);
+    }
+    log_print(LOG_DEBUG, "ldb_filecache_truncate: acquired shared file lock on fd %d", sdata->fd);
+
     if ((ret = ftruncate(sdata->fd, s)) < 0) {
         log_print(LOG_ERR, "ldb_filecache_truncate: error on ftruncate %d", ret);
+    }
+    sdata->modified = 1;
+
+    log_print(LOG_DEBUG, "ldb_filecache_truncate: releasing shared file lock on fd %d", sdata->fd);
+    if (flock(sdata->fd, LOCK_UN)) {
+        log_print(LOG_WARNING, "ldb_filecache_truncate: error releasing shared file lock on fd %d", sdata->fd);
     }
 
     return ret;
@@ -756,11 +808,11 @@ int ldb_filecache_fd(ldb_filecache_t *cache, const char *path) {
     int fd;
     struct ldb_filecache_pdata *pdata = NULL;
 
-    log_print(LOG_INFO, "ldb_filecache_fd(%s)", path);
+    log_print(LOG_DEBUG, "ldb_filecache_fd(%s)", path);
 
     pdata = ldb_filecache_pdata_get(cache, path);
     if (!pdata) return -1;
-    log_print(LOG_INFO, "ldb_filecache_fd(cachefile = %s)", pdata->filename);
+    log_print(LOG_DEBUG, "ldb_filecache_fd(cachefile = %s)", pdata->filename);
 
     fd = open(pdata->filename, O_RDONLY);
     return fd;

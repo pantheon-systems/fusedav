@@ -704,7 +704,8 @@ static int dav_rmdir(const char *path) {
     }
 
     stat_cache_delete(config->cache, path);
-    stat_cache_delete_parent(config->cache, path);
+    // JB. Seems incorrect
+    // stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
@@ -771,9 +772,9 @@ static int dav_rename(const char *from, const char *to) {
     else {
         log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
         if (flock(fd, LOCK_EX)) {
-            log_print(LOG_WARNING, "dav_rename: error acquiring shared file lock on fd %d:%s", fd, from);
+            log_print(LOG_WARNING, "dav_rename: error acquiring exclusive file lock on fd %d:%s", fd, from);
         }
-        log_print(LOG_DEBUG, "dav_rename: acquired shared file lock on fd %d", fd);
+        log_print(LOG_DEBUG, "dav_rename: acquired exclusive file lock on fd %d", fd);
     }
 
     if (!(session = session_get(1))) {
@@ -814,8 +815,14 @@ finish:
     if (entry != NULL)
         free(entry);
 
-    // Also releases lock.
-    if (fd > 0) close(fd);
+    if (fd > 0) {
+        // Not specifically necessary to release lock; close will do it. Do it here for clarity.
+        // Also note the flock is perfectly happy to unlock a file it hasn't locked
+        if (flock(fd, LOCK_UN)) {
+            log_print(LOG_WARNING, "dav_rename: error releasing shared file lock on fd %d:%s", fd, from);
+        }
+        close(fd);
+    }
 
     free(_from);
 
