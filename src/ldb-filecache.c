@@ -507,12 +507,6 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if (sdata->fd >= 0) {
         log_print(LOG_DEBUG, "Setting fd to session data structure with fd %d for %s.", sdata->fd, path);
         info->fh = (uint64_t) sdata;
-
-        //log_print(LOG_DEBUG, "ldb_filecache_open: acquiring shared file lock on fd %d", sdata->fd);
-        //if (flock(sdata->fd, LOCK_SH)) {
-            //log_print(LOG_WARNING, "ldb_filecache_open: error acquiring shared file lock on fd %d", sdata->fd);
-        //}
-
         ret = 0;
         goto finish;
     }
@@ -704,6 +698,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
+        // errno = EBADF; why?
         ret = 0;
         log_print(LOG_DEBUG, "ldb_filecache_sync: not writable");
         goto finish;
