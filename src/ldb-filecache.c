@@ -824,6 +824,7 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
+<<<<<<< HEAD
 static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
     struct dirent *diriter;
     DIR *dir;
@@ -838,6 +839,13 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
         log_print(LOG_WARNING, "cleanup_orphans: Can't open filecache directory %s", filecache_path);
         return -1;
     }
+=======
+    log_print(LOG_DEBUG, "ldb_filecache_fd(%s)", path);
+
+    pdata = ldb_filecache_pdata_get(cache, path);
+    if (!pdata) return -1;
+    log_print(LOG_DEBUG, "ldb_filecache_fd(cachefile = %s)", pdata->filename);
+>>>>>>> 39886006139e57ea34b4fca101ddea3e5fdfe139
 
     while ((diriter = readdir(dir)) != NULL) {
         struct stat stbuf;
@@ -849,6 +857,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
             continue;
         }
 
+<<<<<<< HEAD
         if ((stbuf.st_mode & S_IFMT ) == S_IFDIR) {
             // We don't expect directories, but skip them
             if (!cachefile_path[strlen(cachefile_path) - 1] == '.') {
@@ -1021,6 +1030,8 @@ int ldb_filecache_fd(ldb_filecache_t *cache, const char *path) {
     return fd;
 }
 
+=======
+>>>>>>> 39886006139e57ea34b4fca101ddea3e5fdfe139
 int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const char *new_path) {
     struct ldb_filecache_pdata *pdata = NULL;
     int ret = -1;
