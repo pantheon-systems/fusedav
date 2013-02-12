@@ -74,9 +74,6 @@ struct ldb_filecache_pdata {
     char filename[PATH_MAX];
     char etag[ETAG_MAX + 1];
     time_t last_server_update;
-    // By keeping a reference count, we can prevent cache cleanup from unlinking an open file;
-    // This will also cut down on the number of .fuse_hidden files we accumulate
-    int references;
 };
 
 int ldb_filecache_init(char *cache_path) {
@@ -112,10 +109,11 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     size_t vallen;
     char *errptr = NULL;
 
-    log_print(LOG_DEBUG, "Entered ldb_filecache_pdata_get: path=%s", path);
+    log_print(LOG_DEBUG, "Entered ldb_filecache_pdata_get: path=\"%s\"", path);
 
     key = path2key(path);
 
+    log_print(LOG_DEBUG, "Entered ldb_filecache_pdata_get: key=\"%s\"", key);
     options = leveldb_readoptions_create();
     pdata = (struct ldb_filecache_pdata *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
@@ -128,7 +126,7 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     }
 
     if (!pdata) {
-        log_print(LOG_DEBUG, "ldb_filecache_pdata_get miss on path: %s:%s", key, path);
+        log_print(LOG_DEBUG, "ldb_filecache_pdata_get miss on path: %s", path);
         return NULL;
     }
 
@@ -149,11 +147,15 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     char *errptr = NULL;
     struct ldb_filecache_pdata *pdata;
 
-    log_print(LOG_INFO, "ldb_filecache_delete: path (%s).", path);
+    log_print(LOG_DEBUG, "ldb_filecache_delete: path (%s).", path);
 
     pdata = ldb_filecache_pdata_get(cache, path);
 
+    if (pdata) log_print(LOG_DEBUG, "ldb_filecache_delete: filename (%s).", pdata->filename);
+    else log_print(LOG_DEBUG, "ldb_filecache_delete: pdata NULL for (%s).", path);
+
     key = path2key(path);
+    log_print(LOG_DEBUG, "ldb_filecache_delete: key (%s).", key);
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
     leveldb_writeoptions_destroy(options);
@@ -161,7 +163,7 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
 
     if (pdata) {
         unlink(pdata->filename);
-        log_print(LOG_INFO, "ldb_filecache_delete: unlinking %s", pdata->filename);
+        log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", pdata->filename);
         free(pdata);
     }
 
@@ -179,7 +181,7 @@ static int new_cache_file(const char *cache_path, char *cache_file_path, fd_t *f
     snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-XXXXXX", cache_path);
     log_print(LOG_DEBUG, "Using pattern %s", cache_file_path);
     if ((*fd = mkstemp(cache_file_path)) < 0) {
-        log_print(LOG_ERR, "new_cache_file: Failed mkstemp");
+        log_print(LOG_ERR, "new_cache_file: Failed mkstemp: errno = %d %s", errno, strerror(errno));
         return -1;
     }
 
@@ -288,21 +290,27 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
         // Open first with O_TRUNC off, if it was set
         ret_fd = open(pdata->filename, flags & ~O_TRUNC);
         if (ret_fd < 0) {
-            log_print(LOG_ERR, "ldb_get_fresh_fd: open returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
+            if (flags & O_TRUNC) {
+                log_print(LOG_ERR, "ldb_get_fresh_fd: open on O_TRUNC returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
+            }
+            else {
+                log_print(LOG_ERR, "ldb_get_fresh_fd: open on fresh file returns < 0 on \"%s\": errno: %d, %s", pdata->filename, errno, strerror(errno));
+            }
+            // @TODO: if we get ENOENT, then just create a new cache file and change pdata->filename to its name
         }
         if (flags & O_TRUNC) {
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquiring exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
-            if (flock(ret_fd, LOCK_EX)) {
-                log_print(LOG_WARNING, "ldb_get_fresh_fd: error obtaining exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            if (flock(ret_fd, LOCK_SH)) {
+                log_print(LOG_WARNING, "ldb_get_fresh_fd: error obtaining shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
             }
-            log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquired exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquired shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: truncating fd %d:%s::%s", ret_fd, path, pdata->filename);
             if (ftruncate(ret_fd, 0)) {
                 log_print(LOG_WARNING, "ldb_get_fresh_fd: ftruncate failed; errno %d %s -- %d:%s::%s", errno, strerror(errno), ret_fd, path, pdata->filename);
             }
-            log_print(LOG_DEBUG, "ldb_get_fresh_fd: releasing exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: releasing shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
             if (flock(ret_fd, LOCK_UN)) {
-                log_print(LOG_WARNING, "ldb_get_fresh_fd: error releasing exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+                log_print(LOG_WARNING, "ldb_get_fresh_fd: error releasing shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
             }
         }
         else {
@@ -353,10 +361,11 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
                 ret_fd = open(pdata->filename, flags);
                 if (ret_fd < 0) {
-                    log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %d returns < 0", pdata->filename, flags);
+                    log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
+                    // @TODO: if we get ENOENT, then just create a new cache file and change pdata->filename to its name
                 }
                 else {
-                    log_print(LOG_DEBUG, "ldb_get_fresh_fd: open for 304 on %s with flags %d succeeded; fd %d", pdata->filename, flags, ret_fd);
+                    log_print(LOG_DEBUG, "ldb_get_fresh_fd: open for 304 on %s with flags %x succeeded; fd %d", pdata->filename, flags, ret_fd);
                 }
             }
             else {
@@ -498,8 +507,13 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if (sdata->fd >= 0) {
         log_print(LOG_DEBUG, "Setting fd to session data structure with fd %d for %s.", sdata->fd, path);
         info->fh = (uint64_t) sdata;
+
+        //log_print(LOG_DEBUG, "ldb_filecache_open: acquiring shared file lock on fd %d", sdata->fd);
+        //if (flock(sdata->fd, LOCK_SH)) {
+            //log_print(LOG_WARNING, "ldb_filecache_open: error acquiring shared file lock on fd %d", sdata->fd);
+        //}
+
         ret = 0;
-        if (pdata) ++(pdata->references);
         goto finish;
     }
 
@@ -558,10 +572,6 @@ ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "ldb_filecache_write: acquiring shared file lock on fd %d", sdata->fd);
-    if (flock(sdata->fd, LOCK_SH)) {
-        log_print(LOG_WARNING, "ldb_filecache_write: error acquiring shared file lock on fd %d", sdata->fd);
-    }
     sdata->modified = true;
 
 finish:
@@ -591,7 +601,6 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
 // top-level close/release call
 int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
-    struct ldb_filecache_pdata *pdata = NULL;
     int ret = -1;
 
     assert(sdata);
@@ -611,11 +620,6 @@ finish:
 
     // close, even on error
     ldb_filecache_close(sdata);
-
-    pdata = ldb_filecache_pdata_get(cache, path);
-    if (pdata != NULL) {
-        --(pdata->references);
-    }
 
     log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path);
 
@@ -680,13 +684,6 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     return ret;
 }
 
-static void unlock(int fd) {
-    log_print(LOG_DEBUG, "ldb_filecache_sync: releasing shared file lock on fd %d", fd);
-    if (flock(fd, LOCK_UN)) {
-        log_print(LOG_WARNING, "ldb_filecache_sync: error releasing shared file lock on fd %d", fd);
-    }
-}
-
 // top-level sync call
 int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
@@ -700,6 +697,11 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d)", path, sdata->fd);
 
+    // @TODO Get a non-blocking flock here; if we get here from someplace other than release, it might be useful
+    if (flock(sdata->fd, LOCK_EX)) {
+        log_print(LOG_WARNING, "ldb_filecache_release: error acquiring exclusive file lock on fd %d", sdata->fd);
+    }
+
     log_print(LOG_DEBUG, "ldb_filecache_sync: Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
         ret = 0;
@@ -710,7 +712,8 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     // Write this data to the persistent cache and update the file cache
     pdata = ldb_filecache_pdata_get(cache, path);
     if (pdata == NULL) {
-        log_print(LOG_INFO, "ldb_filecache_sync(%s, fd=%d): pdata is NULL; probably unlink intervened", path, sdata->fd);
+        log_print(LOG_NOTICE, "ldb_filecache_sync(%s, fd=%d): pdata is NULL; probably unlink intervened", path, sdata->fd);
+        // @TODO Create a new pdata here and populate; get a new cache file
     }
     else {
         log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d): cachefile=%s", path, sdata->fd, pdata->filename);
@@ -728,7 +731,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
             log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
             ret = -1;
-            unlock(sdata->fd);
             goto finish;
         }
 
@@ -737,7 +739,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             errno = EIO;
             ret = -1;
             log_print(LOG_ERR, "ldb_filecache_sync: failed session");
-            unlock(sdata->fd);
             goto finish;
         }
 
@@ -749,7 +750,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             log_print(LOG_ERR, "ldb_filecache_sync: ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
             errno = ENOENT;
             ret = -1;
-            unlock(sdata->fd);
             goto finish;
         }
 
@@ -762,8 +762,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
         // If the PUT succeeded, the file isn't locally modified.
         sdata->modified = false;
-
-        unlock(sdata->fd);
     }
     else {
         // If we don't PUT the file, we don't have an etag, so zero it out
@@ -792,10 +790,16 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     value.prepopulated = false;
     stat_cache_value_set(cache, path, &value);
 
-    if (pdata) free(pdata);
     ret = 0;
 
 finish:
+
+    if (pdata) free(pdata);
+
+    log_print(LOG_DEBUG, "ldb_filecache_release: releasing exclusive file lock on fd %d", sdata->fd);
+    if (flock(sdata->fd, LOCK_UN)) {
+        log_print(LOG_WARNING, "ldb_filecache_sync: error releasing exclusive file lock on fd %d", sdata->fd);
+    }
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Done syncing file (%s, fd=%d).", path, sdata->fd);
 
@@ -892,8 +896,12 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
     char fname[PATH_MAX];
     time_t starttime;
     int ret;
+    //int fd;
     int cached_files = 0;
     int unlinked_files = 0;
+    int skipped_files = 0;
+    int issues = 0;
+    int pruned_files = 0;
 
     log_print(LOG_DEBUG, "enter: ldb_filecache_cleanup(cache %p)", cache);
 
@@ -901,7 +909,6 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
     iter = leveldb_create_iterator(cache, options);
     leveldb_readoptions_destroy(options);
 
-    // leveldb_iter_seek_to_first(iter);
     leveldb_iter_seek(iter, filecache_prefix, 3);
 
     starttime = time(NULL);
@@ -913,24 +920,59 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
         // if path is null, we've gone past the filecache entries
         if (path == NULL) break;
         pdata = (const struct ldb_filecache_pdata *)leveldb_iter_value(iter, &klen);
-        // pdata = ldb_filecache_pdata_get(cache, path);
         log_print(LOG_DEBUG, "ldb_filecache_cleanup: Visiting %s", path);
         if (pdata) {
             ++cached_files;
+            // We delete the entry, making pdata invalid, before we might need the filename to unlink,
+            // so store it in fname
             strncpy(fname, pdata->filename, PATH_MAX);
-            // references > 0 would indicate someone has the file open, so don't unlink it.
-            if ((pdata->references == 0) && (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD)) {
-                log_print(LOG_DEBUG, "ldb_filecache_cleanup: Unlinking %s", fname);
+
+            // If the cache file doesn't exist, delete the etnry from the level_db cache
+            ret = access(fname, F_OK);
+            if (ret) {
+                ret = ldb_filecache_delete(cache, path);
+                if (ret) {
+                    log_print(LOG_WARNING, "ldb_filecache_cleanup: after access failed, failed to remove entry for \"%s\" from ldb cache", path);
+                    ++issues;
+                }
+                else {
+                    ++pruned_files;
+                }
+            }
+            else if (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD) {
+                //log_print(LOG_DEBUG, "ldb_filecache_cleanup: acquiring exclusive file lock on fd %d:%s::%s", fd, path, pdata->filename);
+                //fd = open (fname, O_RDWR);
+                //if (flock(fd, LOCK_EX | LOCK_NB)) {
+                    //if (errno == EWOULDBLOCK) {
+                        //log_print(LOG_NOTICE, "ldb_filecache_cleanup: skipping %d:%s::%s; file still open", fd, path, pdata->filename);
+                    //}
+                    //else {
+                        //log_print(LOG_WARNING, "ldb_filecache_cleanup: error obtaining exclusive file lock on fd %d:%s::%s", fd, path, pdata->filename);
+                    //}
+                    //++skipped_files;
+                    //close(fd);
+                //}
+                //else {
+                    //if (flock(fd, LOCK_UN)) {
+                        //log_print(LOG_NOTICE, "ldb_filecache_cleanup: error releasing exclusive file lock on fd %d:%s::%s", fd, path, pdata->filename);
+                    //}
+                    //close(fd);
+                log_print(LOG_INFO, "ldb_filecache_cleanup: Unlinking %s", fname);
                 ret = ldb_filecache_delete(cache, path);
                 if (ret) {
                     log_print(LOG_WARNING, "ldb_filecache_cleanup: failed to remove entry for \"%s\" from ldb cache", path);
-                    log_print(LOG_DEBUG, "ldb_filecache_cleanup: failed to remove entry \"%s\" from ldb cache", fname);
+                    log_print(LOG_INFO, "ldb_filecache_cleanup: failed to remove entry \"%s\" from ldb cache", fname);
+                    ++issues;
                 }
                 ret = unlink(fname);
-                ++unlinked_files;
                 if (ret) {
                     log_print(LOG_NOTICE, "ldb_filecache_cleanup: failed to unlink %s from ldb cache", fname);
+                    ++issues;
                 }
+                else {
+                    ++unlinked_files;
+                }
+                //}
             }
             else {
                 // put a timestamp on the file
@@ -939,7 +981,6 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
                     log_print(LOG_NOTICE, "ldb_filecache_cleanup: failed to update timestamp on \"%s\" for \"%s\" from ldb cache: %d - %s", fname, path, errno, strerror(errno));
                 }
             }
-            // free(pdata);
         }
         else {
             char *base;
@@ -962,7 +1003,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
 
     leveldb_iter_destroy(iter);
 
-    log_print(LOG_INFO, "ldb_filecache_cleanup: visited %d cache entries; unlinked %d", cached_files, unlinked_files);
+    log_print(LOG_INFO, "ldb_filecache_cleanup: visited %d cache entries; unlinked %d, skipped %d, pruned %d, had %d issues", cached_files, unlinked_files, skipped_files, pruned_files, issues);
 
     // check filestamps on each file in directory
     ret = cleanup_orphans(cache_path, starttime);

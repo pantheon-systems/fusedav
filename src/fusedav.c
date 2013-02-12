@@ -663,18 +663,18 @@ static int dav_unlink(const char *path) {
     if (!S_ISREG(st.st_mode))
         return -EISDIR;
 
-    log_print(LOG_INFO, "dav_unlink: calling ne_delete on %s", path);
+    log_print(LOG_DEBUG, "dav_unlink: calling ne_delete on %s", path);
     if (ne_delete(session, path)) {
         log_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
         return -ENOENT;
     }
 
-    log_print(LOG_INFO, "dav_unlink: calling ldb_filecache_delete on %s", path);
+    log_print(LOG_DEBUG, "dav_unlink: calling ldb_filecache_delete on %s", path);
     if (ldb_filecache_delete(config->cache, path)) {
         log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
     }
 
-    log_print(LOG_INFO, "dav_unlink: calling stat_cache_delete on %s", path);
+    log_print(LOG_DEBUG, "dav_unlink: calling stat_cache_delete on %s", path);
     stat_cache_delete(config->cache, path);
 
     return 0;
@@ -722,7 +722,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
+    log_print(LOG_INFO, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
     if (!(session = session_get(1)))
         return -EIO;
@@ -775,10 +775,10 @@ static int dav_rename(const char *from, const char *to) {
     }
     else {
         log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
-        if (flock(fd, LOCK_EX)) {
-            log_print(LOG_WARNING, "dav_rename: error acquiring exclusive file lock on fd %d:%s", fd, from);
+        if (flock(fd, LOCK_SH)) {
+            log_print(LOG_WARNING, "dav_rename: error acquiring shared file lock on fd %d:%s", fd, from);
         }
-        log_print(LOG_DEBUG, "dav_rename: acquired exclusive file lock on fd %d", fd);
+        log_print(LOG_DEBUG, "dav_rename: acquired shared file lock on fd %d", fd);
     }
 
     if (!(session = session_get(1))) {
@@ -819,8 +819,13 @@ finish:
     if (entry != NULL)
         free(entry);
 
-    // Also releases lock.
-    if (fd > 0) close(fd);
+    if (fd > 0) {
+        // Not specifically necessary to release lock; close will do it. Do it here for clarity.
+        if (flock(fd, LOCK_UN)) {
+            log_print(LOG_WARNING, "dav_rename: error releasing shared file lock on fd %d:%s", fd, from);
+        }
+        close(fd);
+    }
 
     free(_from);
 
@@ -833,8 +838,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     path = path_cvt(path);
 
-    // JB TMPlog_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
-    log_print(LOG_DEBUG, "CALLBACK: dav_release: release(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
 
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
@@ -942,8 +946,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         info->flags |= O_RDWR;
     }
 
-    // JB TMP log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
-    log_print(LOG_DEBUG, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
+    log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
     return do_open(path, info);
 }
 
@@ -970,8 +973,7 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
 
     path = path_cvt(path);
 
-    // JB TMP log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
-    log_print(LOG_DEBUG, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
