@@ -352,7 +352,7 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
 
     key = path2key(path, false);
 
-    log_print(LOG_DEBUG, "CDEL: %s", key);
+    log_print(LOG_DEBUG, "stat_cache_delete: %s", key);
 
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
@@ -371,6 +371,7 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
 int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     char *p;
 
+    log_print(LOG_DEBUG, "stat_cache_delete_parent: %s", path);
     if ((p = ne_path_parent(path))) {
         int l = strlen(p);
 
@@ -555,6 +556,7 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 
+    log_print(LOG_DEBUG, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
