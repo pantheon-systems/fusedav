@@ -773,7 +773,7 @@ static int dav_rename(const char *from, const char *to) {
         log_print(LOG_DEBUG, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
     }
     else {
-        log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
+        log_print(LOG_DEBUG, "dav_rename: acquiring shared file lock on fd %d:%s", fd, from);
         if (flock(fd, LOCK_SH)) {
             log_print(LOG_WARNING, "dav_rename: error acquiring shared file lock on fd %d:%s", fd, from);
         }
