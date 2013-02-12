@@ -88,8 +88,7 @@ int lock_thread_exit = 0;
 #define CLOCK_SKEW 10 // seconds
 
 // Run cache cleanup once a day.
-// JB RESTORE! #define CACHE_CLEANUP_INTERVAL 86400
-#define CACHE_CLEANUP_INTERVAL 60
+#define CACHE_CLEANUP_INTERVAL 86400
 
 struct fill_info {
     void *buf;
