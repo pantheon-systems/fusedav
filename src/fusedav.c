@@ -839,6 +839,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
     }
 
+    log_print(LOG_INFO, "END: dav_release: release(%s)", path);
+
     return ret;
 }
 
