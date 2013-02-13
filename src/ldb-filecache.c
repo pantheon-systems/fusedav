@@ -622,13 +622,15 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     if (ret != NE_OK) {
         if (myerrno == 0) {
             log_print(LOG_NOTICE, "ne_put_return_etag: ne_request_dispatch returns notice (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+            ret = NE_OK;
         }
         else {
             log_print(LOG_WARNING, "ne_put_return_etag: ne_request_dispatch returns error (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
         }
     }
 
-    if (ret == NE_OK && ne_get_status(req)->klass != 2) {
+    // If myerrno is 0, we don't want to propagate an error. Turns out klass is not 2, so don't reset ret
+    if (myerrno != 0 && ret == NE_OK && ne_get_status(req)->klass != 2) {
         ret = NE_ERROR;
     }
 
