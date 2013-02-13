@@ -704,8 +704,6 @@ static int dav_rmdir(const char *path) {
     }
 
     stat_cache_delete(config->cache, path);
-    // JB. Seems incorrect
-    // stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
