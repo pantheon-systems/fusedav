@@ -766,6 +766,7 @@ static int dav_rename(const char *from, const char *to) {
     fd = ldb_filecache_fd(config->cache, from);
     if (fd < 0) {
         log_print(LOG_DEBUG, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
+        // Should we goto finish here?
     }
     else {
         log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);

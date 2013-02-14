@@ -41,6 +41,9 @@
 
 #define REFRESH_INTERVAL 3
 
+// signal to retry
+#define FC_EAGAIN -EAGAIN
+
 typedef int fd_t;
 
 // Session data
@@ -247,25 +250,24 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             // @TODO: if we get ENOENT, then just create a new cache file and change pdata->filename to its name
         }
         if (flags & O_TRUNC) {
-            log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquiring exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
-            // @TODO Remove this LOCK_NB stuff, just testing ...
-            if (flock(ret_fd, LOCK_EX)) {
-                log_print(LOG_WARNING, "ldb_get_fresh_fd: error obtaining exclusive (1) file lock on fd %d:%s::%s -- %d %s", ret_fd, path, pdata->filename, errno, strerror(errno));
+            log_print(LOG_INFO, "ldb_get_fresh_fd: acquiring shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            if (flock(ret_fd, LOCK_SH)) {
+                log_print(LOG_WARNING, "ldb_get_fresh_fd: error obtaining shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
             }
-            log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquired exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
-            log_print(LOG_DEBUG, "ldb_get_fresh_fd: truncating fd %d:%s::%s", ret_fd, path, pdata->filename);
+            log_print(LOG_INFO, "ldb_get_fresh_fd: acquired shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            log_print(LOG_INFO, "ldb_get_fresh_fd: truncating fd %d:%s::%s", ret_fd, path, pdata->filename);
             if (ftruncate(ret_fd, 0)) {
                 log_print(LOG_WARNING, "ldb_get_fresh_fd: ftruncate failed; errno %d %s -- %d:%s::%s", errno, strerror(errno), ret_fd, path, pdata->filename);
             }
-            log_print(LOG_DEBUG, "ldb_get_fresh_fd: releasing exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
-            if (flock(ret_fd, LOCK_UN)) {
-                log_print(LOG_WARNING, "ldb_get_fresh_fd: error releasing exclusive file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
-            }
+            // Don't release the lock; we'll just try to get it a little later in ldb_filecache_open ...
+            //log_print(LOG_DEBUG, "ldb_get_fresh_fd: releasing shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            //if (flock(ret_fd, LOCK_UN)) {
+                //log_print(LOG_WARNING, "ldb_get_fresh_fd: error releasing shared file lock on fd %d:%s::%s", ret_fd, path, pdata->filename);
+            //}
         }
         else {
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: O_TRUNC not specified on fd %d:%s::%s", ret_fd, path, pdata->filename);
         }
-        // @TODO: if we get ENOENT, then just create a new cache file and change pdata->filename to its name
 
         // We're done; no need to access the server...
         goto finish;
@@ -311,8 +313,21 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
                 ret_fd = open(pdata->filename, flags);
                 if (ret_fd < 0) {
+                    // If the cachefile named in pdata->filename does not exist ...
+                    // REVIEW: do we want to EAGAIN for all errors, or just ENOENT?
+                    if (errno == ENOENT) {
+                        // delete pdata from cache, we can't trust its values.
+                        // We see one site continually failing on the same non-existent cache file.
+                        if (ldb_filecache_delete(cache, path)) {
+                            log_print(LOG_NOTICE, "ldb_get_fresh_fd: failed to delete filecache entry for %s", path);
+                        }
+                        else {
+                            // Now that we've gotten rid of pdata
+                            ret_fd = FC_EAGAIN;
+                            log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT, cause retry: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
+                        }
+                    }
                     log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
-                    // @TODO: if we get ENOENT, then just create a new cache file and change pdata->filename to its name
                 }
                 else {
                     log_print(LOG_DEBUG, "ldb_get_fresh_fd: open for 304 on %s with flags %x succeeded; fd %d", pdata->filename, flags, ret_fd);
@@ -358,6 +373,7 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             // @TODO: Set proper flags? Or enforce in fusedav.c?
             if (new_cache_file(cache_path, pdata->filename, &ret_fd) < 0) {
                 log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
+                // Should we delete path from cache and/or null-out pdata?
                 ne_end_request(req);
                 goto finish;
             }
@@ -433,7 +449,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
         if ((flags & O_CREAT) && (pdata != NULL)) {
             // This will orphan the previous filecache file
-            log_print(LOG_WARNING, "ldb_filecache_open: creating a file that already has a cache entry: %s", path);
+            log_print(LOG_NOTICE, "ldb_filecache_open: creating a file that already has a cache entry: %s", path);
         }
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {
@@ -443,18 +459,24 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     else {
         // Get a file descriptor pointing to a guaranteed-fresh file.
-        sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, pdata, flags);
-        if (sdata->fd < 0) {
-            log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
-            ret = sdata->fd;
-            goto fail;
-        }
+        do {
+            sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, pdata, flags);
+            if (sdata->fd == FC_EAGAIN) {
+                log_print(LOG_NOTICE, "ldb_filecache_open: Got FC_EAGAIN on %s", path);
+            }
+            else if (sdata->fd < 0) {
+                log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
+                ret = sdata->fd;
+                goto fail;
+            }
+        } while (sdata->fd == FC_EAGAIN);
     }
 
     if (flags & O_RDONLY || flags & O_RDWR) sdata->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
     if (flags & O_TRUNC) {
         sdata->modified = true;
+        log_print(LOG_INFO, "ldb_get_fresh_fd: acquiring shared file lock on fd %d:%s::%s", sdata->fd, path, pdata->filename);
         if (flock(sdata->fd, LOCK_SH)) {
             log_print(LOG_INFO, "ldb_filecache_open: Failed on flock on %d", sdata->fd);
         }
@@ -584,203 +606,6 @@ finish:
     return ret;
 }
 
-/* libneon stuff */
-/* This is what eventually happens on Premature EOF
- * static int send_request_body(ne_request *req, int retry)
- * ...
- *     if (req->body_cb(req->body_ud, NULL, 0) != 0) {
- *       ne_close_connection(sess);
- *       return NE_ERROR;
- * ...
- */
-
-// from #include <ne_internal.h>
-#include <libintl.h>
-#define _(str) dgettext(PACKAGE_NAME, str)
-#define ne_lseek lseek64
-// JB A lot of configure shenanigans just to get d, ld, or lld. Just use ld.
-#define NE_FMT_OFF64_T "ld"
-#define FMT_NE_OFF_T NE_FMT_OFF64_T
-
-/* Size of hash table; 43 is the smallest prime for which the common
- * header names hash uniquely using the *33 hash function. */
-#define HH_HASHSIZE (43)
-
-struct ne_request_s {
-    char *method, *uri; /* method and Request-URI */
-
-    ne_buffer *headers; /* request headers */
-
-    /* Request body. */
-    ne_provide_body body_cb;
-    void *body_ud;
-
-    /* Request body source: file or buffer (if not callback). */
-    union {
-        struct {
-            int fd;
-            ne_off_t offset, length;
-            ne_off_t remain; /* remaining bytes to send. */
-        } file;
-    struct {
-            /* length bytes @ buffer = whole body.
-             * remain bytes @ pnt = remaining bytes to send */
-        const char *buffer, *pnt;
-        size_t length, remain;
-    } buf;
-    } body;
-
-    ne_off_t body_length; /* length of request body */
-
-    /* temporary store for response lines. */
-    char respbuf[NE_BUFSIZ];
-
-    /**** Response ***/
-
-    /* The transfer encoding types */
-    struct ne_response {
-    enum {
-        R_TILLEOF = 0, /* read till eof */
-        R_NO_BODY, /* implicitly no body (HEAD, 204, 304) */
-        R_CHUNKED, /* using chunked transfer-encoding */
-        R_CLENGTH  /* using given content-length */
-    } mode;
-        union {
-            /* clen: used if mode == R_CLENGTH; total and bytes
-             * remaining to be read of response body. */
-            struct {
-                ne_off_t total, remain;
-            } clen;
-            /* chunk: used if mode == R_CHUNKED; total and bytes
-             * remaining to be read of current chunk */
-            struct {
-                size_t total, remain;
-            } chunk;
-        } body;
-        ne_off_t progress; /* number of bytes read of response */
-    } resp;
-
-    struct hook *private;
-
-    /* response header fields */
-    struct field *response_headers[HH_HASHSIZE];
-
-    unsigned int current_index; /* response_headers cursor for iterator */
-
-    /* List of callbacks which are passed response body blocks */
-    struct body_reader *body_readers;
-
-    /*** Miscellaneous ***/
-    unsigned int method_is_head;
-    unsigned int can_persist;
-
-    int flags[NE_REQFLAG_LAST];
-
-    ne_session *session;
-    ne_status status;
-};
-
-/* end ne_internal.h */
-
-/* JB Pantheon: copied this file from libneon ne_request.c
- * Since it is static in ne_request.c, we can't easily call it from
- * this file. So we copy it in and make the change to return 0
- * on Premature EOF. This will cause the calling functions to avoid
- * calling error routines on the way out (e.g. close_connection)
- */
-static ssize_t body_fd_send(void *userdata, char *buffer, size_t count)
-{
-    ne_request *req = (ne_request *)userdata;
-
-    log_print(LOG_INFO, "body_fd_send: count=%d, fd %d", count, req->body.file.fd);
-    if (count) {
-        ssize_t ret;
-
-        if (req->body.file.remain == 0) {
-            log_print(LOG_INFO, "body_fd_send: Done on fd %d", req->body.file.fd);
-            return 0;
-        }
-
-        /* Casts here are necessary for LFS platforms for safe and
-         * warning-free assignment/comparison between 32-bit size_t
-         * and 64-bit off64_t: */
-        if ((ne_off_t)count > req->body.file.remain)
-            count = (size_t)req->body.file.remain;
-
-        ret = read(req->body.file.fd, buffer, count);
-        if (ret > 0) {
-            req->body.file.remain -= ret;
-            log_print(LOG_INFO, "body_fd_send: read returns %d bytes from fd %d", ret, req->body.file.fd);
-            return ret;
-        }
-        else if (ret == 0) {
-            ne_set_error(req->session,
-                         _("Premature EOF in request body file"));
-            log_print(LOG_INFO, "body_fd_send: Would get Premature EOF here fd %d", req->body.file.fd);
-            return ret; // Consider this a non-error
-        }
-        else if (ret < 0) {
-            char err[200];
-            int errnum = errno;
-
-            ne_set_error(req->session,
-                         _("Failed reading request body file: %s"),
-                         ne_strerror(errnum, err, sizeof err));
-            log_print(LOG_INFO, "body_fd_send: read failed (%d) from fd %d; %d %s", ret, req->body.file.fd, errno, strerror(errno));
-        }
-
-        return -1;
-    } else {
-        ne_off_t newoff;
-
-        /* rewind for next send. */
-        newoff = ne_lseek(req->body.file.fd, req->body.file.offset, SEEK_SET);
-        if (newoff == req->body.file.offset) {
-            req->body.file.remain = req->body.file.length;
-            log_print(LOG_INFO, "body_fd_send: successful seek from fd %d", req->body.file.fd);
-            return 0;
-        } else {
-            char err[200], offstr[20];
-
-            if (newoff == -1) {
-                /* errno was set */
-                ne_strerror(errno, err, sizeof err);
-                log_print(LOG_INFO, "body_fd_send: failed seek from fd %d; %d %s", req->body.file.fd, errno, strerror(errno));
-            } else {
-                strcpy(err, _("offset invalid"));
-                log_print(LOG_INFO, "body_fd_send: invalid seek from fd %d", req->body.file.fd);
-                // JB. We might want to consider this a non-error
-            }
-            ne_snprintf(offstr, sizeof offstr, "%" FMT_NE_OFF_T,
-                        req->body.file.offset);
-            ne_set_error(req->session,
-                         _("Could not seek to offset %s"
-                           " of request body file: %s"),
-                           offstr, err);
-            return -1;
-        }
-    }
-}
-
-/* Set the request body length to 'length' */
-static void set_body_length(ne_request *req, ne_off_t length)
-{
-    req->body_length = length;
-    ne_print_request_header(req, "Content-Length", "%" FMT_NE_OFF_T, length);
-}
-
-static void ne_set_request_body_fd_eof(ne_request *req, int fd,
-                            ne_off_t offset, ne_off_t length)
-{
-    req->body.file.fd = fd;
-    req->body.file.offset = offset;
-    req->body.file.length = length;
-    // set body_cb to our version of the function
-    req->body_cb = body_fd_send;
-    req->body_ud = req;
-    set_body_length(req, length);
-}
-
 /* PUT's from fd to URI */
 /* Our modification to include etag support on put */
 static int ne_put_return_etag(ne_session *session, const char *path, int fd, char *etag)
@@ -791,6 +616,12 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     const char *value;
 
     log_print(LOG_INFO, "enter: ne_put_return_etag(,%s,%d,)", path, fd);
+
+    log_print(LOG_INFO, "ne_put_return_etag(,%s,%d,): acquiring exclusive lock", path, fd);
+    if (flock(fd, LOCK_EX)) {
+        log_print(LOG_ERR, "ne_put_return_etag(,%s,%d,): error acquiring exclusive lock", path, fd);
+    }
+    log_print(LOG_INFO, "ne_put_return_etag(,%s,%d,): acquired exclusive lock", path, fd);
 
     assert(etag);
 
@@ -803,8 +634,19 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
         error = ne_strerror(errnum, buf, sizeof buf);
         sprintf(msg, "Could not determine file size: %s", error);
         ne_set_error(session, msg);
-        return NE_ERROR;
+        ret = NE_ERROR;
+        log_print(LOG_ERR, "ne_put_return_etag(,%s,%d,): failed getting file size", path, fd);
+        goto finish;
     }
+
+    log_print(LOG_INFO, "ne_put_return_etag(,%s,%d,): file size %d", path, fd, st.st_size);
+
+    // Get a copy of the file before doing PUT. We have issues where an
+    // open with truncate immediately following the release truncates the file
+    // before the release gets around to doing the PUT (the OS handles
+    // close, aka release, asynchronously
+
+    // fd = copy_file_for_put(fd);
 
     req = ne_request_create(session, "PUT", path);
 
@@ -812,7 +654,8 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     ne_lock_using_parent(req, path);
 
     // Call our version of the function to bypass Premature EOF error
-    ne_set_request_body_fd_eof(req, fd, 0, st.st_size);
+    // ne_set_request_body_fd_eof(req, fd, 0, st.st_size);
+    ne_set_request_body_fd(req, fd, 0, st.st_size);
 
     ret = ne_request_dispatch(req);
 
@@ -841,6 +684,14 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
         etag[0] = '\0';
     }
     ne_request_destroy(req);
+
+finish:
+
+    log_print(LOG_INFO, "ne_put_return_etag(,%s,%d,): returning exclusive lock", path, fd);
+    if (flock(fd, LOCK_UN)) {
+        log_print(LOG_ERR, "ne_put_return_etag(,%s,%d,): error returning exclusive lock", path, fd);
+    }
+    log_print(LOG_INFO, "ne_put_return_etag(,%s,%d,): returned exclusive lock", path, fd);
 
     log_print(LOG_INFO, "exit: ne_put_return_etag(,%s,%d,)", path, fd);
 
