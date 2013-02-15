@@ -612,11 +612,13 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     fstat(sdata->fd, &cache_file_stat);
     log_print(LOG_DEBUG, "ldb_filecache_close: Cache file has length %lu", cache_file_stat.st_size);
 
-    if (sdata->fd > 0)
+    if (sdata->fd > 0)  {
         if (close(sdata->fd) < 0)
             log_print(LOG_ERR, "ldb_filecache_close: Failed to close cache file.");
-    else
+    }
+    else {
         log_print(LOG_ERR, "ldb_filecache_close: Session data lacks a cache file descriptor.");
+    }
 
     if (sdata->fd_syncing > 0) {
         if (close(sdata->fd_syncing) < 0)
