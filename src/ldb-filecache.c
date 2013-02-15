@@ -667,7 +667,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, int
 {
     ne_request *req;
     struct stat st;
-    int ret;
+    int ret = -1;
     const char *value;
 
     log_print(LOG_INFO, "enter: ne_put_return_etag(,%s,%d,%d,)", path, fd, fd_syncing);
