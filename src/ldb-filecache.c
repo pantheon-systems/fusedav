@@ -305,6 +305,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: O_TRUNC not specified on fd %d:%s::%s", sdata->fd, path, pdata->filename);
         }
 
+        ret = 0;
         // We're done; no need to access the server...
         goto finish;
     }
@@ -883,7 +884,7 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
         log_print(LOG_ERR, "ldb_filecache_truncate: error releasing shared syncing lock");
     }
     log_print(LOG_INFO, "ldb_filecache_truncate: released shared syncing lock");
-    
+
     sdata->modified = 1;
 
     return ret;
