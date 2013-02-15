@@ -345,7 +345,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             if (pdata != NULL) {
                 // Mark the cache item as revalidated at the current time.
                 pdata->last_server_update = time(NULL);
-                log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
+                log_print(LOG_INFO, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
                 ldb_filecache_pdata_set(cache, path, pdata);
 
                 sdata->fd = open(pdata->filename, flags);
@@ -367,6 +367,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                     log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
                 }
                 else {
+                    ret = 0;
                     log_print(LOG_DEBUG, "ldb_get_fresh_fd: open for 304 on %s with flags %x succeeded; fd %d", pdata->filename, flags, sdata->fd);
                 }
             }
@@ -414,6 +415,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                 ne_end_request(req);
                 goto finish;
             }
+            ret = 0;
             ne_read_response_to_fd(req, sdata->fd);
 
             // Point the persistent cache to the new file content.
