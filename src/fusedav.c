@@ -1828,7 +1828,7 @@ int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
     struct fuse_chan *ch = NULL;
-    char *mountpoint;
+    char *mountpoint = NULL;
     int ret = 1;
     pthread_t lock_thread;
     int lock_thread_running = 0;
@@ -1851,10 +1851,6 @@ int main(int argc, char *argv[]) {
         ++fail;
     }
 
-    if (fail) {
-        goto finish;
-    }
-
     mask = umask(0);
     umask(mask);
 
@@ -1868,6 +1864,10 @@ int main(int argc, char *argv[]) {
     // Parse options.
     if (!fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
+        goto finish;
+    }
+
+    if (fail) {
         goto finish;
     }
 
