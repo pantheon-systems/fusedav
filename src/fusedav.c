@@ -627,7 +627,18 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     assert(info != NULL || path != NULL);
 
 
-    if (info != NULL && path == NULL) {
+    if (path != NULL) {
+        path = path_cvt(path);
+        log_print(LOG_DEBUG, "CALLBACK: dav_getattr(%s)", path);
+        r = get_stat(path, stbuf);
+        if (r != 0) {
+            log_print(LOG_ERR, "dav_getattr(%s) failed on get_stat", path);
+            goto finish;
+        }
+        if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
+            stbuf->st_mode = S_IFDIR | config->dir_mode;
+    }
+    else {
         // Fill in generic values
         int fd;
         fd = ldb_filecache_fd(info);
@@ -643,17 +654,6 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
         stbuf->st_uid = getuid();
         stbuf->st_gid = getgid();
         r = 0;
-    }
-    else {
-        path = path_cvt(path);
-        log_print(LOG_DEBUG, "CALLBACK: dav_getattr(%s)", path);
-        r = get_stat(path, stbuf);
-        if (r != 0) {
-            log_print(LOG_ERR, "dav_getattr(%s) failed on get_stat", path);
-            goto finish;
-        }
-        if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
-            stbuf->st_mode = S_IFDIR | config->dir_mode;
     }
 
     // Zero-out unused nanosecond fields.
@@ -858,8 +858,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         log_print(LOG_INFO, "CALLBACK: dav_release: release(NULL path)");
     }
     else {
-        log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
         path = path_cvt(path);
+        log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
     }
 
     // path might be NULL if we are accessing a bare file descriptor. Since
