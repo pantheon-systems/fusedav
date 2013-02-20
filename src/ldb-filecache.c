@@ -532,7 +532,7 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     ssize_t ret = -1;
 
-    log_print(LOG_INFO, "ldb_filecache_read: fd=%d", sdata->fd);
+    log_print(LOG_DEBUG, "ldb_filecache_read: fd=%d", sdata->fd);
 
     if ((ret = pread(sdata->fd, buf, size, offset)) < 0) {
         ret = -errno;
@@ -543,7 +543,7 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
 finish:
 
     // ret is bytes read, or error
-    log_print(LOG_INFO, "Done reading: %d from %d.", ret, sdata->fd);
+    log_print(LOG_DEBUG, "Done reading: %d from %d.", ret, sdata->fd);
 
     return ret;
 }
@@ -594,7 +594,7 @@ finish:
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     int ret = 0;
 
-    log_print(LOG_INFO, "ldb_filecache_close: fd (%d :: %d).", sdata->fd, sdata->fd);
+    log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d :: %d).", sdata->fd, sdata->fd);
 
     if (sdata->fd > 0)  {
         if (close(sdata->fd) < 0) {
@@ -616,22 +616,22 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
 }
 
 // top-level close/release call
-int ldb_filecache_release(__unused ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
+int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
 
     assert(sdata);
 
     if (path == NULL) {
-        log_print(LOG_INFO, "ldb_filecache_release: NULL path : %d", sdata->fd);
+        log_print(LOG_DEBUG, "ldb_filecache_release: NULL path : %d", sdata->fd);
     }
     else {
-        log_print(LOG_INFO, "ldb_filecache_release: %s : %d", path, sdata->fd);
+        log_print(LOG_DEBUG, "ldb_filecache_release: %s : %d", path, sdata->fd);
     }
 
     // If path is NULL, sync will handle it. Likely sync was already called
     // during immediately preceding flush; in that case, file won't be
-    // modifiable and will return immediate
+    // modifiable and will return immediate.
     if ((ret = ldb_filecache_sync(cache, path, info, true)) < 0) {
         log_print(LOG_ERR, "ldb_filecache_release: ldb_filecache_sync returns error %d", ret);
         goto finish;
@@ -665,7 +665,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     int ret = -1;
     const char *value;
 
-    log_print(LOG_INFO, "enter: ne_put_return_etag(,%s,%d,,)", path, fd);
+    log_print(LOG_DEBUG, "enter: ne_put_return_etag(,%s,%d,,)", path, fd);
 
     log_print(LOG_DEBUG, "ne_put_return_etag: acquiring exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_EX)) {
@@ -687,8 +687,6 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     ne_lock_using_resource(req, path, 0);
     ne_lock_using_parent(req, path);
 
-    // Call our version of the function to bypass Premature EOF error
-    // ne_set_request_body_fd_eof(req, fd, 0, st.st_size);
     ne_set_request_body_fd(req, fd, 0, st.st_size);
 
     ret = ne_request_dispatch(req);
@@ -746,11 +744,11 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     // If we are accessing a bare file descriptor (open/unlink/read|write),
     // path will be NULL, so just return without doing anything
     if (path == NULL) {
-        log_print(LOG_INFO, "ldb_filecache_sync(NULL path, returning, fd=%d)", sdata->fd);
+        log_print(LOG_DEBUG, "ldb_filecache_sync(NULL path, returning, fd=%d)", sdata->fd);
         return 0;
     }
     else {
-        log_print(LOG_INFO, "ldb_filecache_sync(%s, fd=%d)", path, sdata->fd);
+        log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d)", path, sdata->fd);
     }
 
     log_print(LOG_DEBUG, "Checking if file (%s) was writable.", path);
@@ -794,7 +792,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             goto finish;
         }
 
-        log_print(LOG_INFO, "About to PUT file (%s, fd=%d).", path, sdata->fd);
+        log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
         if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
             log_print(LOG_ERR, "ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
@@ -896,7 +894,6 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     char *key;
     int ret = 0;
     char *errptr = NULL;
-    char sync_filename[PATH_MAX];
 
     log_print(LOG_DEBUG, "ldb_filecache_delete: path (%s).", path);
 
@@ -912,9 +909,6 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     if (pdata) {
         unlink(pdata->filename);
         log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", pdata->filename);
-        //sprintf(sync_filename, "%s.syncing", pdata->filename);
-        //unlink(sync_filename);
-        log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", sync_filename);
         free(pdata);
     }
 

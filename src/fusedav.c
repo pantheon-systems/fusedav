@@ -456,12 +456,12 @@ static int dav_readdir(
     // Since it's a directory name, this is unexpected. While we can imagine
     // a scenario, we won't go out of our way to handle it. Exit with an error.
     if (path == NULL) {
-        log_print(LOG_DEBUG, "CALLBACK: dav_readdir(NULL path)");
+        log_print(LOG_INFO, "CALLBACK: dav_readdir(NULL path)");
         return -1;
     }
 
     path = path_cvt(path);
-    log_print(LOG_DEBUG, "CALLBACK: dav_readdir(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_readdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -629,7 +629,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 
     if (path != NULL) {
         path = path_cvt(path);
-        log_print(LOG_DEBUG, "CALLBACK: dav_getattr(%s)", path);
+        log_print(LOG_INFO, "CALLBACK: dav_getattr(%s)", path);
         r = get_stat(path, stbuf);
         if (r != 0) {
             log_print(LOG_ERR, "dav_getattr(%s) failed on get_stat", path);
@@ -916,7 +916,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_mknod(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_mknod(%s)", path);
 
     /*
     if (!(session = session_get(1)))
@@ -1077,7 +1077,7 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
 finish:
 
-    log_print(LOG_INFO, "dav_ftruncate: ret=%d", ret);
+    log_print(LOG_DEBUG, "dav_ftruncate: ret=%d", ret);
     return ret;
 }
 
@@ -1098,7 +1098,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
+    log_print(LOG_INFO, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
