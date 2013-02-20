@@ -451,12 +451,13 @@ static int dav_readdir(
     struct fill_info f;
     int ret;
 
-    // We might get a null path if we are writing to a bare file descriptor
+    // We might get a null path if we are accessing a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
-    // In this case we exit.
+    // Since it's a directory name, this is unexpected. While we can imagine
+    // a scenario, we won't go out of our way to handle it. Exit with an error.
     if (path == NULL) {
         log_print(LOG_DEBUG, "CALLBACK: dav_readdir(NULL path)");
-        return 0;
+        return -1;
     }
 
     path = path_cvt(path);
@@ -619,20 +620,41 @@ static int get_stat(const char *path, struct stat *stbuf) {
     return -ENOENT;
 }
 
-static int dav_getattr(const char *path, struct stat *stbuf) {
+static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
 
-    if (path == NULL) {
-        log_print(LOG_INFO, "CALLBACK: getattr(NULL path)");
-        return 0;
+    assert(info != NULL || path != NULL);
+
+
+    if (info != NULL && path == NULL) {
+        // Fill in generic values
+        int fd;
+        fd = ldb_filecache_fd(info);
+        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(NULL path)");
+        stbuf->st_mode = 0666 | S_IFREG;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = lseek(fd, 0, SEEK_END);
+        stbuf->st_atime = time(NULL);
+        stbuf->st_mtime = stbuf->st_atime;
+        stbuf->st_ctime = stbuf->st_atime;
+        stbuf->st_blksize = 0;
+        stbuf->st_blocks = 8;
+        stbuf->st_uid = getuid();
+        stbuf->st_gid = getgid();
+        r = 0;
     }
-
-    path = path_cvt(path);
-    log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
-
-    log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
-    r = get_stat(path, stbuf);
+    else {
+        path = path_cvt(path);
+        log_print(LOG_DEBUG, "CALLBACK: dav_getattr(%s)", path);
+        r = get_stat(path, stbuf);
+        if (r != 0) {
+            log_print(LOG_ERR, "dav_getattr(%s) failed on get_stat", path);
+            goto finish;
+        }
+        if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
+            stbuf->st_mode = S_IFDIR | config->dir_mode;
+    }
 
     // Zero-out unused nanosecond fields.
     stbuf->st_atim.tv_nsec = 0;
@@ -643,14 +665,17 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         stbuf->st_uid = config->uid;
     if (config->gid)
         stbuf->st_gid = config->gid;
-    if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
-        stbuf->st_mode = S_IFDIR | config->dir_mode;
     if (S_ISREG(stbuf->st_mode) && config->file_mode)
         stbuf->st_mode = S_IFREG | config->file_mode;
 
     log_print(LOG_DEBUG, "Done: getattr(%s)", path);
 
+finish:
     return r;
+}
+
+static int dav_getattr(const char *path, struct stat *stbuf) {
+    return dav_fgetattr(path, stbuf, NULL);
 }
 
 static int dav_unlink(const char *path) {
@@ -761,27 +786,6 @@ static int dav_mkdir(const char *path, mode_t mode) {
     return 0;
 }
 
-/* If we open a file, then unlink it while still open, fuse will call dav_rename
- * and the "to" file will be a fuse_hidden file. We will have taken a shared lock
- * on the open for "from", and then try to get an exclusive lock in dav_rename, which will
- * cause deadlock. Shortcircuit here by detecting that we are trying to move
- * to a fuse_hidden file.
- * Also, on release, don't try to sync/PUT a fuse_hidden file.
- */
-static bool is_fuse_hidden(const char *fname) {
-    if (1) {
-        return false; // turn it on for now
-    }
-    else if (strncmp(fname, "/.fuse_hidden", 13) == 0) {
-        log_print(LOG_INFO, "is_fuse_hidden: \"to\" file is fuse_hidden \"%s\"", fname);
-        return true;
-    }
-    else {
-        log_print(LOG_INFO, "is_fuse_hidden: false on (%s)", fname);
-        return false;
-    }
-}
-
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
@@ -791,17 +795,33 @@ static int dav_rename(const char *from, const char *to) {
     char fn[PATH_MAX], *_from;
     struct stat_cache_value *entry = NULL;
 
-    /* If dest is not fuse_hidden, delete src file from server and change indexes in
-     * cache to dest.
-     *
-     * If dest is fuse_hidden, delete src from server, maybe delete entry from caches.
-     *
-     */
-    if (is_fuse_hidden(to)) {
-        log_print(LOG_INFO, "dav_rename: is_fuse_hidden(%s)", to);
-        stat_cache_delete(config->cache, from);
-        ldb_filecache_delete(config->cache, from);
+    from = _from = strdup(path_cvt(from));
+    assert(from);
+    to = path_cvt(to);
+
+    log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
+
+    if (!(session = session_get(1))) {
+        r = -EIO;
+        log_print(LOG_WARNING, "dav_rename: failed to get session for %d:%s", fd, from);
         goto finish;
+    }
+
+    if ((r = get_stat(from, &st)) < 0) {
+        r = -1;
+        log_print(LOG_ERR, "dav_rename: failed get_stat for %d:%s", fd, from);
+        goto finish;
+    }
+
+    if (S_ISDIR(st.st_mode)) {
+        snprintf(fn, sizeof(fn), "%s/", from);
+        from = fn;
+    }
+
+    if (ne_move(session, 1, from, to)) {
+        // We allow silent failures because fuse might have done the rename for us under the covers
+        log_print(LOG_INFO, "dav_rename: MOVE failed: %s", ne_get_error(session));
+        ldb_filecache_delete(config->cache, to);
     }
     else {
         entry = stat_cache_value_get(config->cache, from, true);
@@ -810,80 +830,20 @@ static int dav_rename(const char *from, const char *to) {
             r = -EIO;
             goto finish;
         }
-        stat_cache_delete(config->cache, from);
 
-        if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
+        if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
             log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
             ldb_filecache_delete(config->cache, to);
         }
-        goto finish;
     }
-
-    from = _from = strdup(path_cvt(from));
-    assert(from);
-    to = path_cvt(to);
-
-    log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
-
-    fd = ldb_filecache_fd(config->cache, from);
-    if (fd < 0) {
-        log_print(LOG_DEBUG, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
-        // REVIEW: Should we goto finish here?
-    }
-    else {
-        log_print(LOG_DEBUG, "dav_rename: acquiring exclusive file lock on fd %d:%s", fd, from);
-        //if (flock(fd, LOCK_EX)) {
-            //log_print(LOG_WARNING, "dav_rename: error acquiring exclusive file lock on fd %d:%s", fd, from);
-        //}
-        log_print(LOG_DEBUG, "dav_rename: acquired exclusive file lock on fd %d", fd);
-    }
-
-    if (!(session = session_get(1))) {
-        r = -EIO;
-        log_print(LOG_WARNING, "dav_rename: failed to get session for %d:%s", fd, from);
-        goto finish;
-    }
-
-    if ((r = get_stat(from, &st)) < 0)
-        goto finish;
-
-    if (S_ISDIR(st.st_mode)) {
-        snprintf(fn, sizeof(fn), "%s/", from);
-        from = fn;
-    }
-
-    if (ne_move(session, 1, from, to)) {
-        log_print(LOG_WARNING, "dav_rename: MOVE failed: %s", ne_get_error(session));
-        r = -ENOENT;
-        goto finish;
-    }
-
-    entry = stat_cache_value_get(config->cache, from, true);
-    log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
-    if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
-        r = -EIO;
-        goto finish;
-    }
+    // We always delete from stat cache
+    // @TODO perhaps a cache 'move' as we do for filecache?
     stat_cache_delete(config->cache, from);
-
-    if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
-        log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
-        ldb_filecache_delete(config->cache, to);
-    }
 
 finish:
 
     if (entry != NULL)
         free(entry);
-
-    if (fd > 0) {
-        // Not specifically necessary to release lock; close will do it. Do it here for clarity.
-        // Also note the flock is perfectly happy to unlock a file it hasn't locked
-        //if (flock(fd, LOCK_UN)) {
-            //log_print(LOG_WARNING, "dav_rename: error releasing shared file lock on fd %d:%s", fd, from);
-        //}
-        close(fd);
-    }
 
     if (_from) free(_from);
 
@@ -914,16 +874,16 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     return ret;
 }
 
-static int dav_fsync(const char *path, __unused int isdatasync, __unused struct fuse_file_info *info) {
+static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
     if (path == NULL) {
-        log_print(LOG_DEBUG, "CALLBACK: dav_fsync(NULL path)");
+        log_print(LOG_INFO, "CALLBACK: dav_fsync(NULL path)");
     }
     else {
         path = path_cvt(path);
-        log_print(LOG_DEBUG, "CALLBACK: dav_fsync(%s)", path);
+        log_print(LOG_INFO, "CALLBACK: dav_fsync(%s)", path);
     }
 
     // If path is NULL because we are accessing a bare file descriptor,
@@ -937,6 +897,17 @@ static int dav_fsync(const char *path, __unused int isdatasync, __unused struct 
 finish:
 
     return ret;
+}
+
+static int dav_flush(const char *path, struct fuse_file_info *info) {
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_flush(NULL path)");
+    }
+    else {
+        log_print(LOG_INFO, "CALLBACK: dav_flush(unconverted path %s)", path);
+    }
+
+    return dav_fsync(path, false, info);
 }
 
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
@@ -1027,15 +998,15 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
 static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
 
-    // We might get a null path if we are writing to a bare file descriptor
+    // We might get a null path if we are reading from a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
     // In this case we continue to do the read.
     if (path == NULL) {
-        log_print(LOG_ERR, "CALLBACK: dav_read(NULL path, %lu+%lu)", (unsigned long) offset, (unsigned long) size);
+        log_print(LOG_INFO, "CALLBACK: dav_read(NULL path, %lu+%lu)", (unsigned long) offset, (unsigned long) size);
     }
     else {
         path = path_cvt(path);
-        log_print(LOG_ERR, "CALLBACK: dav_read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+        log_print(LOG_INFO, "CALLBACK: dav_read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
     }
 
     if ((bytes_read = ldb_filecache_read(info, buf, size, offset)) < 0) {
@@ -1068,12 +1039,10 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
         goto finish;
     }
 
-    // Skip the sync if we are writing to a bare file descriptor
-    if (path != NULL) {
-        if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
-            log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
-            return -EIO;
-        }
+    // Let sync handle the NULL path
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
+        return -EIO;
     }
 
 finish:
@@ -1084,25 +1053,22 @@ finish:
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
-    ne_session *session;
 
     if (path == NULL) {
-        log_print(LOG_INFO, "CALLBACK: dav_truncate(NULL path, %lu)", (unsigned long) size);
+        log_print(LOG_INFO, "CALLBACK: dav_ftruncate(NULL path, %lu)", (unsigned long) size);
     }
     else {
         path = path_cvt(path);
-        log_print(LOG_INFO, "CALLBACK: dav_truncate(%s, %lu)", path, (unsigned long) size);
+        log_print(LOG_INFO, "CALLBACK: dav_ftruncate(%s, %lu)", path, (unsigned long) size);
     }
-
-    if (!(session = session_get(1)))
-        ret = -EIO;
-        goto finish;
 
     if (ldb_filecache_truncate(info, size) < 0) {
         ret = -errno;
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", ret, strerror(ret));
         goto finish;
     }
 
+    // Let sync handle a NULL path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
         ret = -EIO;
@@ -1111,6 +1077,7 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
 finish:
 
+    log_print(LOG_INFO, "dav_ftruncate: ret=%d", ret);
     return ret;
 }
 
@@ -1587,7 +1554,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_create(%s, %04o)", path, mode);
+    log_print(LOG_INFO, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
     info->flags |= O_CREAT | O_TRUNC;
     ret = do_open(path, info);
@@ -1630,10 +1597,11 @@ static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
  * The list of operations which need to handle NULL paths is:
  *   * read, write, flush, release, fsync, readdir, releasedir,
      * fsyncdir, ftruncate, fgetattr and lock
- * We don't implement flush, releasedir, fsyncdir, and lock.
+ * We don't implement releasedir, fsyncdir, and lock.
  */
 
 static struct fuse_operations dav_oper = {
+    .fgetattr     = dav_fgetattr,
     .getattr     = dav_getattr,
     .readdir     = dav_readdir,
     .mknod       = dav_mknod,
@@ -1651,6 +1619,7 @@ static struct fuse_operations dav_oper = {
     .write       = dav_write,
     .release     = dav_release,
     .fsync       = dav_fsync,
+    .flush       = dav_flush,
     .setxattr    = dav_setxattr,
     .getxattr    = dav_getxattr,
     .listxattr   = dav_listxattr,
