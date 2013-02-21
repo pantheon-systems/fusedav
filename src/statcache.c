@@ -151,7 +151,8 @@ int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supple
     supplemental->options = leveldb_options_create();
 
     // Initialize LevelDB's LRU cache.
-    supplemental->lru = leveldb_cache_create_lru(5 * 1048576); // 5MB
+    supplemental->lru = NULL;
+    //supplemental->lru = leveldb_cache_create_lru(5 * 1048576); // 5MB
     leveldb_options_set_cache(supplemental->options, supplemental->lru);
 
     // Create the database if missing.
