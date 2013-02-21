@@ -108,14 +108,13 @@ AC_FUNC_MALLOC
 AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr memchr strchr strcspn])
 
 AC_CHECK_LIB([pthread], [pthread_create])
+AC_CHECK_LIB([jemalloc], [malloc], [:], [AC_MSG_ERROR(jemalloc not found or functional. Install the jemalloc allocator.)], [])
 
 PKG_CHECK_MODULES(SYSTEMD, [ libsystemd-journal ] )
 PKG_CHECK_MODULES(YAML, [ yaml-0.1 ] )
 PKG_CHECK_MODULES(LEVELDB, [ leveldb ])
 PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
-PKG_CHECK_MODULES(TCMALLOC, [ libtcmalloc ])
-TCMALLOC_CFLAGS="-fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free"
 
 # LYNX documentation generation
 AC_ARG_ENABLE(lynx,

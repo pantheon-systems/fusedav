@@ -55,6 +55,7 @@
 #include <ne_uri.h>
 
 #include <fuse.h>
+#include <jemalloc/jemalloc.h>
 
 #include <yaml.h>
 
@@ -1782,6 +1783,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     case KEY_VERSION:
         fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
         fprintf(stderr, "LevelDB version %d.%d\n", leveldb_major_version(), leveldb_minor_version());
+        //malloc_stats_print(NULL, NULL, "g");
         fuse_opt_add_arg(outargs, "--version");
         fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
         exit(0);
