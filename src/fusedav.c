@@ -626,14 +626,13 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 
     assert(info != NULL || path != NULL);
 
-
     if (path != NULL) {
         path = path_cvt(path);
         log_print(LOG_INFO, "CALLBACK: dav_getattr(%s)", path);
         r = get_stat(path, stbuf);
         if (r != 0) {
             log_print(LOG_ERR, "dav_getattr(%s) failed on get_stat", path);
-            goto finish;
+            return r;
         }
         if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
             stbuf->st_mode = S_IFDIR | config->dir_mode;
@@ -670,7 +669,6 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 
     log_print(LOG_DEBUG, "Done: getattr(%s)", path);
 
-finish:
     return r;
 }
 
@@ -789,7 +787,9 @@ static int dav_mkdir(const char *path, mode_t mode) {
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
-    int r = 0;
+    int server_ret = -EIO;
+    int local_ret = -EIO;
+    int ret;
     int fd = -1;
     struct stat st;
     char fn[PATH_MAX], *_from;
@@ -802,14 +802,13 @@ static int dav_rename(const char *from, const char *to) {
     log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
 
     if (!(session = session_get(1))) {
-        r = -EIO;
-        log_print(LOG_WARNING, "dav_rename: failed to get session for %d:%s", fd, from);
+        log_print(LOG_ERR, "dav_rename: failed to get session for %d:%s", fd, from);
         goto finish;
     }
 
-    if ((r = get_stat(from, &st)) < 0) {
-        r = -1;
+    if ((ret = get_stat(from, &st)) < 0) {
         log_print(LOG_ERR, "dav_rename: failed get_stat for %d:%s", fd, from);
+        server_ret = ret;
         goto finish;
     }
 
@@ -818,27 +817,48 @@ static int dav_rename(const char *from, const char *to) {
         from = fn;
     }
 
+    /* ne_move:
+     * succeeds: mv 'from' to 'to', delete 'from'
+     * fails with 404: may be doing the move on an open file, so this may be ok
+     *                 mv 'from' to 'to', delete 'from'
+     * fails, not 404: error, exit
+     */
+    // Do the server side move
     if (ne_move(session, 1, from, to)) {
-        // We allow silent failures because fuse might have done the rename for us under the covers
-        log_print(LOG_INFO, "dav_rename: MOVE failed: %s", ne_get_error(session));
-        ldb_filecache_delete(config->cache, to);
-    }
-    else {
-        entry = stat_cache_value_get(config->cache, from, true);
-        log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
-        if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
-            r = -EIO;
+        const char *errstr = ne_get_error(session);
+        // @TODO This needs to be 404, not 500. Fix when valhalla fix is in!
+        if (strstr(errstr, "500")) {
+            // We allow silent failures because we might have done a rename before the
+            // file ever made it to the server
+            log_print(LOG_INFO, "dav_rename: MOVE failed with 500, recoverable");
+            // Allow the error code -EIO to percolate down, we need to pass the local move
+        }
+        else {
+            log_print(LOG_ERR, "dav_rename: MOVE failed: %s", ne_get_error(session));
             goto finish;
         }
-
-        if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
-            log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
-            ldb_filecache_delete(config->cache, to);
-        }
     }
-    // We always delete from stat cache
-    // @TODO perhaps a cache 'move' as we do for filecache?
+    else {
+        server_ret = 0;
+    }
+
+    /* If the server_side failed, then both the stat_cache and filecache moves need to succeed */
+    entry = stat_cache_value_get(config->cache, from, true);
+    log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
+    if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
+        log_print(LOG_NOTICE, "dav_rename: failed stat cache moving source entry to destination %d:%s", fd, to);
+        // If the local stat_cache move fails, leave the filecache alone so we don't get mixed state
+        goto finish;
+    }
+
     stat_cache_delete(config->cache, from);
+
+    if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
+        log_print(LOG_NOTICE, "dav_rename: No local file cache data to move (or move failed).");
+        ldb_filecache_delete(config->cache, to);
+        goto finish;
+    }
+    local_ret = 0;
 
 finish:
 
@@ -847,7 +867,11 @@ finish:
 
     if (_from) free(_from);
 
-    return r;
+    log_print(LOG_DEBUG, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
+
+    // if either the server move or the local move succeed, we return
+    if (server_ret == 0 || local_ret == 0) return 0;
+    else return server_ret; // error from either get_stat or ne_move
 }
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
@@ -866,10 +890,10 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // pulling the file descriptor is the job of ldb_filecache, we'll have
     // to detect there.
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
-        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
+        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, (path?path:"NULL"));
     }
 
-    log_print(LOG_DEBUG, "END: dav_release: release(%s)", path);
+    log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path?path:"NULL"));
 
     return ret;
 }
@@ -1977,7 +2001,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    // fuse_opt_add_arg(&args, "-o nullpath_ok");
+    // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
 
     log_print(LOG_DEBUG, "Parsed command line.");
 

@@ -487,20 +487,23 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     else {
         // Paranoid. Avoid a potential infinite loop of EAGAINs. Value of max_retries is arbitrary
-        int retries = 0;
-        const int max_retries = 2;
+        unsigned retries = 0;
+        const unsigned max_retries = 2;
         // Get a file descriptor pointing to a guaranteed-fresh file.
         do {
             ++retries;
             ret = ldb_get_fresh_fd(session, cache, cache_path, path, sdata, pdata, flags);
-            if (ret == -EAGAIN) {
-                log_print(LOG_NOTICE, "ldb_filecache_open: Got EAGAIN on %s", path);
+            if (ret == 0) {
+                log_print(LOG_DEBUG, "ldb_filecache_open: success on %s", path);
             }
-            else if (ret < 0) {
+            else if (ret == -EAGAIN && (retries < max_retries)) {
+                log_print(LOG_NOTICE, "ldb_filecache_open: Got EAGAIN on %s; try again", path);
+            }
+            else {
                 log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
                 goto fail;
             }
-        } while (ret == -EAGAIN && retries < max_retries);
+        } while (ret == -EAGAIN);
     }
 
     if (flags & O_RDONLY || flags & O_RDWR) sdata->readable = 1;
@@ -559,6 +562,7 @@ ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t
     log_print(LOG_DEBUG, "ldb_filecache_write: acquiring shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_SH)) {
         log_print(LOG_ERR, "ldb_filecache_write: error acquiring shared file lock");
+        // return 0 since it is the number of bytes written
         return 0;
     }
     log_print(LOG_DEBUG, "ldb_filecache_write: acquired shared file lock on fd %d", sdata->fd);
@@ -583,6 +587,7 @@ finish:
     log_print(LOG_DEBUG, "ldb_filecache_write: releasing shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_UN)) {
         log_print(LOG_ERR, "ldb_filecache_write: error releasing shared file lock");
+        // Since we've already written (or not), just fall through and return ret
     }
     log_print(LOG_DEBUG, "ldb_filecache_write: released shared file lock on fd %d", sdata->fd);
 
@@ -592,7 +597,7 @@ finish:
 
 // close the file
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
-    int ret = 0;
+    int ret = -EBADF;
 
     log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d :: %d).", sdata->fd, sdata->fd);
 
@@ -603,6 +608,7 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
         }
         else {
             log_print(LOG_DEBUG, "ldb_filecache_close: closed fd (%d).", sdata->fd);
+            ret = 0;
         }
     }
     else {
@@ -622,12 +628,7 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 
     assert(sdata);
 
-    if (path == NULL) {
-        log_print(LOG_DEBUG, "ldb_filecache_release: NULL path : %d", sdata->fd);
-    }
-    else {
-        log_print(LOG_DEBUG, "ldb_filecache_release: %s : %d", path, sdata->fd);
-    }
+    log_print(LOG_DEBUG, "ldb_filecache_release: %s : %d", path?path:"NULL", sdata->fd);
 
     // If path is NULL, sync will handle it. Likely sync was already called
     // during immediately preceding flush; in that case, file won't be
@@ -646,12 +647,7 @@ finish:
     // close, even on error
     ret = ldb_filecache_close(sdata);
 
-    if (path == NULL) {
-        log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (NULL path).");
-    }
-    else {
-        log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path);
-    }
+    log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path?path:"NULL");
 
     return ret;
 }
@@ -761,22 +757,17 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     // Write this data to the persistent cache.
     // Update the file cache
     pdata = ldb_filecache_pdata_get(cache, path);
-    // REVIEW: we used to accommodate a NULL pdata, create it and copy sdata->filename into it here.
-    // I believe there is no legitimate path to here with a NULL pdata, so it is now an error.
     if (pdata == NULL) {
-        log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d): pdata is NULL", path, sdata->fd);
+        log_print(LOG_ERR, "ldb_filecache_sync(%s, fd=%d): pdata is NULL", path, sdata->fd);
         goto finish;
     }
     log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d): cachefile=%s", path, sdata->fd, pdata->filename);
 
-    if (do_put) {
-        log_print(LOG_DEBUG, "ldb_filecache_sync: Checking if file (%s) was modified.", path);
-        if (!sdata->modified) {
-            ret = 0;
-            log_print(LOG_DEBUG, "ldb_filecache_sync: not modified");
-            goto finish;
-        }
+    // REVIEW: If !modified, we were updating last_server_update and stat cache when
+    // not doing PUT (falling through if clause), but not updating them if doing PUT (goto finish).
+    // We should do that update always, or never. Which?
 
+    if (do_put && sdata->modified) {
         log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
         if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
             log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
@@ -816,13 +807,8 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         strncpy(pdata->etag, "", 1);
     }
 
-    // Rambling thoughts: we sometimes treat local updates as the same as server updates;
-    // sometimes not. Are we going to get tripped by inconsistencies?
-
-    // REVIEW: is it correct to update last_server_update even if we get here without doing a PUT?
     // Point the persistent cache to the new file content.
     pdata->last_server_update = time(NULL);
-
     ldb_filecache_pdata_set(cache, path, pdata);
 
     // Update stat cache.
@@ -928,7 +914,7 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
     pdata = ldb_filecache_pdata_get(cache, old_path);
 
     if (pdata == NULL) {
-        log_print(LOG_DEBUG, "ldb_filecache_pdata_move: Path %s does not exist.", old_path);
+        log_print(LOG_NOTICE, "ldb_filecache_pdata_move: Path %s does not exist.", old_path);
         goto finish;
     }
 
@@ -943,8 +929,11 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
 
     ldb_filecache_delete(cache, old_path);
 
+    ret = 0;
+
 finish:
-    if (pdata != NULL)
-        free(pdata);
+
+    if (pdata) free(pdata);
+
     return ret;
 }
