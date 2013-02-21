@@ -114,6 +114,8 @@ PKG_CHECK_MODULES(YAML, [ yaml-0.1 ] )
 PKG_CHECK_MODULES(LEVELDB, [ leveldb ])
 PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
+PKG_CHECK_MODULES(TCMALLOC, [ libtcmalloc ])
+TCMALLOC_CFLAGS="-fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free"
 
 # LYNX documentation generation
 AC_ARG_ENABLE(lynx,
