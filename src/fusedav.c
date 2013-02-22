@@ -530,7 +530,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
-        log_print(LOG_DEBUG, "get_stat(%s): returns EIO", path);
+        log_print(LOG_ERR, "get_stat(%s): returns EIO", path);
         return -EIO;
     }
 
@@ -628,10 +628,10 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 
     if (path != NULL) {
         path = path_cvt(path);
-        log_print(LOG_INFO, "CALLBACK: dav_getattr(%s)", path);
+        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path);
         r = get_stat(path, stbuf);
         if (r != 0) {
-            log_print(LOG_ERR, "dav_getattr(%s) failed on get_stat", path);
+            log_print(LOG_DEBUG, "dav_fgetattr(%s) failed on get_stat; %d %s", path, -r, strerror(-r));
             return r;
         }
         if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
@@ -673,6 +673,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 }
 
 static int dav_getattr(const char *path, struct stat *stbuf) {
+    log_print(LOG_INFO, "CALLBACK: dav_getattr( unconverted path %s)", path?path:"NULL");
     return dav_fgetattr(path, stbuf, NULL);
 }
 
@@ -702,7 +703,7 @@ static int dav_unlink(const char *path) {
     }
 
     log_print(LOG_DEBUG, "dav_unlink: calling ldb_filecache_delete on %s", path);
-    if (ldb_filecache_delete(config->cache, path)) {
+    if (ldb_filecache_delete(config->cache, path, true)) {
         log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
     }
 
@@ -855,7 +856,7 @@ static int dav_rename(const char *from, const char *to) {
 
     if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
         log_print(LOG_NOTICE, "dav_rename: No local file cache data to move (or move failed).");
-        ldb_filecache_delete(config->cache, to);
+        ldb_filecache_delete(config->cache, to, true);
         goto finish;
     }
     local_ret = 0;

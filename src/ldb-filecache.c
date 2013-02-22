@@ -245,16 +245,9 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             // to handle pdata NULL and O_TRUNC in a different call. So for now,
             // don't allow EAGAIN on O_TRUNC, but think about fixing later
             if (errno == ENOENT && !(flags & O_TRUNC)) {
-                // delete pdata from cache, we can't trust its values.
-                // We see one site continually failing on the same non-existent cache file.
-                if (ldb_filecache_delete(cache, path) < 0) {
-                    log_print(LOG_ERR, "ldb_get_fresh_fd: ENOENT on fresh/trunc failed to delete filecache entry for %s", path);
-                }
-                else {
-                    // Now that we've gotten rid of pdata
-                    ret = -EAGAIN;
-                    log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
-                }
+                // try again
+                ret = -EAGAIN;
+                log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
             }
             else {
                 log_print(LOG_ERR, "ldb_get_fresh_fd: open on file returns < 0 on \"%s\": errno: %d, %s", path, errno, strerror(errno));
@@ -339,7 +332,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
                     if (errno == ENOENT) {
                         // delete pdata from cache, we can't trust its values.
                         // We see one site continually failing on the same non-existent cache file.
-                        if (ldb_filecache_delete(cache, path) < 0) {
+                        if (ldb_filecache_delete(cache, path, true) < 0) {
                             log_print(LOG_ERR, "ldb_get_fresh_fd: ENOENT on 304 failed to delete filecache entry for %s", path);
                         }
                         else {
@@ -473,6 +466,8 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     // in the cache, so we need to create a new cache file for it (or it has aged
     // out of the cache.) If it is in the cache, we let ldb_get_fresh_fd handle it.
 
+    // @TODO Extend retry logic to the whole if-else, so that if we make
+    // pdata NULL and we have O_TRUNC, we can start all over again at create_file
     pdata = ldb_filecache_pdata_get(cache, path);
     if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
         if ((flags & O_CREAT) && (pdata != NULL)) {
@@ -498,6 +493,15 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
             }
             else if (ret == -EAGAIN && (retries < max_retries)) {
                 log_print(LOG_NOTICE, "ldb_filecache_open: Got EAGAIN on %s; try again", path);
+                if (ldb_filecache_delete(cache, path, true) < 0) {
+                    log_print(LOG_ERR, "ldb_get_fresh_fd: ENOENT on fresh/trunc failed to delete filecache entry for %s, cachefile %s", path, pdata->filename);
+                    goto fail;
+                }
+                else {
+                    // Now that we've gotten rid of cache entry, free pdata
+                    if (pdata) free(pdata);
+                    pdata = NULL;
+                }
             }
             else {
                 log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
@@ -510,7 +514,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
 
     if (sdata->fd >= 0) {
-        log_print(LOG_DEBUG, "ldb_filecache_open: Setting fd to session data structure with fd %d for %s.", sdata->fd, path);
+        log_print(LOG_DEBUG, "ldb_filecache_open: Setting fd to session data structure with fd %d for %s :: %s.", sdata->fd, path, pdata->filename);
         info->fh = (uint64_t) sdata;
         ret = 0;
         goto finish;
@@ -874,7 +878,7 @@ int ldb_filecache_fd(struct fuse_file_info *info) {
 }
 
 // deletes entry from ldb cache
-int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
+int ldb_filecache_delete(ldb_filecache_t *cache, const char *path, bool unlink_cachefile) {
     struct ldb_filecache_pdata *pdata = NULL;
     leveldb_writeoptions_t *options;
     char *key;
@@ -892,10 +896,9 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     leveldb_writeoptions_destroy(options);
     free(key);
 
-    if (pdata) {
+    if (unlink_cachefile && pdata) {
         unlink(pdata->filename);
         log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", pdata->filename);
-        free(pdata);
     }
 
     if (errptr != NULL) {
@@ -903,6 +906,8 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
         free(errptr);
         ret = -1;
     }
+
+    if (pdata) free(pdata);
 
     return ret;
 }
@@ -927,9 +932,12 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
         goto finish;
     }
 
-    ldb_filecache_delete(cache, old_path);
+    // We don't want to unlink the cachefile for 'old' since we use it for 'new'
+    ldb_filecache_delete(cache, old_path, false);
 
     ret = 0;
+
+    log_print(LOG_DEBUG, "ldb_filecache_pdata_move: new cachefile is %s", pdata->filename);
 
 finish:
 
