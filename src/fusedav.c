@@ -173,6 +173,37 @@ static void sigsegv_handler(int signum) {
     kill(getpid(), signum);
 }
 
+static void malloc_stats_output(__unused void *cbopaque, const char *s) {
+    char stripped[256];
+    size_t len;
+
+    len = strlen(s);
+    if (len >= 256) {
+        log_print(LOG_NOTICE, "Skipping line over 256 characters.");
+        return;
+    }
+
+    // Ignore up to one leading space.
+    if (s[0] == '\n')
+        strncpy(stripped, s + 1, len);
+    else
+        strncpy(stripped, s, len);
+
+    // Ignore up to two trailing spaces.
+    if (stripped[len - 2] == '\n')
+        stripped[len - 2] = '\0';
+    if (stripped[len - 1] == '\n')
+        stripped[len - 1] = '\0';
+    stripped[len] = '\0';
+
+    log_print(LOG_NOTICE, "%s", stripped);
+}
+
+static void sigusr2_handler(__unused int signum) {
+    log_print(LOG_NOTICE, "Caught SIGUSR2. Printing status.");
+    malloc_stats_print(malloc_stats_output, NULL, "");
+}
+
 static void path_cvt_tsd_key_init(void) {
     pthread_key_create(&path_cvt_tsd_key, free);
 }
@@ -1837,6 +1868,7 @@ int main(int argc, char *argv[]) {
     int fail = 0;
 
     signal(SIGSEGV, sigsegv_handler);
+    signal(SIGUSR2, sigusr2_handler);
 
     if (ne_sock_init()) {
         log_print(LOG_CRIT, "Failed to set libneon thread-safety locks.");
