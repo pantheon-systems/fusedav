@@ -94,6 +94,35 @@ struct fill_info {
     const char *root;
 };
 
+struct statistics {
+    unsigned chmod;
+    unsigned chown;
+    unsigned create;
+    unsigned fsync;
+    unsigned ftruncate;
+    unsigned getattr;
+    unsigned getxattr;
+    unsigned listxattr;
+    unsigned mkdir;
+    unsigned mknod;
+    unsigned open;
+    unsigned read;
+    unsigned readdir;
+    unsigned release;
+    unsigned removexattr;
+    unsigned rename;
+    unsigned rmdir;
+    unsigned setxattr;
+    unsigned unlink;
+    unsigned utimens;
+    unsigned write;
+};
+
+static struct statistics stats;
+
+#define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
+#define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
+
 // Access with struct fusedav_config *config = fuse_get_context()->private_data;
 struct fusedav_config {
     char *uri;
@@ -202,6 +231,29 @@ static void malloc_stats_output(__unused void *cbopaque, const char *s) {
 static void sigusr2_handler(__unused int signum) {
     log_print(LOG_NOTICE, "Caught SIGUSR2. Printing status.");
     malloc_stats_print(malloc_stats_output, NULL, "");
+
+    log_print(LOG_NOTICE, "Operations:");
+    log_print(LOG_NOTICE, "  chmod:       %u", FETCH(chmod));
+    log_print(LOG_NOTICE, "  chown:       %u", FETCH(chown));
+    log_print(LOG_NOTICE, "  create:      %u", FETCH(create));
+    log_print(LOG_NOTICE, "  fsync:       %u", FETCH(fsync));
+    log_print(LOG_NOTICE, "  ftruncate:   %u", FETCH(ftruncate));
+    log_print(LOG_NOTICE, "  getattr:     %u", FETCH(getattr));
+    log_print(LOG_NOTICE, "  getxattr:    %u", FETCH(getxattr));
+    log_print(LOG_NOTICE, "  listxattr:   %u", FETCH(listxattr));
+    log_print(LOG_NOTICE, "  mkdir:       %u", FETCH(mkdir));
+    log_print(LOG_NOTICE, "  mknod:       %u", FETCH(mknod));
+    log_print(LOG_NOTICE, "  open:        %u", FETCH(open));
+    log_print(LOG_NOTICE, "  read:        %u", FETCH(read));
+    log_print(LOG_NOTICE, "  readdir:     %u", FETCH(readdir));
+    log_print(LOG_NOTICE, "  release:     %u", FETCH(release));
+    log_print(LOG_NOTICE, "  removexattr: %u", FETCH(removexattr));
+    log_print(LOG_NOTICE, "  rename:      %u", FETCH(rename));
+    log_print(LOG_NOTICE, "  rmdir:       %u", FETCH(rmdir));
+    log_print(LOG_NOTICE, "  setxattr:    %u", FETCH(setxattr));
+    log_print(LOG_NOTICE, "  unlink:      %u", FETCH(unlink));
+    log_print(LOG_NOTICE, "  utimens:     %u", FETCH(utimens));
+    log_print(LOG_NOTICE, "  write:       %u", FETCH(write));
 }
 
 static void path_cvt_tsd_key_init(void) {
@@ -483,6 +535,8 @@ static int dav_readdir(
     struct fill_info f;
     int ret;
 
+    BUMP(readdir);
+
     path = path_cvt(path);
 
     log_print(LOG_DEBUG, "CALLBACK: dav_readdir(%s)", path);
@@ -648,6 +702,8 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
 
+    BUMP(getattr);
+
     path = path_cvt(path);
 
     log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
@@ -677,6 +733,8 @@ static int dav_unlink(const char *path) {
     int r;
     struct stat st;
     ne_session *session;
+
+    BUMP(unlink);
 
     path = path_cvt(path);
 
@@ -715,6 +773,8 @@ static int dav_rmdir(const char *path) {
     struct stat st;
     ne_session *session;
 
+    BUMP(rmdir);
+
     path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_rmdir(%s)", path);
@@ -746,6 +806,8 @@ static int dav_mkdir(const char *path, mode_t mode) {
     struct stat_cache_value value;
     char fn[PATH_MAX];
     ne_session *session;
+
+    BUMP(mkdir);
 
     path = path_cvt(path);
 
@@ -789,6 +851,8 @@ static int dav_rename(const char *from, const char *to) {
     struct stat st;
     char fn[PATH_MAX], *_from;
     struct stat_cache_value *entry = NULL;
+
+    BUMP(rename);
 
     from = _from = strdup(path_cvt(from));
     assert(from);
@@ -858,6 +922,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
+    BUMP(release);
+
     path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
@@ -872,6 +938,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 static int dav_fsync(const char *path, __unused int isdatasync, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
+
+    BUMP(fsync);
 
     path = path_cvt(path);
 
@@ -890,6 +958,8 @@ finish:
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+
+    BUMP(mknod);
 
     path = path_cvt(path);
 
@@ -958,6 +1028,8 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
+    BUMP(open);
+
     path = path_cvt(path);
 
     // There are circumstances where we read a write-only file, so if write-only
@@ -974,6 +1046,8 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
 
 static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
+
+    BUMP(read);
 
     path = path_cvt(path);
 
@@ -992,6 +1066,8 @@ finish:
 static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ssize_t bytes_written;
+
+    BUMP(write);
 
     path = path_cvt(path);
 
@@ -1016,6 +1092,8 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
     ne_session *session;
+
+    BUMP(ftruncate);
 
     path = path_cvt(path);
 
@@ -1048,6 +1126,8 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     ne_proppatch_operation ops[2];
     int r = 0;
     char *date;
+
+    BUMP(utimens);
 
     if (config->ignoreutimens) {
         //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
@@ -1151,6 +1231,8 @@ static int dav_listxattr(
     struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     struct listxattr_info l;
+
+    BUMP(listxattr);
 
     if (config->ignorexattr)
         return 0;
@@ -1290,6 +1372,8 @@ static int dav_getxattr(
     ne_propname props[2];
     char dnspace[128], dname[128];
 
+    BUMP(getxattr);
+
     if (config->ignorexattr)
         return -ENOATTR;
 
@@ -1348,6 +1432,8 @@ static int dav_setxattr(
     int r = 0;
     char dnspace[128], dname[128];
     char *value_fixed = NULL;
+
+    BUMP(setxattr);
 
     if (config->ignorexattr)
         return 0;
@@ -1418,6 +1504,8 @@ static int dav_removexattr(const char *path, const char *name) {
     int r = 0;
     char dnspace[128], dname[128];
 
+    BUMP(removexattr);
+
     if (config->ignorexattr)
         return 0;
 
@@ -1469,6 +1557,8 @@ static int dav_chmod(const char *path, mode_t mode) {
     ne_proppatch_operation ops[2];
     int r = 0;
 
+    BUMP(chmod);
+
     // If both file and dir modes are fixed, there is nothing to set.
     if (config->file_mode && config->dir_mode)
         return 0;
@@ -1512,6 +1602,8 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
+    BUMP(create);
+
     path = path_cvt(path);
 
     log_print(LOG_DEBUG, "CALLBACK: dav_create(%s, %04o)", path, mode);
@@ -1536,6 +1628,8 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
 static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+
+    BUMP(chown);
 
     // If the uid and gid are fixed, there is nothing to chown.
     if (config->uid && config->gid)
@@ -1866,6 +1960,9 @@ int main(int argc, char *argv[]) {
     pthread_t lock_thread;
     int lock_thread_running = 0;
     int fail = 0;
+
+    // Initialize the statistics.
+    memset(&stats, 0, sizeof(struct statistics));
 
     signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
