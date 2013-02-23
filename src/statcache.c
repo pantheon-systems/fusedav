@@ -393,22 +393,22 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
 }
 
 static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
+    leveldb_iter_destroy(iter->ldb_iter);
+    leveldb_readoptions_destroy(iter->ldb_options);
     free(iter->key_prefix);
     free(iter);
 }
 
 static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *path_prefix) {
     struct stat_cache_iterator *iter = NULL;
-    leveldb_readoptions_t *options;
 
     iter = malloc(sizeof(struct stat_cache_iterator));
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
     iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
     //log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
-    options = leveldb_readoptions_create();
-    iter->ldb_iter = leveldb_create_iterator(cache, options);
-    leveldb_readoptions_destroy(options);
+    iter->ldb_options = leveldb_readoptions_create();
+    iter->ldb_iter = leveldb_create_iterator(cache, iter->ldb_options);
 
     //log_print(LOG_DEBUG, "checking iterator validity");
 
@@ -435,8 +435,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
 
     // If we've gone beyond the end of the dataset, quit.
     if (!leveldb_iter_valid(iter->ldb_iter)) {
-        leveldb_iter_destroy(iter->ldb_iter);
-        return false;
+        return NULL;
     }
 
     //log_print(LOG_DEBUG, "fetching the key");
@@ -450,7 +449,6 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
     if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
         log_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
-        leveldb_iter_destroy(iter->ldb_iter);
         return NULL;
     }
 
