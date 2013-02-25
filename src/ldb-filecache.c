@@ -472,7 +472,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
         if ((flags & O_CREAT) && (pdata != NULL)) {
             // This will orphan the previous filecache file
-            log_print(LOG_NOTICE, "ldb_filecache_open: creating a file that already has a cache entry: %s", path);
+            log_print(LOG_INFO, "ldb_filecache_open: creating a file that already has a cache entry: %s", path);
         }
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {

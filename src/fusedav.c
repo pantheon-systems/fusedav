@@ -807,6 +807,7 @@ static int dav_rmdir(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char fn[PATH_MAX];
     int r;
+    int has_children;
     struct stat st;
     ne_session *session;
 
@@ -827,12 +828,24 @@ static int dav_rmdir(const char *path) {
 
     snprintf(fn, sizeof(fn), "%s/", path);
 
-    if (ne_delete(session, fn)) {
-        log_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
-        return -ENOENT;
+    // Check to see if it is empty ...
+    // get_stat already called update_directory, which called stat_cache_updated_children
+    // so the stat cache should be up to date. If stat_cache_read_updated_children
+    // returns 0, there were no children, the directory is empty, and we can rmdir
+    has_children = stat_cache_dir_has_children(config->cache, path);
+    if (has_children) {
+        log_print(LOG_WARNING, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
     }
+    else {
 
-    stat_cache_delete(config->cache, path);
+        if (ne_delete(session, fn)) {
+            log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
+            return -ENOENT;
+        }
+        log_print(LOG_INFO, "dav_rmdir: removed(%s)", path);
+
+        stat_cache_delete(config->cache, path);
+    }
 
     return 0;
 }
