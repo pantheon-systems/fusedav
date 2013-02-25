@@ -368,6 +368,8 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
         r = -1;
     }
 
+    log_print(LOG_DEBUG, "stat_cache_delete: exit %s", path);
+
     return r;
 }
 
