@@ -193,6 +193,7 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     key = path2key(path);
 
     options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
     pdata = (struct ldb_filecache_pdata *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
     free(key);

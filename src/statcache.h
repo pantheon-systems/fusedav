@@ -38,6 +38,7 @@ struct stat_cache_supplemental {
 // Used opaquely outside this library.
 struct stat_cache_iterator {
     leveldb_iterator_t *ldb_iter;
+    leveldb_readoptions_t *ldb_options;
     char *key_prefix;
     size_t key_prefix_len;
 };
