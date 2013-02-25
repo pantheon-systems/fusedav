@@ -229,6 +229,8 @@ static void malloc_stats_output(__unused void *cbopaque, const char *s) {
 }
 
 static void sigusr2_handler(__unused int signum) {
+    mallctl("prof.dump", NULL, NULL, NULL, 0);
+
     log_print(LOG_NOTICE, "Caught SIGUSR2. Printing status.");
     malloc_stats_print(malloc_stats_output, NULL, "");
 

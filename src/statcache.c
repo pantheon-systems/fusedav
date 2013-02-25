@@ -197,6 +197,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     log_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
     free(key);
@@ -292,6 +293,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     asprintf(&key, "updated_children:%s", path);
 
     options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
     value = (time_t *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
 
@@ -408,6 +410,7 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
 
     //log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
     iter->ldb_options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(iter->ldb_options, false);
     iter->ldb_iter = leveldb_create_iterator(cache, iter->ldb_options);
 
     //log_print(LOG_DEBUG, "checking iterator validity");
