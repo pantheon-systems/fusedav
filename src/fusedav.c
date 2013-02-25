@@ -902,7 +902,7 @@ static int dav_rename(const char *from, const char *to) {
 
     if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
         log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
-        ldb_filecache_delete(config->cache, to);
+        ldb_filecache_delete(config->cache, to, true);
     }
 
 finish:
