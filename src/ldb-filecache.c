@@ -45,7 +45,7 @@ typedef int fd_t;
 
 // Session data
 struct ldb_filecache_sdata {
-    fd_t fd;
+    fd_t fd; // LOCK_SH for write/truncation; LOCK_EX during PUT
     char filename[PATH_MAX]; // Only used for new replacement files.
     bool readable;
     bool writable;
@@ -328,7 +328,6 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             }
 
             // Create a new temp file and read the file content into it.
-            // @TODO: Set proper flags? Or enforce in fusedav.c?
             if (new_cache_file(cache_path, pdata->filename, &ret_fd) < 0) {
                 log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
                 ne_end_request(req);
@@ -428,14 +427,14 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
 
     if (sdata->fd >= 0) {
-        log_print(LOG_DEBUG, "Setting fd to session data structure with fd %d for %s.", sdata->fd, path);
+        log_print(LOG_DEBUG, "ldb_filecache_open: Setting fd to session data structure with fd %d for %s :: %s.", sdata->fd, path, pdata->filename);
         info->fh = (uint64_t) sdata;
         ret = 0;
         goto finish;
     }
 
 fail:
-    log_print(LOG_ERR, "No valid fd set for path %s. Setting fh structure to NULL.", path);
+    log_print(LOG_ERR, "ldb_filecache_open: No valid fd set for path %s. Setting fh structure to NULL.", path);
     info->fh = (uint64_t) NULL;
 
     if (sdata != NULL)
@@ -464,7 +463,7 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
 finish:
 
     // ret is bytes read, or error
-    log_print(LOG_DEBUG, "Done reading.");
+    log_print(LOG_DEBUG, "Done reading: %d from %d.", ret, sdata->fd);
 
     return ret;
 }
@@ -565,16 +564,11 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     assert(etag);
 
     if (fstat(fd, &st)) {
-        int errnum = errno;
-        char buf[200];
-        char msg[256];
-        char *error;
-
-        error = ne_strerror(errnum, buf, sizeof buf);
-        sprintf(msg, "Could not determine file size: %s", error);
-        ne_set_error(session, msg);
-        return NE_ERROR;
+        log_print(LOG_ERR, "ne_put_return_etag: failed getting file size");
+        goto finish;
     }
+
+    log_print(LOG_DEBUG, "ne_put_return_etag: file size %d", st.st_size);
 
     req = ne_request_create(session, "PUT", path);
 
@@ -587,6 +581,9 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
 
     if (ret != NE_OK) {
         log_print(LOG_WARNING, "ne_put_return_etag: ne_request_dispatch returns error (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+    }
+    else {
+        log_print(LOG_DEBUG, "ne_put_return_etag: ne_request_dispatch succeeds (fd=%d)", fd);
     }
 
     if (ret == NE_OK && ne_get_status(req)->klass != 2) {
@@ -608,6 +605,8 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     }
     ne_request_destroy(req);
 
+finish:
+
     return ret;
 }
 
@@ -625,7 +624,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_pdata *pdata = NULL;
     ne_session *session;
     struct stat_cache_value value;
-    struct stat cache_file_stat;
 
     assert(sdata);
 
@@ -633,7 +631,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     log_print(LOG_DEBUG, "Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
-        // errno = EBADF; why?
         ret = 0;
         log_print(LOG_DEBUG, "ldb_filecache_sync: not writable");
         goto finish;
@@ -710,9 +707,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     // Point the persistent cache to the new file content.
     pdata->last_server_update = time(NULL);
-
-    fstat(sdata->fd, &cache_file_stat);
-    log_print(LOG_DEBUG, "ldb_filecache_sync: Updating file cache for %s : %s (size %lu)", path, pdata->filename, cache_file_stat.st_size);
     ldb_filecache_pdata_set(cache, path, pdata);
 
     // Update stat cache.
@@ -768,7 +762,7 @@ int ldb_filecache_fd(ldb_filecache_t *cache, const char *path) {
 }
 
 // deletes entry from ldb cache
-int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
+int ldb_filecache_delete(ldb_filecache_t *cache, const char *path, bool unlink_cachefile) {
     struct ldb_filecache_pdata *pdata = NULL;
     leveldb_writeoptions_t *options;
     char *key;
@@ -786,10 +780,9 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
     leveldb_writeoptions_destroy(options);
     free(key);
 
-    if (pdata) {
+    if (unlink_cachefile && pdata) {
         unlink(pdata->filename);
         log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", pdata->filename);
-        free(pdata);
     }
 
     if (errptr != NULL) {
@@ -797,6 +790,8 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path) {
         free(errptr);
         ret = -1;
     }
+
+    if (pdata) free(pdata);
 
     return ret;
 }
@@ -808,7 +803,7 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
     pdata = ldb_filecache_pdata_get(cache, old_path);
 
     if (pdata == NULL) {
-        log_print(LOG_DEBUG, "ldb_filecache_pdata_move: Path %s does not exist.", old_path);
+        log_print(LOG_NOTICE, "ldb_filecache_pdata_move: Path %s does not exist.", old_path);
         goto finish;
     }
 
@@ -821,10 +816,16 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
         goto finish;
     }
 
-    ldb_filecache_delete(cache, old_path);
+    // We don't want to unlink the cachefile for 'old' since we use it for 'new'
+    ldb_filecache_delete(cache, old_path, false);
+
+    ret = 0;
+
+    log_print(LOG_DEBUG, "ldb_filecache_pdata_move: new cachefile is %s", pdata->filename);
 
 finish:
-    if (pdata != NULL)
-        free(pdata);
+
+    if (pdata) free(pdata);
+
     return ret;
 }
