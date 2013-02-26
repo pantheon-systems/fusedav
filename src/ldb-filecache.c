@@ -220,11 +220,15 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
 
 // Get a file descriptor pointing to the latest full copy of the file.
 static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
-        const char *cache_path, const char *path, struct ldb_filecache_pdata *pdata, int flags) {
+        const char *cache_path, const char *path, struct ldb_filecache_pdata **pdatap, int flags) {
     fd_t ret_fd = -EBADFD;
     int code;
     ne_request *req = NULL;
     int ne_ret;
+    struct ldb_filecache_pdata *pdata;
+
+    assert(pdatap);
+    pdata = *pdatap;
 
     if (pdata != NULL)
         log_print(LOG_DEBUG, "ldb_get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
@@ -302,7 +306,8 @@ static fd_t ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             const char *etag = NULL;
 
             if (pdata == NULL) {
-                pdata = malloc(sizeof(struct ldb_filecache_pdata));
+                *pdatap = malloc(sizeof(struct ldb_filecache_pdata));
+                pdata = *pdatap;
                 if (pdata == NULL) {
                     log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
                     ne_end_request(req);
@@ -416,7 +421,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     else {
         // Get a file descriptor pointing to a guaranteed-fresh file.
-        sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, pdata, flags);
+        sdata->fd = ldb_get_fresh_fd(session, cache, cache_path, path, &pdata, flags);
         if (sdata->fd < 0) {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
             ret = sdata->fd;
@@ -441,10 +446,10 @@ fail:
     if (sdata != NULL)
         free(sdata);
 
+finish:
     if (pdata != NULL)
         free(pdata);
 
-finish:
     return ret;
 }
 
