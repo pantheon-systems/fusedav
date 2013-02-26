@@ -540,8 +540,7 @@ static int dav_readdir(
     BUMP(readdir);
 
     path = path_cvt(path);
-
-    log_print(LOG_DEBUG, "CALLBACK: dav_readdir(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_readdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -610,7 +609,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
-        log_print(LOG_DEBUG, "get_stat(%s): returns EIO", path);
+        log_print(LOG_ERR, "get_stat(%s): returns EIO", path);
         return -EIO;
     }
 
@@ -758,7 +757,7 @@ static int dav_unlink(const char *path) {
     }
 
     log_print(LOG_DEBUG, "dav_unlink: calling ldb_filecache_delete on %s", path);
-    if (ldb_filecache_delete(config->cache, path)) {
+    if (ldb_filecache_delete(config->cache, path, true)) {
         log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
     }
 
@@ -798,7 +797,6 @@ static int dav_rmdir(const char *path) {
     }
 
     stat_cache_delete(config->cache, path);
-    stat_cache_delete_parent(config->cache, path);
 
     return 0;
 }
@@ -904,7 +902,7 @@ static int dav_rename(const char *from, const char *to) {
 
     if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
         log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
-        ldb_filecache_delete(config->cache, to);
+        ldb_filecache_delete(config->cache, to, true);
     }
 
 finish:
@@ -937,7 +935,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     return ret;
 }
 
-static int dav_fsync(const char *path, __unused int isdatasync, __unused struct fuse_file_info *info) {
+static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
@@ -965,7 +963,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_mknod(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_mknod(%s)", path);
 
     /*
     if (!(session = session_get(1)))
@@ -1093,20 +1091,16 @@ finish:
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
-    ne_session *session;
 
     BUMP(ftruncate);
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_truncate(%s, %lu)", path, (unsigned long) size);
-
-    if (!(session = session_get(1)))
-        ret = -EIO;
-        goto finish;
+    log_print(LOG_INFO, "CALLBACK: dav_truncate(%s, %lu)", path, (unsigned long) size);
 
     if (ldb_filecache_truncate(info, size) < 0) {
         ret = -errno;
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", ret, strerror(ret));
         goto finish;
     }
 
@@ -1118,6 +1112,7 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
 finish:
 
+    log_print(LOG_DEBUG, "dav_ftruncate: ret=%d", ret);
     return ret;
 }
 
@@ -1140,7 +1135,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
+    log_print(LOG_INFO, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
@@ -1608,7 +1603,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_create(%s, %04o)", path, mode);
+    log_print(LOG_INFO, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
     info->flags |= O_CREAT | O_TRUNC;
     ret = do_open(path, info);
