@@ -493,7 +493,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         // Get a file descriptor pointing to a guaranteed-fresh file.
         do {
             ++retries;
-            ret = ldb_get_fresh_fd(session, cache, cache_path, path, sdata, pdata, flags);
+            ret = ldb_get_fresh_fd(session, cache, cache_path, path, sdata, &pdata, flags);
             if (ret == 0) {
                 log_print(LOG_DEBUG, "ldb_filecache_open: success on %s", path);
             }
