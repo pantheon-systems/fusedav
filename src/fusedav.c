@@ -925,11 +925,10 @@ static int dav_rename(const char *from, const char *to) {
     // Do the server side move
     if (ne_move(session, 1, from, to)) {
         const char *errstr = ne_get_error(session);
-        // @TODO This needs to be 404, not 500. Fix when valhalla fix is in!
-        if (strstr(errstr, "500")) {
+        if (strstr(errstr, "404") || strstr(errstr, "500")) {
             // We allow silent failures because we might have done a rename before the
             // file ever made it to the server
-            log_print(LOG_INFO, "dav_rename: MOVE failed with 500, recoverable");
+            log_print(LOG_INFO, "dav_rename: MOVE failed with 404, recoverable: %s", errstr);
             // Allow the error code -EIO to percolate down, we need to pass the local move
         }
         else {
