@@ -172,7 +172,9 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     }
     memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
     strncpy(pdata->filename, sdata->filename, sizeof(pdata->filename));
-    pdata->last_server_update = time(NULL);
+
+    // The local copy currently trumps the server one, no matter how old.
+    pdata->last_server_update = 0;
     log_print(LOG_DEBUG, "create_file: Updating file cache for %d : %s : %s : timestamp %ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
     ldb_filecache_pdata_set(cache, path, pdata);
     free(pdata);
@@ -239,7 +241,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
     // For O_TRUNC, we just want to open a truncated cache file and not bother getting a copy from
     // the server.
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
-    if (pdata != NULL && ( (flags & O_TRUNC) || ((time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
+    if (pdata != NULL && ( (flags & O_TRUNC) || (pdata->last_server_update == 0 || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
         log_print(LOG_DEBUG, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
 
         // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
@@ -773,10 +775,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     }
     log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d): cachefile=%s", path, sdata->fd, pdata->filename);
 
-    // REVIEW: If !modified, we were updating last_server_update and stat cache when
-    // not doing PUT (falling through if clause), but not updating them if doing PUT (goto finish).
-    // We should do that update always, or never. Which?
-
     if (do_put && sdata->modified) {
         log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
         if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
@@ -811,14 +809,17 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
         // If the PUT succeeded, the file isn't locally modified.
         sdata->modified = false;
+        pdata->last_server_update = time(NULL);
     }
     else {
         // If we don't PUT the file, we don't have an etag, so zero it out
         strncpy(pdata->etag, "", 1);
+
+        // The local copy currently trumps the server one, no matter how old.
+        pdata->last_server_update = 0;
     }
 
     // Point the persistent cache to the new file content.
-    pdata->last_server_update = time(NULL);
     ldb_filecache_pdata_set(cache, path, pdata);
 
     // Update stat cache.
@@ -928,8 +929,6 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
         log_print(LOG_NOTICE, "ldb_filecache_pdata_move: Path %s does not exist.", old_path);
         goto finish;
     }
-
-    pdata->last_server_update = time(NULL);
 
     log_print(LOG_DEBUG, "ldb_filecache_pdata_move: Update last_server_update on %s: timestamp: %ul", pdata->filename, pdata->last_server_update);
 
