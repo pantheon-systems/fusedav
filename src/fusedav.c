@@ -808,8 +808,8 @@ static int dav_unlink(const char *path) {
 static int dav_rmdir(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char fn[PATH_MAX];
-    int r;
-    int has_children;
+    int ret;
+    bool has_child;
     struct stat st;
     ne_session *session;
 
@@ -824,9 +824,10 @@ static int dav_rmdir(const char *path) {
         return -EIO;
     }
 
-    if ((r = get_stat(path, &st)) < 0) {
-        log_print(LOG_WARNING, "dav_rmdir(%s): failed on get_stat: %d %s", path, r, strerror(-r));
-        return r;
+    ret = get_stat(path, &st);
+    if (ret < 0) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed on get_stat: %d %s", path, ret, strerror(-ret));
+        return ret;
     }
 
     if (!S_ISDIR(st.st_mode)) {
@@ -841,26 +842,19 @@ static int dav_rmdir(const char *path) {
     // Check to see if it is empty ...
     // get_stat already called update_directory, which called stat_cache_updated_children
     // so the stat cache should be up to date.
-    // REVIEW: stat_cache_dir_has_child is just an abbreviated version of
-    // stat_cache_enumerate. We could call the latter instead. It just means
-    // we would iterate over all items in the directory, when all we need to
-    // know is that there is just one. But it does avoid the need for this
-    // specialty function. Or if iterating for just one item is too heavy,
-    // we could find an alternative.
-    has_children = stat_cache_dir_has_child(config->cache, path);
-    if (has_children) {
+    has_child = stat_cache_dir_has_child(config->cache, path);
+    if (has_child) {
         log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
         return -ENOTEMPTY;
     }
-    else {
-        if (ne_delete(session, fn)) {
-            log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
-            return -ENOENT;
-        }
-        log_print(LOG_INFO, "dav_rmdir: removed(%s)", path);
 
-        stat_cache_delete(config->cache, path);
+    if (ne_delete(session, fn)) {
+        log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
+        return -ENOENT;
     }
+    log_print(LOG_INFO, "dav_rmdir: removed(%s)", path);
+
+    stat_cache_delete(config->cache, path);
 
     return 0;
 }
