@@ -808,7 +808,8 @@ static int dav_unlink(const char *path) {
 static int dav_rmdir(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char fn[PATH_MAX];
-    int r;
+    int ret;
+    bool has_child;
     struct stat st;
     ne_session *session;
 
@@ -818,21 +819,40 @@ static int dav_rmdir(const char *path) {
 
     log_print(LOG_INFO, "CALLBACK: dav_rmdir(%s)", path);
 
-    if (!(session = session_get(1)))
+    if (!(session = session_get(1))) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed to get session", path);
         return -EIO;
+    }
 
-    if ((r = get_stat(path, &st)) < 0)
-        return r;
+    ret = get_stat(path, &st);
+    if (ret < 0) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed on get_stat: %d %s", path, ret, strerror(-ret));
+        return ret;
+    }
 
-    if (!S_ISDIR(st.st_mode))
+    if (!S_ISDIR(st.st_mode)) {
+        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Not a directory", path);
         return -ENOTDIR;
+    }
 
+    // The slash should force it to find entries in the directory after the slash, and
+    // not the directory itself
     snprintf(fn, sizeof(fn), "%s/", path);
 
+    // Check to see if it is empty ...
+    // get_stat already called update_directory, which called stat_cache_updated_children
+    // so the stat cache should be up to date.
+    has_child = stat_cache_dir_has_child(config->cache, path);
+    if (has_child) {
+        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        return -ENOTEMPTY;
+    }
+
     if (ne_delete(session, fn)) {
-        log_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
+        log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
         return -ENOENT;
     }
+    log_print(LOG_INFO, "dav_rmdir: removed(%s)", path);
 
     stat_cache_delete(config->cache, path);
 
