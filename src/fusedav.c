@@ -229,6 +229,8 @@ static void malloc_stats_output(__unused void *cbopaque, const char *s) {
 }
 
 static void sigusr2_handler(__unused int signum) {
+    mallctl("prof.dump", NULL, NULL, NULL, 0);
+
     log_print(LOG_NOTICE, "Caught SIGUSR2. Printing status.");
     malloc_stats_print(malloc_stats_output, NULL, "");
 
@@ -817,27 +819,40 @@ static int dav_rmdir(const char *path) {
 
     log_print(LOG_INFO, "CALLBACK: dav_rmdir(%s)", path);
 
-    if (!(session = session_get(1)))
+    if (!(session = session_get(1))) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed to get session", path);
         return -EIO;
+    }
 
-    if ((r = get_stat(path, &st)) < 0)
+    if ((r = get_stat(path, &st)) < 0) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed on get_stat: %d %s", path, r, strerror(-r));
         return r;
+    }
 
-    if (!S_ISDIR(st.st_mode))
+    if (!S_ISDIR(st.st_mode)) {
+        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Not a directory", path);
         return -ENOTDIR;
+    }
 
+    // The slash should force it to find entries in the directory after the slash, and
+    // not the directory itself
     snprintf(fn, sizeof(fn), "%s/", path);
 
     // Check to see if it is empty ...
     // get_stat already called update_directory, which called stat_cache_updated_children
-    // so the stat cache should be up to date. If stat_cache_read_updated_children
-    // returns 0, there were no children, the directory is empty, and we can rmdir
-    has_children = stat_cache_dir_has_children(config->cache, path);
+    // so the stat cache should be up to date.
+    // REVIEW: stat_cache_dir_has_child is just an abbreviated version of
+    // stat_cache_enumerate. We could call the latter instead. It just means
+    // we would iterate over all items in the directory, when all we need to
+    // know is that there is just one. But it does avoid the need for this
+    // specialty function. Or if iterating for just one item is too heavy,
+    // we could find an alternative.
+    has_children = stat_cache_dir_has_child(config->cache, path);
     if (has_children) {
-        log_print(LOG_WARNING, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        return -ENOTEMPTY;
     }
     else {
-
         if (ne_delete(session, fn)) {
             log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
             return -ENOENT;

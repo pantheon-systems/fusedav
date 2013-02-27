@@ -38,6 +38,7 @@ struct stat_cache_supplemental {
 // Used opaquely outside this library.
 struct stat_cache_iterator {
     leveldb_iterator_t *ldb_iter;
+    leveldb_readoptions_t *ldb_options;
     char *key_prefix;
     size_t key_prefix_len;
 };
@@ -68,6 +69,6 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
 int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned int minimum_local_generation);
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
-bool stat_cache_dir_has_children(stat_cache_t *cache, const char *path);
+bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 
 #endif

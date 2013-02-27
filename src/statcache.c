@@ -197,6 +197,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     log_print(LOG_DEBUG, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
     value = (struct stat_cache_value *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
     free(key);
@@ -292,6 +293,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     asprintf(&key, "updated_children:%s", path);
 
     options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
     value = (time_t *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
 
@@ -395,22 +397,23 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
 }
 
 static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
+    leveldb_iter_destroy(iter->ldb_iter);
+    leveldb_readoptions_destroy(iter->ldb_options);
     free(iter->key_prefix);
     free(iter);
 }
 
 static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *path_prefix) {
     struct stat_cache_iterator *iter = NULL;
-    leveldb_readoptions_t *options;
 
     iter = malloc(sizeof(struct stat_cache_iterator));
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
     iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
     //log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
-    options = leveldb_readoptions_create();
-    iter->ldb_iter = leveldb_create_iterator(cache, options);
-    leveldb_readoptions_destroy(options);
+    iter->ldb_options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(iter->ldb_options, false);
+    iter->ldb_iter = leveldb_create_iterator(cache, iter->ldb_options);
 
     //log_print(LOG_DEBUG, "checking iterator validity");
 
@@ -437,8 +440,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
 
     // If we've gone beyond the end of the dataset, quit.
     if (!leveldb_iter_valid(iter->ldb_iter)) {
-        leveldb_iter_destroy(iter->ldb_iter);
-        return false;
+        return NULL;
     }
 
     //log_print(LOG_DEBUG, "fetching the key");
@@ -452,7 +454,6 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
     if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
         log_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
-        leveldb_iter_destroy(iter->ldb_iter);
         return NULL;
     }
 
@@ -555,7 +556,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     return 0;
 }
 
-bool stat_cache_dir_has_children(stat_cache_t *cache, const char *path) {
+bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     bool has_children = false;
