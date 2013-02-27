@@ -567,6 +567,7 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     if ((entry = stat_cache_iter_current(iter))) {
         has_children = true;
         log_print(LOG_INFO, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
+        free(entry);
     }
     stat_cache_iterator_free(iter);
 
