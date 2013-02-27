@@ -652,7 +652,7 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 
     log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
 
-     ret = 0;
+    ret = 0;
 
 finish:
 
