@@ -27,6 +27,7 @@
 #define STAT_CACHE_NO_DATA 1
 
 #define STAT_CACHE_NEGATIVE_TTL 3
+#define CACHE_TIMEOUT 3
 
 typedef leveldb_t stat_cache_t;
 
@@ -38,6 +39,7 @@ struct stat_cache_supplemental {
 // Used opaquely outside this library.
 struct stat_cache_iterator {
     leveldb_iterator_t *ldb_iter;
+    leveldb_readoptions_t *ldb_options;
     char *key_prefix;
     size_t key_prefix_len;
 };
@@ -65,9 +67,10 @@ void stat_cache_value_free(struct stat_cache_value *value);
 
 int stat_cache_delete(stat_cache_t *cache, const char* path);
 int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
-int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned int minimum_local_generation);
+int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation);
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
-void stat_cache_prune(stat_cache_t *cache, const char *cache_path);
+void stat_cache_prune(stat_cache_t *cache);
+bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 
 #endif

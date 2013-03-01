@@ -55,6 +55,7 @@
 #include <ne_uri.h>
 
 #include <fuse.h>
+#include <jemalloc/jemalloc.h>
 
 #include <yaml.h>
 
@@ -95,6 +96,35 @@ struct fill_info {
     fuse_fill_dir_t filler;
     const char *root;
 };
+
+struct statistics {
+    unsigned chmod;
+    unsigned chown;
+    unsigned create;
+    unsigned fsync;
+    unsigned ftruncate;
+    unsigned getattr;
+    unsigned getxattr;
+    unsigned listxattr;
+    unsigned mkdir;
+    unsigned mknod;
+    unsigned open;
+    unsigned read;
+    unsigned readdir;
+    unsigned release;
+    unsigned removexattr;
+    unsigned rename;
+    unsigned rmdir;
+    unsigned setxattr;
+    unsigned unlink;
+    unsigned utimens;
+    unsigned write;
+};
+
+static struct statistics stats;
+
+#define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
+#define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
 
 // Access with struct fusedav_config *config = fuse_get_context()->private_data;
 struct fusedav_config {
@@ -173,6 +203,62 @@ static void sigsegv_handler(int signum) {
     log_print(LOG_CRIT, "Segmentation fault.");
     signal(signum, SIG_DFL);
     kill(getpid(), signum);
+}
+
+static void malloc_stats_output(__unused void *cbopaque, const char *s) {
+    char stripped[256];
+    size_t len;
+
+    len = strlen(s);
+    if (len >= 256) {
+        log_print(LOG_NOTICE, "Skipping line over 256 characters.");
+        return;
+    }
+
+    // Ignore up to one leading space.
+    if (s[0] == '\n')
+        strncpy(stripped, s + 1, len);
+    else
+        strncpy(stripped, s, len);
+
+    // Ignore up to two trailing spaces.
+    if (stripped[len - 2] == '\n')
+        stripped[len - 2] = '\0';
+    if (stripped[len - 1] == '\n')
+        stripped[len - 1] = '\0';
+    stripped[len] = '\0';
+
+    log_print(LOG_NOTICE, "%s", stripped);
+}
+
+static void sigusr2_handler(__unused int signum) {
+    mallctl("prof.dump", NULL, NULL, NULL, 0);
+
+    log_print(LOG_NOTICE, "Caught SIGUSR2. Printing status.");
+    malloc_stats_print(malloc_stats_output, NULL, "");
+
+    log_print(LOG_NOTICE, "Operations:");
+    log_print(LOG_NOTICE, "  chmod:       %u", FETCH(chmod));
+    log_print(LOG_NOTICE, "  chown:       %u", FETCH(chown));
+    log_print(LOG_NOTICE, "  create:      %u", FETCH(create));
+    log_print(LOG_NOTICE, "  fsync:       %u", FETCH(fsync));
+    log_print(LOG_NOTICE, "  ftruncate:   %u", FETCH(ftruncate));
+    log_print(LOG_NOTICE, "  getattr:     %u", FETCH(getattr));
+    log_print(LOG_NOTICE, "  getxattr:    %u", FETCH(getxattr));
+    log_print(LOG_NOTICE, "  listxattr:   %u", FETCH(listxattr));
+    log_print(LOG_NOTICE, "  mkdir:       %u", FETCH(mkdir));
+    log_print(LOG_NOTICE, "  mknod:       %u", FETCH(mknod));
+    log_print(LOG_NOTICE, "  open:        %u", FETCH(open));
+    log_print(LOG_NOTICE, "  read:        %u", FETCH(read));
+    log_print(LOG_NOTICE, "  readdir:     %u", FETCH(readdir));
+    log_print(LOG_NOTICE, "  release:     %u", FETCH(release));
+    log_print(LOG_NOTICE, "  removexattr: %u", FETCH(removexattr));
+    log_print(LOG_NOTICE, "  rename:      %u", FETCH(rename));
+    log_print(LOG_NOTICE, "  rmdir:       %u", FETCH(rmdir));
+    log_print(LOG_NOTICE, "  setxattr:    %u", FETCH(setxattr));
+    log_print(LOG_NOTICE, "  unlink:      %u", FETCH(unlink));
+    log_print(LOG_NOTICE, "  utimens:     %u", FETCH(utimens));
+    log_print(LOG_NOTICE, "  write:       %u", FETCH(write));
 }
 
 static void path_cvt_tsd_key_init(void) {
@@ -432,6 +518,28 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result != NE_OK) {
             log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
+            /* REVIEW:
+             * Here's the scenario:
+             * mkdir a/b/c/d/e/f/g
+             * rmdir a/b/c/d  (with the pre-fixed rmdir)
+             * mkdir a/b/c/d/e/f/g
+             * ls a/b/c/d/e/f/g -> Operation not permitted
+             *
+             * /a/b/c/d gets made, because it didn't exist
+             * /a/b/c/d/e doesn't get made, because it's in the cache
+             * /a/b/c/d/e/f fails when it tries to update parent, and server
+             * returns a 404.
+             *
+             * if I include stat_cache_delete_parent, then the next
+             * mkdir a/b/c/d/e/f/g and
+             * ls a/b/c/d/e/f/g
+             * will work.
+             *
+             * Maybe if, with a fixed rmdir and this situation will only come up
+             * after calling stat_cache_delete_older and calling stat_cache_prune or some equivalent
+             * after stat_cache_delete_older will prevent the issue from occurring.
+             */
+            stat_cache_delete_parent(config->cache, path);
             return -ENOENT;
         }
         stat_cache_delete_older(config->cache, path, min_generation);
@@ -454,9 +562,19 @@ static int dav_readdir(
     struct fill_info f;
     int ret;
 
-    path = path_cvt(path);
+    BUMP(readdir);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_readdir(%s)", path);
+    // We might get a null path if we are accessing a bare file descriptor
+    // (we have unlinked the path but kept the file descriptor open)
+    // Since it's a directory name, this is unexpected. While we can imagine
+    // a scenario, we won't go out of our way to handle it. Exit with an error.
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_readdir(NULL path)");
+        return -1;
+    }
+
+    path = path_cvt(path);
+    log_print(LOG_INFO, "CALLBACK: dav_readdir(%s)", path);
 
     f.buf = buf;
     f.filler = filler;
@@ -525,7 +643,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
-        log_print(LOG_DEBUG, "get_stat(%s): returns EIO", path);
+        log_print(LOG_ERR, "get_stat(%s): returns EIO", path);
         return -EIO;
     }
 
@@ -615,14 +733,42 @@ static int get_stat(const char *path, struct stat *stbuf) {
     return -ENOENT;
 }
 
-static int dav_getattr(const char *path, struct stat *stbuf) {
+static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
 
-    path = path_cvt(path);
+    BUMP(getattr);
 
-    log_print(LOG_DEBUG, "CALLBACK: getattr(%s)", path);
-    r = get_stat(path, stbuf);
+    assert(info != NULL || path != NULL);
+
+    if (path != NULL) {
+        path = path_cvt(path);
+        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path);
+        r = get_stat(path, stbuf);
+        if (r != 0) {
+            log_print(LOG_DEBUG, "dav_fgetattr(%s) failed on get_stat; %d %s", path, -r, strerror(-r));
+            return r;
+        }
+        if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
+            stbuf->st_mode = S_IFDIR | config->dir_mode;
+    }
+    else {
+        // Fill in generic values
+        int fd;
+        fd = ldb_filecache_fd(info);
+        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(NULL path)");
+        stbuf->st_mode = 0666 | S_IFREG;
+        stbuf->st_nlink = 1;
+        stbuf->st_size = lseek(fd, 0, SEEK_END);
+        stbuf->st_atime = time(NULL);
+        stbuf->st_mtime = stbuf->st_atime;
+        stbuf->st_ctime = stbuf->st_atime;
+        stbuf->st_blksize = 0;
+        stbuf->st_blocks = 8;
+        stbuf->st_uid = getuid();
+        stbuf->st_gid = getgid();
+        r = 0;
+    }
 
     // Zero-out unused nanosecond fields.
     stbuf->st_atim.tv_nsec = 0;
@@ -633,8 +779,6 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         stbuf->st_uid = config->uid;
     if (config->gid)
         stbuf->st_gid = config->gid;
-    if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
-        stbuf->st_mode = S_IFDIR | config->dir_mode;
     if (S_ISREG(stbuf->st_mode) && config->file_mode)
         stbuf->st_mode = S_IFREG | config->file_mode;
 
@@ -643,11 +787,18 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     return r;
 }
 
+static int dav_getattr(const char *path, struct stat *stbuf) {
+    log_print(LOG_INFO, "CALLBACK: dav_getattr( unconverted path %s)", path?path:"NULL");
+    return dav_fgetattr(path, stbuf, NULL);
+}
+
 static int dav_unlink(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
     struct stat st;
     ne_session *session;
+
+    BUMP(unlink);
 
     path = path_cvt(path);
 
@@ -669,7 +820,7 @@ static int dav_unlink(const char *path) {
     }
 
     log_print(LOG_DEBUG, "dav_unlink: calling ldb_filecache_delete on %s", path);
-    if (ldb_filecache_delete(config->cache, path)) {
+    if (ldb_filecache_delete(config->cache, path, true)) {
         log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
     }
 
@@ -682,33 +833,66 @@ static int dav_unlink(const char *path) {
 static int dav_rmdir(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char fn[PATH_MAX];
-    int r;
+    char *parent_path;
+    char *nepp;
+    int ret;
+    int is_dir = 0;
+    bool has_child;
     struct stat st;
     ne_session *session;
+
+    BUMP(rmdir);
 
     path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_rmdir(%s)", path);
 
-    if (!(session = session_get(1)))
+    if (!(session = session_get(1))) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed to get session", path);
         return -EIO;
-
-    if ((r = get_stat(path, &st)) < 0)
-        return r;
-
-    if (!S_ISDIR(st.st_mode))
-        return -ENOTDIR;
-
-    snprintf(fn, sizeof(fn), "%s/", path);
-
-    if (ne_delete(session, fn)) {
-        log_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
-        return -ENOENT;
     }
 
+    ret = get_stat(path, &st);
+    if (ret < 0) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed on get_stat: %d %s", path, ret, strerror(-ret));
+        return ret;
+    }
+
+    if (!S_ISDIR(st.st_mode)) {
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Not a directory", path);
+        return -ENOTDIR;
+    }
+
+    // The slash should force it to find entries in the directory after the slash, and
+    // not the directory itself
+    snprintf(fn, sizeof(fn), "%s/", path);
+
+    // Check to see if it is empty ...
+    // get_stat already called update_directory, which called stat_cache_updated_children
+    // so the stat cache should be up to date.
+    has_child = stat_cache_dir_has_child(config->cache, path);
+    if (has_child) {
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        return -ENOTEMPTY;
+    }
+
+    if (ne_delete(session, fn)) {
+        log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
+        return -ENOENT;
+    }
+    log_print(LOG_DEBUG, "dav_rmdir: removed(%s)", path);
+
     stat_cache_delete(config->cache, path);
-    // JB. Seems incorrect
-    // stat_cache_delete_parent(config->cache, path);
+
+    /* REVIEW:
+     * this is the part of stat_cache_delete_parent which no longer was happening.
+     * Is it correct and useful to include it here?
+     */
+    // Update children entry for parent path
+    nepp = ne_path_parent(path);
+    parent_path = strip_trailing_slash(nepp, &is_dir);
+    stat_cache_updated_children(config->cache, parent_path, time(NULL) - CACHE_TIMEOUT - 1);
+    free(nepp);
 
     return 0;
 }
@@ -718,6 +902,8 @@ static int dav_mkdir(const char *path, mode_t mode) {
     struct stat_cache_value value;
     char fn[PATH_MAX];
     ne_session *session;
+
+    BUMP(mkdir);
 
     path = path_cvt(path);
 
@@ -756,11 +942,15 @@ static int dav_mkdir(const char *path, mode_t mode) {
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
-    int r = 0;
-    int fd;
+    int server_ret = -EIO;
+    int local_ret = -EIO;
+    int ret;
+    int fd = -1;
     struct stat st;
     char fn[PATH_MAX], *_from;
     struct stat_cache_value *entry = NULL;
+
+    BUMP(rename);
 
     from = _from = strdup(path_cvt(from));
     assert(from);
@@ -768,92 +958,121 @@ static int dav_rename(const char *from, const char *to) {
 
     log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
 
-    fd = ldb_filecache_fd(config->cache, from);
-    if (fd < 0) {
-        log_print(LOG_DEBUG, "dav_rename: no current cache file for \"%s\": errno: %d, %s", from, errno, strerror(errno));
-    }
-    else {
-        log_print(LOG_DEBUG, "dav_rename: acquiring shared file lock on fd %d:%s", fd, from);
-        if (flock(fd, LOCK_SH)) {
-            log_print(LOG_WARNING, "dav_rename: error acquiring shared file lock on fd %d:%s", fd, from);
-        }
-        log_print(LOG_DEBUG, "dav_rename: acquired shared file lock on fd %d", fd);
-    }
-
     if (!(session = session_get(1))) {
-        r = -EIO;
-        log_print(LOG_WARNING, "dav_rename: failed to get session for %d:%s", fd, from);
+        log_print(LOG_ERR, "dav_rename: failed to get session for %d:%s", fd, from);
         goto finish;
     }
 
-    if ((r = get_stat(from, &st)) < 0)
+    if ((ret = get_stat(from, &st)) < 0) {
+        log_print(LOG_ERR, "dav_rename: failed get_stat for %d:%s", fd, from);
+        server_ret = ret;
         goto finish;
+    }
 
     if (S_ISDIR(st.st_mode)) {
         snprintf(fn, sizeof(fn), "%s/", from);
         from = fn;
     }
 
+    /* ne_move:
+     * succeeds: mv 'from' to 'to', delete 'from'
+     * fails with 404: may be doing the move on an open file, so this may be ok
+     *                 mv 'from' to 'to', delete 'from'
+     * fails, not 404: error, exit
+     */
+    // Do the server side move
     if (ne_move(session, 1, from, to)) {
-        log_print(LOG_WARNING, "dav_rename: MOVE failed: %s", ne_get_error(session));
-        r = -ENOENT;
-        goto finish;
+        const char *errstr = ne_get_error(session);
+        if (strstr(errstr, "404") || strstr(errstr, "500")) {
+            // We allow silent failures because we might have done a rename before the
+            // file ever made it to the server
+            log_print(LOG_INFO, "dav_rename: MOVE failed with 404, recoverable: %s", errstr);
+            // Allow the error code -EIO to percolate down, we need to pass the local move
+        }
+        else {
+            log_print(LOG_ERR, "dav_rename: MOVE failed: %s", ne_get_error(session));
+            goto finish;
+        }
+    }
+    else {
+        server_ret = 0;
     }
 
+    /* If the server_side failed, then both the stat_cache and filecache moves need to succeed */
     entry = stat_cache_value_get(config->cache, from, true);
     log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
     if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
-        r = -EIO;
+        log_print(LOG_NOTICE, "dav_rename: failed stat cache moving source entry to destination %d:%s", fd, to);
+        // If the local stat_cache move fails, leave the filecache alone so we don't get mixed state
         goto finish;
     }
+
     stat_cache_delete(config->cache, from);
 
-    if (fd < 0 || ldb_filecache_pdata_move(config->cache, from, to) < 0) {
-        log_print(LOG_DEBUG, "dav_rename: No local file cache data to move (or move failed).");
-        ldb_filecache_delete(config->cache, to);
+    if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
+        log_print(LOG_NOTICE, "dav_rename: No local file cache data to move (or move failed).");
+        ldb_filecache_delete(config->cache, to, true);
+        goto finish;
     }
+    local_ret = 0;
 
 finish:
 
     if (entry != NULL)
         free(entry);
 
-    if (fd > 0) {
-        // Not specifically necessary to release lock; close will do it. Do it here for clarity.
-        if (flock(fd, LOCK_UN)) {
-            log_print(LOG_WARNING, "dav_rename: error releasing shared file lock on fd %d:%s", fd, from);
-        }
-        close(fd);
-    }
+    if (_from) free(_from);
 
-    free(_from);
+    log_print(LOG_DEBUG, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
 
-    return r;
+    // if either the server move or the local move succeed, we return
+    if (server_ret == 0 || local_ret == 0) return 0;
+    else return server_ret; // error from either get_stat or ne_move
 }
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
-    path = path_cvt(path);
+    BUMP(release);
 
-    log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
-
-    if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
-        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, path);
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_release: release(NULL path)");
     }
+    else {
+        path = path_cvt(path);
+        log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path);
+    }
+
+    // path might be NULL if we are accessing a bare file descriptor. Since
+    // pulling the file descriptor is the job of ldb_filecache, we'll have
+    // to detect there.
+    if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
+        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, (path?path:"NULL"));
+    }
+
+    log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path?path:"NULL"));
 
     return ret;
 }
 
-static int dav_fsync(const char *path, __unused int isdatasync, __unused struct fuse_file_info *info) {
+static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
-    path = path_cvt(path);
+    BUMP(fsync);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_fsync(%s)", path);
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_fsync(NULL path)");
+    }
+    else {
+        path = path_cvt(path);
+        log_print(LOG_INFO, "CALLBACK: dav_fsync(%s)", path);
+    }
 
+    // If path is NULL because we are accessing a bare file descriptor,
+    // let ldb_filecache_sync handle it since we need to get the file
+    // descriptor there
     if ((ret = ldb_filecache_sync(config->cache, path, info, true)) < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
         goto finish;
@@ -864,13 +1083,26 @@ finish:
     return ret;
 }
 
+static int dav_flush(const char *path, struct fuse_file_info *info) {
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_flush(NULL path)");
+    }
+    else {
+        log_print(LOG_INFO, "CALLBACK: dav_flush(unconverted path %s)", path);
+    }
+
+    return dav_fsync(path, false, info);
+}
+
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
 
+    BUMP(mknod);
+
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_mknod(%s)", path);
+    log_print(LOG_INFO, "CALLBACK: dav_mknod(%s)", path);
 
     /*
     if (!(session = session_get(1)))
@@ -935,6 +1167,8 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
+    BUMP(open);
+
     path = path_cvt(path);
 
     // There are circumstances where we read a write-only file, so if write-only
@@ -952,9 +1186,18 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
 static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
 
-    path = path_cvt(path);
+    BUMP(read);
 
-    log_print(LOG_INFO, "CALLBACK: dav_read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    // We might get a null path if we are reading from a bare file descriptor
+    // (we have unlinked the path but kept the file descriptor open)
+    // In this case we continue to do the read.
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_read(NULL path, %lu+%lu)", (unsigned long) offset, (unsigned long) size);
+    }
+    else {
+        path = path_cvt(path);
+        log_print(LOG_INFO, "CALLBACK: dav_read(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    }
 
     if ((bytes_read = ldb_filecache_read(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
@@ -970,15 +1213,25 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     struct fusedav_config *config = fuse_get_context()->private_data;
     ssize_t bytes_written;
 
-    path = path_cvt(path);
+    BUMP(write);
 
-    log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    // We might get a null path if we are writing to a bare file descriptor
+    // (we have unlinked the path but kept the file descriptor open)
+    // In this case we continue to do the write, but we skip the sync below
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_write(NULL path, %lu+%lu)", (unsigned long) offset, (unsigned long) size);
+    }
+    else {
+        path = path_cvt(path);
+        log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path, (unsigned long) offset, (unsigned long) size);
+    }
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
         goto finish;
     }
 
+    // Let sync handle the NULL path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
         return -EIO;
@@ -992,21 +1245,24 @@ finish:
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
-    ne_session *session;
 
-    path = path_cvt(path);
+    BUMP(ftruncate);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_truncate(%s, %lu)", path, (unsigned long) size);
-
-    if (!(session = session_get(1)))
-        ret = -EIO;
-        goto finish;
+    if (path == NULL) {
+        log_print(LOG_INFO, "CALLBACK: dav_ftruncate(NULL path, %lu)", (unsigned long) size);
+    }
+    else {
+        path = path_cvt(path);
+        log_print(LOG_INFO, "CALLBACK: dav_ftruncate(%s, %lu)", path, (unsigned long) size);
+    }
 
     if (ldb_filecache_truncate(info, size) < 0) {
         ret = -errno;
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", ret, strerror(ret));
         goto finish;
     }
 
+    // Let sync handle a NULL path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
         ret = -EIO;
@@ -1015,6 +1271,7 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
 
 finish:
 
+    log_print(LOG_DEBUG, "dav_ftruncate: ret=%d", ret);
     return ret;
 }
 
@@ -1026,6 +1283,8 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     int r = 0;
     char *date;
 
+    BUMP(utimens);
+
     if (config->ignoreutimens) {
         //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
         return r;
@@ -1035,7 +1294,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
+    log_print(LOG_INFO, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
 
     ops[0].name = &getlastmodified;
     ops[0].type = ne_propset;
@@ -1128,6 +1387,8 @@ static int dav_listxattr(
     struct fusedav_config *config = fuse_get_context()->private_data;
     ne_session *session;
     struct listxattr_info l;
+
+    BUMP(listxattr);
 
     if (config->ignorexattr)
         return 0;
@@ -1267,6 +1528,8 @@ static int dav_getxattr(
     ne_propname props[2];
     char dnspace[128], dname[128];
 
+    BUMP(getxattr);
+
     if (config->ignorexattr)
         return -ENOATTR;
 
@@ -1325,6 +1588,8 @@ static int dav_setxattr(
     int r = 0;
     char dnspace[128], dname[128];
     char *value_fixed = NULL;
+
+    BUMP(setxattr);
 
     if (config->ignorexattr)
         return 0;
@@ -1395,6 +1660,8 @@ static int dav_removexattr(const char *path, const char *name) {
     int r = 0;
     char dnspace[128], dname[128];
 
+    BUMP(removexattr);
+
     if (config->ignorexattr)
         return 0;
 
@@ -1446,6 +1713,8 @@ static int dav_chmod(const char *path, mode_t mode) {
     ne_proppatch_operation ops[2];
     int r = 0;
 
+    BUMP(chmod);
+
     // If both file and dir modes are fixed, there is nothing to set.
     if (config->file_mode && config->dir_mode)
         return 0;
@@ -1489,9 +1758,11 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
+    BUMP(create);
+
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "CALLBACK: dav_create(%s, %04o)", path, mode);
+    log_print(LOG_INFO, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
     info->flags |= O_CREAT | O_TRUNC;
     ret = do_open(path, info);
@@ -1514,6 +1785,8 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
     struct fusedav_config *config = fuse_get_context()->private_data;
 
+    BUMP(chown);
+
     // If the uid and gid are fixed, there is nothing to chown.
     if (config->uid && config->gid)
         return 0;
@@ -1522,7 +1795,23 @@ static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
     return -EPROTONOSUPPORT;
 }
 
+/* We need to accommodate the pattern
+ * open
+ * unlink
+ * read/write
+ * close
+ *
+ * We set hard_remove and flag_nullpath_ok, which will refrain from
+ * creating fuse_hidden files, but will return NULL for path to dav functions,
+ * e.g. read and write. We need to handle this.
+ * The list of operations which need to handle NULL paths is:
+ *   * read, write, flush, release, fsync, readdir, releasedir,
+     * fsyncdir, ftruncate, fgetattr and lock
+ * We don't implement releasedir, fsyncdir, and lock.
+ */
+
 static struct fuse_operations dav_oper = {
+    .fgetattr     = dav_fgetattr,
     .getattr     = dav_getattr,
     .readdir     = dav_readdir,
     .mknod       = dav_mknod,
@@ -1534,17 +1823,18 @@ static struct fuse_operations dav_oper = {
     .chmod       = dav_chmod,
     .chown       = dav_chown,
     .ftruncate    = dav_ftruncate,
-    //.truncate    = dav_truncate,
     .utimens     = dav_utimens,
     .open        = dav_open,
     .read        = dav_read,
     .write       = dav_write,
     .release     = dav_release,
     .fsync       = dav_fsync,
+    .flush       = dav_flush,
     .setxattr    = dav_setxattr,
     .getxattr    = dav_getxattr,
     .listxattr   = dav_listxattr,
     .removexattr = dav_removexattr,
+    .flag_nullpath_ok = 1,
 };
 
 static void exit_handler(__unused int sig) {
@@ -1791,6 +2081,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     case KEY_VERSION:
         fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
         fprintf(stderr, "LevelDB version %d.%d\n", leveldb_major_version(), leveldb_minor_version());
+        //malloc_stats_print(NULL, NULL, "g");
         fuse_opt_add_arg(outargs, "--version");
         fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
         exit(0);
@@ -1839,13 +2130,14 @@ static void *cache_cleanup(void *ptr) {
     log_print(LOG_DEBUG, "enter cache_cleanup");
 
     while (1) {
-        // Sleep first rather than kicking off cleanup at startup
+        // We would like to do cleanup on startup, to resolve issues
+        // from errant stat and file caches
+        ldb_filecache_cleanup(config->cache, config->cache_path);
+        stat_cache_prune(config->cache);
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
         }
-        ldb_filecache_cleanup(config->cache, config->cache_path);
-        stat_cache_prune(config->cache, config->cache_path);
     }
     return NULL;
 }
@@ -1854,14 +2146,18 @@ int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
     struct fuse_chan *ch = NULL;
-    char *mountpoint;
+    char *mountpoint = NULL;
     int ret = 1;
     pthread_t lock_thread;
     pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
 
+    // Initialize the statistics.
+    memset(&stats, 0, sizeof(struct statistics));
+
     signal(SIGSEGV, sigsegv_handler);
+    signal(SIGUSR2, sigusr2_handler);
 
     if (ne_sock_init()) {
         log_print(LOG_CRIT, "Failed to set libneon thread-safety locks.");
@@ -1878,10 +2174,6 @@ int main(int argc, char *argv[]) {
         ++fail;
     }
 
-    if (fail) {
-        goto finish;
-    }
-
     mask = umask(0);
     umask(mask);
 
@@ -1895,6 +2187,10 @@ int main(int argc, char *argv[]) {
     // Parse options.
     if (!fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
+        goto finish;
+    }
+
+    if (fail) {
         goto finish;
     }
 
@@ -1915,7 +2211,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    //fuse_opt_add_arg(&args, "-o atomic_o_trunc");
+    // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
 
     log_print(LOG_DEBUG, "Parsed command line.");
 
