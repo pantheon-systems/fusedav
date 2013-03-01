@@ -718,9 +718,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
         ret = NE_ERROR;
     }
 
-    // We continue to PUT the file if etag happens to be NULL; it just
-    // means ultimately that it won't trigger a 304 on next access
-    if (ret == NE_OK && etag != NULL) {
+    if (ret == NE_OK) {
         value = ne_get_response_header(req, "etag");
         if (value) {
             strncpy(etag, value, ETAG_MAX);
@@ -729,7 +727,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
         log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
     }
     else {
-        if (etag != NULL) etag[0] = '\0';
+        etag[0] = '\0';
     }
     ne_request_destroy(req);
 
