@@ -1136,4 +1136,3 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
         log_print(LOG_NOTICE, "ldb_filecache_cleanup: issues cleaning orphans");
     }
 }
-
