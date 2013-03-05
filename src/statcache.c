@@ -604,11 +604,59 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     return 0;
 }
 
+/* Pruning the stat cache */
+
 // Initial and resize increment of array to hold current and previous depth's directory names for next iteration
 #define MAX_DIRS 64
 // Because of alphabetic order, 10, 11, 12 etc appear earlier in list than 5, 6, 7, so we
 // process in 2 phases. If we need a directory depth greater than 99, god forbid, make this 3
 #define PHASES 2
+
+/* leveldb keeps entries in alphabetical order. Unfortunately, this means that:
+ * <...>/files/one is less than <...>/files/one-1
+ * but
+ * <...>/files/one/file is greater than <...>/files/one-1/file
+ * because the slash is greater than the dash (one/ is greater than one-)
+ * slash (/) is ascii 47, dash is 45.
+ *
+ * This will occur when ever we have a bare name and an identical name followed by
+ * a character less than 47 (effectively slash and dot)
+ *
+ * We keep the previous depth's directories in a list to compare with
+ * the next depths filenames and we rely on alphabetical order for efficiency
+ *
+ * REVIEW:
+ * There are alternatives, among them:
+ * 1. We explicitly remove any trailing slashes in path_cvt; we could explicitly add a trailing
+ *    slash on all directories instead.
+ * 2. We could write a more efficient insertion function
+ * 3. We could chuck this approach altogether and return to the one you suggested,
+ *    getting the entry out of the stat cache and seeing if its parent directory
+ *    is in the cache.
+ * 4. Always iterate through this list from the beginning without assuming alphabetical order
+ *
+ * If we detect an out of order insertion, we call this function.
+ */
+static int insert_alpha(char *filename, char **basename, int end) {
+    int alpha;
+    int idx, jdx;
+
+    for (idx = 0; idx <= end; idx++) {
+        alpha = strncmp(filename, basename[idx], PATH_MAX);
+        log_print(LOG_DEBUG, "insert_alpha: %d - (%d) %s %s", idx, alpha, filename, basename[idx]);
+        if (alpha < 0) {
+            for (jdx = end; jdx >= idx; jdx--) {
+                strncpy(basename[jdx + 1], basename[jdx], PATH_MAX);
+            }
+            strncpy(basename[idx], filename, PATH_MAX);
+            for (idx = 0; idx <= end + 1; idx++) {
+                log_print(LOG_DEBUG, "insert_alpha: LIST: %d %s", idx, basename[idx]);
+            }
+            return 0;
+        }
+    }
+    return -1;
+}
 
 // We are checking for orphaned paths. During the iteration at the previous
 // depth, we collected the names of all directories existing at that depth.
@@ -774,11 +822,14 @@ void stat_cache_prune(stat_cache_t *cache) {
                 len = 0;
                 --slash;
                 while (slash[0] != '/') --slash, ++len;
-                strncpy(dirname, slash + 1, len);
-                dirname[len] = '\0';
+                // directory names need the trailing slash, since its part of the
+                // string as leveldb alphabetizes it
+                strncpy(dirname, slash + 1, len + 1);
+                dirname[len + 1] = '\0';
 
                 log_print(LOG_DEBUG, "stat_cache_prune: calling got_dir_match: %s %s %d %d  :: %s", dirname, basename[phase][pdx], pdx, depth, filename);
                 if (skip || got_dir_match(dirname, basename[phase], &pdx, max_dirs)) {
+                    int alpha;
                     skip = false;
                     log_print(LOG_DEBUG, "stat_cache_prune: keeping %s", iterkey);
                     if (S_ISDIR(itervalue->st.st_mode)) {
@@ -799,8 +850,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                                 }
                                 else {
                                     basename[idx] = tmp_realloc;
-                                    // change to NOTICE
-                                    log_print(LOG_DEBUG, "stat_cache_prune: realloc succeeded, phase %d (%d - %d).", idx, t_max, max_dirs);
+                                    log_print(LOG_NOTICE, "stat_cache_prune: realloc succeeded, phase %d (%d - %d).", idx, t_max, max_dirs);
                                 }
                                 for (jdx = t_max; jdx < max_dirs; jdx++) {
                                     basename[idx][jdx] = calloc(1, PATH_MAX);
@@ -810,8 +860,30 @@ void stat_cache_prune(stat_cache_t *cache) {
                         // We use phase for the previous; since this is the "next", use the opposite of phase
                         tphase = phase ? 0 : 1;
                         // Store this directory so we can use it on the iteration on next depth
-                        strncpy(basename[tphase][ndx], filename, PATH_MAX);
-                        log_print(LOG_DEBUG, "stat_cache_prune: added filename %s to nbasename[%d] at %d", filename, tphase, ndx);
+                        // Tack on a trailing slash, so we can keep the alphabet straight
+                        // (.../one < .../one-1, but .../one/file > .../one-1/file)
+                        len = strlen(filename);
+                        if (len < (PATH_MAX - 1)) {
+                            filename[len] = '/';
+                            filename[len + 1] = '\0';
+                        }
+                        else {
+                            log_print(LOG_ERR, "stat_cache_prune: strlen of %s too long", filename);
+                            return;
+                        }
+
+                        if (ndx == 0) alpha = 1;
+                        else alpha = strncmp(filename, basename[tphase][ndx - 1], PATH_MAX);
+                        if (alpha > 0) {
+                            log_print(LOG_DEBUG, "stat_cache_prune: added filename %s to nbasename[%d] at %d", filename, tphase, ndx);
+                            strncpy(basename[tphase][ndx], filename, PATH_MAX);
+                        }
+                        else {
+                            log_print(LOG_DEBUG, "stat_cache_prune: filename %s out of order to nbasename[%d] at %d", filename, tphase, ndx);
+                            if (insert_alpha(filename, basename[tphase], ndx - 1) < 0) {
+                                log_print(LOG_DEBUG, "stat_cache_prune: insert_alpha failed on %s", filename);
+                            }
+                        }
                         // Set next to empty string; use this elsewhere as sentinel to stop iterating
                         basename[tphase][ndx + 1][0] = '\0';
                         ++ndx;
@@ -823,7 +895,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
                 else {
                     // delete this item
-                    log_print(LOG_DEBUG, "stat_cache_prune: deleting %s", iterkey);
+                    log_print(LOG_INFO, "stat_cache_prune: deleting %s", iterkey);
                     ++deleted_entries;
                     woptions = leveldb_writeoptions_create();
                     leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
@@ -876,7 +948,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             free(value);
         }
         else {
-            log_print(LOG_DEBUG, "stat_cache_prune: deleting: derivedkey %s (%s)", derivedkey, iterkey);
+            log_print(LOG_INFO, "stat_cache_prune: deleting: derivedkey %s (%s)", derivedkey, iterkey);
             ++deleted_entries;
             woptions = leveldb_writeoptions_create();
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
