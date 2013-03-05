@@ -891,7 +891,7 @@ static int dav_rmdir(const char *path) {
     // Update children entry for parent path
     nepp = ne_path_parent(path);
     parent_path = strip_trailing_slash(nepp, &is_dir);
-    stat_cache_updated_children(config->cache, parent_path, time(NULL) - CACHE_TIMEOUT - 1);
+    stat_cache_updated_children(config->cache, parent_path, 0);
     free(nepp);
 
     return 0;
@@ -2275,14 +2275,14 @@ int main(int argc, char *argv[]) {
 
     // Open the stat cache.
     if (stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path) < 0) {
-        log_print(LOG_WARNING, "Failed to open the stat cache.");
+        log_print(LOG_CRIT, "Failed to open the stat cache.");
         config.cache = NULL;
         goto finish;
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
     if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config)) {
-        log_print(LOG_WARNING, "Failed to create cache cleanup thread.");
+        log_print(LOG_CRIT, "Failed to create cache cleanup thread.");
         goto finish;
     }
 

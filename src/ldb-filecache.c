@@ -981,7 +981,8 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
     int unlinked = 0;
 
     snprintf(filecache_path, PATH_MAX, "%s/files", cache_path);
-    if ((dir = opendir(filecache_path)) == NULL) {
+    dir = opendir(filecache_path);
+    if (dir == NULL) {
         log_print(LOG_WARNING, "cleanup_orphans: Can't open filecache directory %s", filecache_path);
         return -1;
     }
@@ -1005,7 +1006,6 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
             else {
                 log_print(LOG_DEBUG, "cleanup_orphans: found . or .. directory: %s", cachefile_path);
             }
-            continue;
         }
         else {
             ++visited;
@@ -1038,7 +1038,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
     char fname[PATH_MAX];
     time_t starttime;
     int ret;
-    //int fd;
+    // Statistics
     int cached_files = 0;
     int unlinked_files = 0;
     int issues = 0;
@@ -1068,7 +1068,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
             // so store it in fname
             strncpy(fname, pdata->filename, PATH_MAX);
 
-            // If the cache file doesn't exist, delete the etnry from the level_db cache
+            // If the cache file doesn't exist, delete the entry from the level_db cache
             ret = access(fname, F_OK);
             if (ret) {
                 ret = ldb_filecache_delete(cache, path, true);
@@ -1080,7 +1080,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
                     ++pruned_files;
                 }
             }
-            else if (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD) {
+            else if ((pdata->last_server_update != 0) && (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD)) {
                 log_print(LOG_DEBUG, "ldb_filecache_cleanup: Unlinking %s", fname);
                 ret = ldb_filecache_delete(cache, path, true);
                 if (ret) {
@@ -1106,20 +1106,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
             }
         }
         else {
-            char *base;
-            // One of the entries in the db is <path>/files directory itself; ignore this, it's not an error
-            // Find the last slash
-            base = strrchr(path, '/');
-            // if found, move past it
-            if (base) ++base;
-            // ... if base is NULL(because slash was not found) or it does not equal files, then we have an error
-            // (If it does equal files, we have the directory as an entry in the filecache, and we want to ignore it.)
-            if (!base || strcmp(base, "files")) {
-                log_print(LOG_WARNING, "ldb_filecache_cleanup: pulled NULL pdata out of cache for %s:%s %s", path, iterkey, base);
-            }
-            else {
-                log_print(LOG_DEBUG, "ldb_filecache_cleanup: NULL in cache is directory %s", path);
-            }
+            log_print(LOG_NOTICE, "ldb_filecache_cleanup: pulled NULL pdata out of cache for %s", path);
         }
         leveldb_iter_next(iter);
     }
