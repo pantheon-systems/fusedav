@@ -895,7 +895,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
                 else {
                     // delete this item
-                    log_print(LOG_INFO, "stat_cache_prune: deleting %s", iterkey);
+                    log_print(LOG_DEBUG, "stat_cache_prune: deleting %s", iterkey);
                     ++deleted_entries;
                     woptions = leveldb_writeoptions_create();
                     leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
@@ -948,7 +948,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             free(value);
         }
         else {
-            log_print(LOG_INFO, "stat_cache_prune: deleting: derivedkey %s (%s)", derivedkey, iterkey);
+            log_print(LOG_DEBUG, "stat_cache_prune: deleting: derivedkey %s (%s)", derivedkey, iterkey);
             ++deleted_entries;
             woptions = leveldb_writeoptions_create();
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);

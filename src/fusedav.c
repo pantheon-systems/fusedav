@@ -833,10 +833,7 @@ static int dav_unlink(const char *path) {
 static int dav_rmdir(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char fn[PATH_MAX];
-    char *parent_path;
-    char *nepp;
     int ret;
-    int is_dir = 0;
     bool has_child;
     struct stat st;
     ne_session *session;
@@ -888,11 +885,8 @@ static int dav_rmdir(const char *path) {
      * this is the part of stat_cache_delete_parent which no longer was happening.
      * Is it correct and useful to include it here?
      */
-    // Update children entry for parent path
-    nepp = ne_path_parent(path);
-    parent_path = strip_trailing_slash(nepp, &is_dir);
-    stat_cache_updated_children(config->cache, parent_path, 0);
-    free(nepp);
+    // Delete Updated_children entry for path
+    stat_cache_updated_children(config->cache, path, 0);
 
     return 0;
 }
