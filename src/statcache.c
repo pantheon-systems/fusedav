@@ -21,6 +21,7 @@
 #endif
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <inttypes.h>
 #include <time.h>
 #include <string.h>
@@ -35,6 +36,8 @@
 #include "statcache.h"
 #include "fusedav.h"
 #include "log.h"
+#include "session.h"
+#include "bloom-filter.h"
 
 #include <ne_uri.h>
 
@@ -566,7 +569,7 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     iter = stat_cache_iter_init(cache, path);
     if ((entry = stat_cache_iter_current(iter))) {
         has_children = true;
-        log_print(LOG_INFO, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
+        log_print(LOG_DEBUG, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
         free(entry);
     }
     stat_cache_iterator_free(iter);
@@ -578,7 +581,7 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 
-    log_print(LOG_DEBUG, "stat_cache_delete_older: %s", path_prefix);
+    log_print(LOG_INFO, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
@@ -589,5 +592,120 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     }
     stat_cache_iterator_free(iter);
 
+    stat_cache_prune(cache);
+
     return 0;
+}
+
+int stat_cache_prune(stat_cache_t *cache) {
+    // leveldb stuff
+    leveldb_readoptions_t *roptions;
+    struct leveldb_iterator_t *iter;
+    const char *iterkey;
+    char path[PATH_MAX];
+    char *slash;
+    const struct stat_cache_value *itervalue;
+    size_t klen, vlen;
+    const unsigned long salt = time(NULL);
+    char bloombits[SIXTEEN_BITS];
+    int ret = -1;
+    int pass;
+    const int passes = 2;
+    int depth;
+    bool first = true;
+
+    // Statistics
+    int visited_entries = 0;
+
+    log_print(LOG_INFO, "stat_cache_prune: enter");
+
+    memset(bloombits, 0, SIXTEEN_BITS);
+
+    roptions = leveldb_readoptions_create();
+    iter = leveldb_create_iterator(cache, roptions);
+    leveldb_readoptions_destroy(roptions);
+
+    leveldb_iter_seek_to_first(iter);
+
+    // Entries are in alphabetical order, so 10 is before 6;
+    // on the first pass, find the first depth less than 10, and process to the end;
+    // on the second pass, process depth greater than 10
+    for (pass = 0; pass < passes; pass++) {
+        log_print(LOG_INFO, "stat_cache_prune: Changing pass:%d", pass);
+        leveldb_iter_seek_to_first(iter);
+
+        while (leveldb_iter_valid(iter)) {
+            iterkey = leveldb_iter_key(iter, &klen);
+            strncpy(path, key2path(iterkey), PATH_MAX);
+            // Since we've shortened path, recalculate klen
+            klen = strlen(path);
+            itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
+            log_print(LOG_INFO, "stat_cache_prune: ITERKEY: \'%s\' :: %s", iterkey, path);
+            ++visited_entries;
+
+            // We control what kinds of entries are in the leveldb db.
+            // Those beginning with a number are stat cache entries and
+            // will be alphabetically first. As soon as we find an entry that
+            // strtol cannot turn into a number, we know we have passed beyond
+            // the normal stat cache entries into something else (e.g. filecache).
+            // However, we also have to handle "updated_children" entries. We
+            // handle them separately below.
+            errno = 0;
+            depth = strtol(iterkey, NULL, 10);
+
+            // @TODO seems not to set errno on returning 0
+            if (depth == 0 /*&& errno != 0*/) {
+                log_print(LOG_INFO, "stat_cache_prune: depth = 0; break:%d, %d", depth, errno);
+                ret = 0;
+                break;
+            }
+
+            if ((pass == 0 && depth < 10) || (pass == 1 && depth >= 10)) {
+
+                // We need to get the base_directory into the filter before continuing
+                if (first) {
+                    log_print(LOG_INFO, "stat_cache_prune: attempting base_directory %s :: %s)", base_directory, path);
+                    if (strncmp(base_directory, path, strlen(base_directory)) == 0) {
+                        if (bloom_add(path, klen, salt, bloombits) < 0) {
+                            log_print(LOG_INFO, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+                            break;
+                        }
+                        else {
+                            log_print(LOG_INFO, "stat_cache_prune: put base_directory %s in filter", path);
+                        }
+                        first = false;
+                    }
+                }
+
+                slash = strrchr(path, '/');
+                if (slash) slash[0] = '\0';
+
+                // Since we've shortened path, recalculate klen
+                klen = strlen(path);
+
+                if (bloom_exists(path, klen, salt, bloombits)) {
+                    log_print(LOG_INFO, "stat_cache_prune: check returns TRUE on \'%s\')", path);
+                    if (S_ISDIR(itervalue->st.st_mode)) {
+                        // Reset to original, complete path
+                        if (slash) slash[0] = '/';
+                        if (bloom_add(path, klen, salt, bloombits) < 0) {
+                            log_print(LOG_INFO, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+                            break;
+                        }
+                    }
+                }
+                else {
+                    log_print(LOG_INFO, "stat_cache_prune: check returns FALSE on \'%s\')", path);
+                    // Reset to original, complete path
+                    if (slash) slash[0] = '/';
+                    stat_cache_delete(cache, path);
+                }
+            }
+            ret = 0;
+            leveldb_iter_next(iter);
+        }
+    }
+    leveldb_iter_destroy(iter);
+
+    return ret;
 }

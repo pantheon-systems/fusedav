@@ -88,6 +88,10 @@ int lock_thread_exit = 0;
 
 #define CLOCK_SKEW 10 // seconds
 
+// Run cache cleanup once a day.
+// #define CACHE_CLEANUP_INTERVAL 86400
+#define CACHE_CLEANUP_INTERVAL 60
+
 struct fill_info {
     void *buf;
     fuse_fill_dir_t filler;
@@ -831,7 +835,7 @@ static int dav_rmdir(const char *path) {
     }
 
     if (!S_ISDIR(st.st_mode)) {
-        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Not a directory", path);
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Not a directory", path);
         return -ENOTDIR;
     }
 
@@ -844,7 +848,7 @@ static int dav_rmdir(const char *path) {
     // so the stat cache should be up to date.
     has_child = stat_cache_dir_has_child(config->cache, path);
     if (has_child) {
-        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
         return -ENOTEMPTY;
     }
 
@@ -2086,6 +2090,24 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
+static void *cache_cleanup(void *ptr) {
+    struct fusedav_config *config = (struct fusedav_config *)ptr;
+
+    log_print(LOG_DEBUG, "enter cache_cleanup");
+
+    while (1) {
+        // We would like to do cleanup on startup, to resolve issues
+        // from errant stat and file caches
+        ////ldb_filecache_cleanup(config->cache, config->cache_path);
+        stat_cache_prune(config->cache);
+        if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
+            log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -2093,6 +2115,7 @@ int main(int argc, char *argv[]) {
     char *mountpoint = NULL;
     int ret = 1;
     pthread_t lock_thread;
+    pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
 
@@ -2223,6 +2246,11 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
+
+    if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config)) {
+        log_print(LOG_CRIT, "Failed to create cache cleanup thread.");
+        goto finish;
+    }
 
     log_print(LOG_NOTICE, "Startup complete. Entering main FUSE loop.");
 
