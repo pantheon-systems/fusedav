@@ -612,14 +612,24 @@ int stat_cache_prune(stat_cache_t *cache) {
     int pass;
     const int passes = 2;
     int depth;
-    bool first = true;
 
     // Statistics
     int visited_entries = 0;
 
-    log_print(LOG_INFO, "stat_cache_prune: enter");
+    log_print(LOG_DEBUG, "stat_cache_prune: enter");
 
     memset(bloombits, 0, SIXTEEN_BITS);
+
+    // We need to make sure the base_directory is in the filter before continuing
+    log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
+    klen = strlen(base_directory);
+    if (bloom_add(base_directory, klen, salt, bloombits) < 0) {
+        log_print(LOG_INFO, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+        return ret;
+    }
+    else {
+        log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", path);
+    }
 
     roptions = leveldb_readoptions_create();
     iter = leveldb_create_iterator(cache, roptions);
@@ -631,7 +641,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     // on the first pass, find the first depth less than 10, and process to the end;
     // on the second pass, process depth greater than 10
     for (pass = 0; pass < passes; pass++) {
-        log_print(LOG_INFO, "stat_cache_prune: Changing pass:%d", pass);
+        log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d", pass);
         leveldb_iter_seek_to_first(iter);
 
         while (leveldb_iter_valid(iter)) {
@@ -640,7 +650,7 @@ int stat_cache_prune(stat_cache_t *cache) {
             // Since we've shortened path, recalculate klen
             klen = strlen(path);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
-            log_print(LOG_INFO, "stat_cache_prune: ITERKEY: \'%s\' :: %s", iterkey, path);
+            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s", iterkey, path);
             ++visited_entries;
 
             // We control what kinds of entries are in the leveldb db.
@@ -655,27 +665,12 @@ int stat_cache_prune(stat_cache_t *cache) {
 
             // @TODO seems not to set errno on returning 0
             if (depth == 0 /*&& errno != 0*/) {
-                log_print(LOG_INFO, "stat_cache_prune: depth = 0; break:%d, %d", depth, errno);
+                log_print(LOG_DEBUG, "stat_cache_prune: depth = 0; break:%d, %d", depth, errno);
                 ret = 0;
                 break;
             }
 
             if ((pass == 0 && depth < 10) || (pass == 1 && depth >= 10)) {
-
-                // We need to get the base_directory into the filter before continuing
-                if (first) {
-                    log_print(LOG_INFO, "stat_cache_prune: attempting base_directory %s :: %s)", base_directory, path);
-                    if (strncmp(base_directory, path, strlen(base_directory)) == 0) {
-                        if (bloom_add(path, klen, salt, bloombits) < 0) {
-                            log_print(LOG_INFO, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
-                            break;
-                        }
-                        else {
-                            log_print(LOG_INFO, "stat_cache_prune: put base_directory %s in filter", path);
-                        }
-                        first = false;
-                    }
-                }
 
                 slash = strrchr(path, '/');
                 if (slash) slash[0] = '\0';
@@ -684,10 +679,14 @@ int stat_cache_prune(stat_cache_t *cache) {
                 klen = strlen(path);
 
                 if (bloom_exists(path, klen, salt, bloombits)) {
-                    log_print(LOG_INFO, "stat_cache_prune: check returns TRUE on \'%s\')", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: check returns TRUE on \'%s\')", path);
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
                         if (slash) slash[0] = '/';
+                        // Since we've shortened path, recalculate klen
+                        klen = strlen(path);
+
+                        log_print(LOG_DEBUG, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloom_add(path, klen, salt, bloombits) < 0) {
                             log_print(LOG_INFO, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
                             break;
@@ -698,6 +697,7 @@ int stat_cache_prune(stat_cache_t *cache) {
                     log_print(LOG_INFO, "stat_cache_prune: check returns FALSE on \'%s\')", path);
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
+                    log_print(LOG_INFO, "stat_cache_prune: deleting \'%s\')", path);
                     stat_cache_delete(cache, path);
                 }
             }
