@@ -564,7 +564,7 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     struct stat_cache_entry *entry;
     bool has_children = false;
 
-    log_print(LOG_INFO, "stat_cache_dir_has_children(%s)", path);
+    log_print(LOG_DEBUG, "stat_cache_dir_has_children(%s)", path);
 
     iter = stat_cache_iter_init(cache, path);
     if ((entry = stat_cache_iter_current(iter))) {
@@ -581,7 +581,7 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 
-    log_print(LOG_INFO, "stat_cache_delete_older: %s", path_prefix);
+    log_print(LOG_DEBUG, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
@@ -607,7 +607,10 @@ int stat_cache_prune(stat_cache_t *cache) {
     const struct stat_cache_value *itervalue;
     size_t klen, vlen;
     const unsigned long salt = time(NULL);
-    char bloombits[SIXTEEN_BITS];
+    // Assuming we process the return value from the hash function in 16-bit chunks,
+    // we need 64k bits, or 8k bytes
+    unsigned int bloomsize;
+    unsigned char *bloombits;
     int ret = -1;
     int pass;
     const int passes = 2;
@@ -618,13 +621,18 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     log_print(LOG_DEBUG, "stat_cache_prune: enter");
 
-    memset(bloombits, 0, SIXTEEN_BITS);
+    // Number of bits we need divided by bits in a byte. We allow bloom-filter to
+    // set the chunk size and reuse it here
+    bloomsize = (1 << bits_in_chunk) / 8;
+    bloombits = calloc(sizeof(unsigned char), bloomsize);
+    if (bloombits == NULL) {
+        log_print(LOG_ERR, "stat_cache_prune: failed to allocate bloombits");
+    }
 
     // We need to make sure the base_directory is in the filter before continuing
     log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
-    klen = strlen(base_directory);
-    if (bloom_add(base_directory, klen, salt, bloombits) < 0) {
-        log_print(LOG_INFO, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+    if (bloom_add(base_directory, salt, bloombits) < 0) {
+        log_print(LOG_ERR, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
         return ret;
     }
     else {
@@ -647,8 +655,6 @@ int stat_cache_prune(stat_cache_t *cache) {
         while (leveldb_iter_valid(iter)) {
             iterkey = leveldb_iter_key(iter, &klen);
             strncpy(path, key2path(iterkey), PATH_MAX);
-            // Since we've shortened path, recalculate klen
-            klen = strlen(path);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
             log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s", iterkey, path);
             ++visited_entries;
@@ -675,29 +681,24 @@ int stat_cache_prune(stat_cache_t *cache) {
                 slash = strrchr(path, '/');
                 if (slash) slash[0] = '\0';
 
-                // Since we've shortened path, recalculate klen
-                klen = strlen(path);
-
-                if (bloom_exists(path, klen, salt, bloombits)) {
+                if (bloom_exists(path, salt, bloombits)) {
                     log_print(LOG_DEBUG, "stat_cache_prune: check returns TRUE on \'%s\')", path);
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
                         if (slash) slash[0] = '/';
-                        // Since we've shortened path, recalculate klen
-                        klen = strlen(path);
 
                         log_print(LOG_DEBUG, "stat_cache_prune: add path to filter \'%s\')", path);
-                        if (bloom_add(path, klen, salt, bloombits) < 0) {
-                            log_print(LOG_INFO, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+                        if (bloom_add(path, salt, bloombits) < 0) {
+                            log_print(LOG_ERR, "stat_cache_prune: error on bloom_add: \'%s\')", path);
                             break;
                         }
                     }
                 }
                 else {
-                    log_print(LOG_INFO, "stat_cache_prune: check returns FALSE on \'%s\')", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: check returns FALSE on \'%s\')", path);
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
-                    log_print(LOG_INFO, "stat_cache_prune: deleting \'%s\')", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\')", path);
                     stat_cache_delete(cache, path);
                 }
             }
@@ -706,6 +707,7 @@ int stat_cache_prune(stat_cache_t *cache) {
         }
     }
     leveldb_iter_destroy(iter);
+    free(bloombits);
 
     return ret;
 }

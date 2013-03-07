@@ -1,5 +1,5 @@
 #include <stdbool.h>
-#define SIXTEEN_BITS 65536
+extern const int bits_in_chunk;
 
-int bloom_add(const char *key, int klen, unsigned long salt, char *bloombits);
-bool bloom_exists(const char *key, int klen, unsigned long salt, char *bloombits);
+int bloom_add(const char *key, unsigned long salt, unsigned char *bloombits);
+bool bloom_exists(const char *key, unsigned long salt, unsigned char *bloombits);
