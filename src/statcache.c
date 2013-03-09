@@ -606,11 +606,11 @@ int stat_cache_prune(stat_cache_t *cache) {
     char *slash;
     const struct stat_cache_value *itervalue;
     size_t klen, vlen;
-    const unsigned long salt = time(NULL);
-    // Assuming we process the return value from the hash function in 16-bit chunks,
-    // we need 64k bits, or 8k bytes
-    unsigned int bloomsize;
-    unsigned char *bloombits;
+
+    // bloom filter stuff
+    bloomfilter_options_t *boptions;
+    char *errptr = NULL;
+
     int ret = -1;
     int pass;
     const int passes = 2;
@@ -621,29 +621,26 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     log_print(LOG_DEBUG, "stat_cache_prune: enter");
 
-    // Number of bits we need divided by bits in a byte. We allow bloom-filter to
-    // set the chunk size and reuse it here
-    bloomsize = (1 << bits_in_chunk) / 8;
-    bloombits = calloc(sizeof(unsigned char), bloomsize);
-    if (bloombits == NULL) {
-        log_print(LOG_ERR, "stat_cache_prune: failed to allocate bloombits");
+    boptions = bloomfilter_init(0, 0, NULL, 0, &errptr);
+    if (boptions == NULL) {
+        log_print(LOG_ERR, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
+        if (errptr) free(errptr);
+        return ret;
     }
 
     // We need to make sure the base_directory is in the filter before continuing
     log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
-    if (bloom_add(base_directory, salt, bloombits) < 0) {
+    if (bloomfilter_add(boptions, base_directory, strlen(base_directory)) < 0) {
         log_print(LOG_ERR, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
         return ret;
     }
-    else {
-        log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", path);
-    }
+
+    log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", path);
 
     roptions = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(roptions, false);
     iter = leveldb_create_iterator(cache, roptions);
-    leveldb_readoptions_destroy(roptions);
 
-    leveldb_iter_seek_to_first(iter);
 
     // Entries are in alphabetical order, so 10 is before 6;
     // on the first pass, find the first depth less than 10, and process to the end;
@@ -681,24 +678,24 @@ int stat_cache_prune(stat_cache_t *cache) {
                 slash = strrchr(path, '/');
                 if (slash) slash[0] = '\0';
 
-                if (bloom_exists(path, salt, bloombits)) {
-                    log_print(LOG_DEBUG, "stat_cache_prune: check returns TRUE on \'%s\')", path);
+                if (bloomfilter_exists(boptions, path, strlen(path))) {
+                    log_print(LOG_DEBUG, "stat_cache_prune: check returns TRUE on \'%s\'", path);
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
                         if (slash) slash[0] = '/';
 
-                        log_print(LOG_DEBUG, "stat_cache_prune: add path to filter \'%s\')", path);
-                        if (bloom_add(path, salt, bloombits) < 0) {
-                            log_print(LOG_ERR, "stat_cache_prune: error on bloom_add: \'%s\')", path);
+                        log_print(LOG_INFO, "stat_cache_prune: add path to filter \'%s\')", path);
+                        if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
+                            log_print(LOG_ERR, "stat_cache_prune: error on bloomfilter_add: \'%s\')", path);
                             break;
                         }
                     }
                 }
                 else {
-                    log_print(LOG_DEBUG, "stat_cache_prune: check returns FALSE on \'%s\')", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: check returns FALSE on \'%s\'", path);
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
-                    log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\')", path);
+                    log_print(LOG_INFO, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path);
                 }
             }
@@ -707,7 +704,8 @@ int stat_cache_prune(stat_cache_t *cache) {
         }
     }
     leveldb_iter_destroy(iter);
-    free(bloombits);
+    leveldb_readoptions_destroy(roptions);
+    bloomfilter_destroy(boptions);
 
     return ret;
 }
