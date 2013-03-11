@@ -567,14 +567,13 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     if ((entry = stat_cache_iter_current(iter))) {
         has_children = true;
         log_print(LOG_INFO, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
-        free(entry);
     }
     stat_cache_iterator_free(iter);
 
     return has_children;
 }
 
-int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned int minimum_local_generation) {
+int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 

@@ -88,6 +88,9 @@ int lock_thread_exit = 0;
 
 #define CLOCK_SKEW 10 // seconds
 
+// Run cache cleanup once a day.
+#define CACHE_CLEANUP_INTERVAL 86400
+
 struct fill_info {
     void *buf;
     fuse_fill_dir_t filler;
@@ -515,6 +518,28 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result != NE_OK) {
             log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
+            /* REVIEW:
+             * Here's the scenario:
+             * mkdir a/b/c/d/e/f/g
+             * rmdir a/b/c/d  (with the pre-fixed rmdir)
+             * mkdir a/b/c/d/e/f/g
+             * ls a/b/c/d/e/f/g -> Operation not permitted
+             *
+             * /a/b/c/d gets made, because it didn't exist
+             * /a/b/c/d/e doesn't get made, because it's in the cache
+             * /a/b/c/d/e/f fails when it tries to update parent, and server
+             * returns a 404.
+             *
+             * if I include stat_cache_delete_parent, then the next
+             * mkdir a/b/c/d/e/f/g and
+             * ls a/b/c/d/e/f/g
+             * will work.
+             *
+             * Maybe if, with a fixed rmdir and this situation will only come up
+             * after calling stat_cache_delete_older and calling stat_cache_prune or some equivalent
+             * after stat_cache_delete_older will prevent the issue from occurring.
+             */
+            stat_cache_delete_parent(config->cache, path);
             return -ENOENT;
         }
         stat_cache_delete_older(config->cache, path, min_generation);
@@ -831,7 +856,7 @@ static int dav_rmdir(const char *path) {
     }
 
     if (!S_ISDIR(st.st_mode)) {
-        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Not a directory", path);
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Not a directory", path);
         return -ENOTDIR;
     }
 
@@ -844,7 +869,7 @@ static int dav_rmdir(const char *path) {
     // so the stat cache should be up to date.
     has_child = stat_cache_dir_has_child(config->cache, path);
     if (has_child) {
-        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
         return -ENOTEMPTY;
     }
 
@@ -852,9 +877,16 @@ static int dav_rmdir(const char *path) {
         log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
         return -ENOENT;
     }
-    log_print(LOG_INFO, "dav_rmdir: removed(%s)", path);
+    log_print(LOG_DEBUG, "dav_rmdir: removed(%s)", path);
 
     stat_cache_delete(config->cache, path);
+
+    /* REVIEW:
+     * this is the part of stat_cache_delete_parent which no longer was happening.
+     * Is it correct and useful to include it here?
+     */
+    // Delete Updated_children entry for path
+    stat_cache_updated_children(config->cache, path, 0);
 
     return 0;
 }
@@ -2086,6 +2118,23 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
+static void *cache_cleanup(void *ptr) {
+    struct fusedav_config *config = (struct fusedav_config *)ptr;
+
+    log_print(LOG_DEBUG, "enter cache_cleanup");
+
+    while (1) {
+        // We would like to do cleanup on startup, to resolve issues
+        // from errant stat and file caches
+        ldb_filecache_cleanup(config->cache, config->cache_path);
+        if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
+            log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
+            return NULL;
+        }
+    }
+    return NULL;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -2093,6 +2142,7 @@ int main(int argc, char *argv[]) {
     char *mountpoint = NULL;
     int ret = 1;
     pthread_t lock_thread;
+    pthread_t filecache_cleanup_thread;
     int lock_thread_running = 0;
     int fail = 0;
 
@@ -2218,11 +2268,16 @@ int main(int argc, char *argv[]) {
 
     // Open the stat cache.
     if (stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path) < 0) {
-        log_print(LOG_WARNING, "Failed to open the stat cache.");
+        log_print(LOG_CRIT, "Failed to open the stat cache.");
         config.cache = NULL;
         goto finish;
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
+
+    if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config)) {
+        log_print(LOG_CRIT, "Failed to create cache cleanup thread.");
+        goto finish;
+    }
 
     log_print(LOG_NOTICE, "Startup complete. Entering main FUSE loop.");
 
