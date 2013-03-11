@@ -27,7 +27,6 @@
 #define STAT_CACHE_NO_DATA 1
 
 #define STAT_CACHE_NEGATIVE_TTL 3
-#define CACHE_TIMEOUT 3
 
 typedef leveldb_t stat_cache_t;
 
@@ -70,7 +69,6 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
 int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation);
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
-void stat_cache_prune(stat_cache_t *cache);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 
 #endif

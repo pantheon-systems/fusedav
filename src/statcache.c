@@ -21,7 +21,6 @@
 #endif
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <inttypes.h>
 #include <time.h>
 #include <string.h>
@@ -38,6 +37,8 @@
 #include "log.h"
 
 #include <ne_uri.h>
+
+#define CACHE_TIMEOUT 3
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -132,12 +133,6 @@ static const char *key2path(const char *key) {
         ++pos;
     }
     return NULL;
-}
-
-// Allocates a new string via path2key
-static char *updated_children2canonicalkey(const char *keyin) {
-    char * path = strchr(keyin, '/');
-    return path2key(path, false);
 }
 
 int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path) {
@@ -270,14 +265,10 @@ int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t ti
     asprintf(&key, "updated_children:%s", path);
 
     options = leveldb_writeoptions_create();
-    if (timestamp == 0) {
-        log_print(LOG_DEBUG, "stat_cache_updated_children: Children for directory %s were deleted at timestamp %lu; key = %s", path, timestamp, key);
+    if (timestamp == 0)
         leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
-    }
-    else {
-        log_print(LOG_DEBUG, "stat_cache_updated_children: Children for directory %s were updated at timestamp %lu; key = %s", path, timestamp, key);
+    else
         leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
-    }
     leveldb_writeoptions_destroy(options);
 
     free(key);
@@ -570,13 +561,12 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     struct stat_cache_entry *entry;
     bool has_children = false;
 
-    log_print(LOG_DEBUG, "stat_cache_dir_has_children(%s)", path);
+    log_print(LOG_INFO, "stat_cache_dir_has_children(%s)", path);
 
     iter = stat_cache_iter_init(cache, path);
     if ((entry = stat_cache_iter_current(iter))) {
         has_children = true;
-        log_print(LOG_DEBUG, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
-        free(entry);
+        log_print(LOG_INFO, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
     }
     stat_cache_iterator_free(iter);
 
@@ -598,369 +588,5 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     }
     stat_cache_iterator_free(iter);
 
-    log_print(LOG_DEBUG, "stat_cache_delete_older: %s; calling stat_cache_prune", path_prefix);
-    stat_cache_prune(cache);
-
     return 0;
-}
-
-/* Pruning the stat cache */
-
-// Initial and resize increment of array to hold current and previous depth's directory names for next iteration
-#define MAX_DIRS 64
-// Because of alphabetic order, 10, 11, 12 etc appear earlier in list than 5, 6, 7, so we
-// process in 2 phases. If we need a directory depth greater than 99, god forbid, make this 3
-#define PHASES 2
-
-/* leveldb keeps entries in alphabetical order. Unfortunately, this means that:
- * <...>/files/one is less than <...>/files/one-1
- * but
- * <...>/files/one/file is greater than <...>/files/one-1/file
- * because the slash is greater than the dash (one/ is greater than one-)
- * slash (/) is ascii 47, dash is 45.
- *
- * This will occur when ever we have a bare name and an identical name followed by
- * a character less than 47 (effectively slash and dot)
- *
- * We keep the previous depth's directories in a list to compare with
- * the next depths filenames and we rely on alphabetical order for efficiency
- *
- * REVIEW:
- * There are alternatives, among them:
- * 1. We explicitly remove any trailing slashes in path_cvt; we could explicitly add a trailing
- *    slash on all directories instead.
- * 2. We could write a more efficient insertion function
- * 3. We could chuck this approach altogether and return to the one you suggested,
- *    getting the entry out of the stat cache and seeing if its parent directory
- *    is in the cache.
- * 4. Always iterate through this list from the beginning without assuming alphabetical order
- *
- * If we detect an out of order insertion, we call this function.
- */
-static int insert_alpha(char *filename, char **basename, int end) {
-    int alpha;
-    int idx, jdx;
-
-    for (idx = 0; idx <= end; idx++) {
-        alpha = strncmp(filename, basename[idx], PATH_MAX);
-        log_print(LOG_DEBUG, "insert_alpha: %d - (%d) %s %s", idx, alpha, filename, basename[idx]);
-        if (alpha < 0) {
-            for (jdx = end; jdx >= idx; jdx--) {
-                strncpy(basename[jdx + 1], basename[jdx], PATH_MAX);
-            }
-            strncpy(basename[idx], filename, PATH_MAX);
-            for (idx = 0; idx <= end + 1; idx++) {
-                log_print(LOG_DEBUG, "insert_alpha: LIST: %d %s", idx, basename[idx]);
-            }
-            return 0;
-        }
-    }
-    return -1;
-}
-
-// We are checking for orphaned paths. During the iteration at the previous
-// depth, we collected the names of all directories existing at that depth.
-// Now we are at the next depth, and seeing if the immediate directory that
-// we find this file in actually exists, by checking that it was present
-// at the previous depth.
-// By passing in pbasename as a char * when it really mirrors a two-dimensional
-// array, we have effectively squashed the array into a single dimension. This
-// requires us to actively increment the address by the size of the second
-// dimension, i.e. PATH_MAX
-// If we found a match when idx was, say, 2, it means that it matched the
-// 2nd entry in the pbasename. We keep track of this (*pdx = idx). The next
-// call to this function for the next iterkey will be alphabetically the same
-// or later than this call, so there is no need to start from 0 again, since
-// these entries alphabetically precede all subsequent entries.
-static int got_dir_match(char *dirname, char **basename, int *pdx, int max_dirs) {
-    int result;
-    int found = 0;
-    log_print(LOG_DEBUG, "Entering got_dir_match: dir: %s :: base: %s :: pdx:%d", dirname, basename[*pdx], *pdx);
-    for (; *pdx < max_dirs; (*pdx)++) {
-        if (basename[*pdx][0] == '\0') break;
-        log_print(LOG_DEBUG, "processing got_dir_match: dn: %s :: pn: %s :: %d", dirname, basename[*pdx], *pdx);
-        result = strncmp(dirname, basename[*pdx], PATH_MAX);
-
-        // if strncmp is 0, we have a match
-        if (result == 0) {
-            found = 1;
-            log_print(LOG_DEBUG, "got_dir_match: found; %s :: %d", dirname, *pdx);
-            break;
-        }
-        // if strncmp is less than 0, then we have already passed lexicographically the entry we would match at.
-        // All further entries are also greater than the current one, and we will not match on them
-        else if (result < 0) {
-            log_print(LOG_DEBUG, "got_dir_match: break; strncmp < 0; %s -- %s :: %d", dirname, basename[*pdx], *pdx);
-            break;
-        }
-        else {
-            log_print(LOG_DEBUG, "got_dir_match: strncmp > 0; still looking... : %s -- %s :: %d", dirname, basename[*pdx], *pdx);
-        }
-    }
-    return found;
-}
-
-// Function to prune unreachable, aka orphaned, items from the stat cache.
-// If a directory and its files and subdirectories disappears, they might
-// remain as orphans in the stat cache. We want to prune them.
-void stat_cache_prune(stat_cache_t *cache) {
-    // leveldb stuff
-    leveldb_readoptions_t *roptions;
-    leveldb_writeoptions_t *woptions;
-    struct leveldb_iterator_t *iter;
-    const char *iterkey;
-    char *derivedkey = NULL;
-    const struct stat_cache_value *itervalue;
-    size_t klen;
-    size_t vlen;
-
-    int idx, jdx;
-    char *errptr = NULL;
-    int depth;
-    int prev_depth = 0;
-    // from the end of the iterkey we pick of dirname/filename, and store them here
-    char dirname[PATH_MAX] = "";
-    char filename[PATH_MAX] = "";
-    // For traversing the iterkey
-    const char *slash = NULL;
-    int len;
-    // Iterating through one depth, basename[0] will contain the directories
-    // from iterating the previous depth, and we populate basename[1] with the
-    // directories at this depth, for use on iterating the next depth.
-    // When we switch depths, we swap these two.
-    char **basename[2];
-    // phase tells us whether basename[0] is p and basename[1] is n, or vice-versa
-    // When phase is 0, basename[0] is p or previous
-    // Since we change phase the first time, start with 1, so it will be 0 for the first time
-    int phase = 1;
-    // The opposite of phase
-    int tphase;
-    // The keys are sorted alphabetically, so 10 comes before 6. We just make 2 passes through
-    // the db, once processing only depths less than 10, then only depths greater than or
-    // equal to 10. pass keeps track of which pass we are in.
-    int pass = 0;
-    // Since entries are in alphabetical order, during iteration of a given depth,
-    // we don't need to start over with each new key, since it can't match items
-    // which have already been seen, since they precede it in the alphabet. We use
-    // pdx to keep track of which entry in pbasename we can start at when
-    // searching for a directory when we get a new key
-    int pdx = 0;
-    // We use ndx to ensure we don't write more entries into nbasename than the array holds (max_dirs)
-    int ndx = 0;
-    // Skip standard treatment on the first entry
-    bool skip = true;
-    // We start with an array of MAX_DIRS entries for directory names.
-    // If this turns out not to be enough, we realloc and bump max_dirs.
-    int max_dirs = MAX_DIRS;
-    // Simple statistics
-    int deleted_entries = 0;
-    int visited_entries = 0;
-
-    log_print(LOG_DEBUG, "stat_cache_prune(cache %p)", cache);
-
-    // There are two lists, one for previous directories from the previous depth,
-    // and one for current directories to use at the next depth.
-    // Each of these holds max_dirs entries, each of which is a string of PATH_MAX size.
-    // We are able to realloc if this turns out not to be enough.
-    for (idx = 0; idx < 2; idx++) {
-        basename[idx] = calloc(max_dirs, sizeof(char *));
-        for (jdx = 0; jdx < max_dirs; jdx++) {
-            basename[idx][jdx] = calloc(1, PATH_MAX);
-        }
-    }
-
-    roptions = leveldb_readoptions_create();
-    iter = leveldb_create_iterator(cache, roptions);
-    leveldb_readoptions_destroy(roptions);
-
-    // Entries are in alphabetical order, so 10 is before 6;
-    // on the first pass, find the first depth less than 10, and process to the end;
-    // on the second pass, process depth greater than 10
-    for (pass = 0; pass < PHASES; pass++) {
-        log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d", pass);
-        leveldb_iter_seek_to_first(iter);
-
-        while (leveldb_iter_valid(iter)) {
-            iterkey = leveldb_iter_key(iter, &klen);
-            itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
-            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\')", iterkey);
-            ++visited_entries;
-
-            // We control what kinds of entries are in the leveldb db.
-            // Those beginning with a number are stat cache entries and
-            // will be alphabetically first. As soon as we find an entry that
-            // strtol cannot turn into a number, we know we have passed beyond
-            // the normal stat cache entries into something else (e.g. filecache).
-            // However, we also have to handle "updated_children" entries. We
-            // handle them separately below.
-            errno = 0;
-            depth = strtol(iterkey, NULL, 10);
-            log_print(LOG_DEBUG, "stat_cache_prune: Got depth:%d, %d", depth, errno);
-
-            // @TODO seems not to set errno on returning 0
-            if (depth == 0 /*&& errno != 0*/) {
-                log_print(LOG_DEBUG, "stat_cache_prune: break:%d, %d", depth, errno);
-                break;
-            }
-
-            if (depth != 0 && ((pass == 0 && depth < 10) || (pass == 1 && depth >= 10))) {
-                if (depth > prev_depth) {
-                    if (phase) phase = 0;
-                    else phase = 1;
-                    pdx = 0;
-                    ndx = 0;
-                    log_print(LOG_DEBUG, "stat_cache_prune: Changing depth:%d, %d", depth, prev_depth, phase);
-                    prev_depth = depth;
-                    // null-out next phase
-                    tphase = phase ? 0 : 1;
-                    basename[tphase][0][0] = '\0';
-                    basename[tphase][1][0] = '\0';
-                }
-                slash = iterkey + strlen(iterkey);
-                while (slash[0] != '/') --slash;
-                strncpy(filename, slash + 1, PATH_MAX);
-                len = 0;
-                --slash;
-                while (slash[0] != '/') --slash, ++len;
-                // directory names need the trailing slash, since its part of the
-                // string as leveldb alphabetizes it
-                strncpy(dirname, slash + 1, len + 1);
-                dirname[len + 1] = '\0';
-
-                log_print(LOG_DEBUG, "stat_cache_prune: calling got_dir_match: %s %s %d %d  :: %s", dirname, basename[phase][pdx], pdx, depth, filename);
-                if (skip || got_dir_match(dirname, basename[phase], &pdx, max_dirs)) {
-                    int alpha;
-                    skip = false;
-                    log_print(LOG_DEBUG, "stat_cache_prune: keeping %s", iterkey);
-                    if (S_ISDIR(itervalue->st.st_mode)) {
-                        log_print(LOG_DEBUG, "stat_cache_prune: new file is dir: %s", filename);
-                        // If we're about to run off the end of the array, double the size
-                        if (ndx >= (max_dirs - 1)) {
-                            void *tmp_realloc;
-                            int t_max = max_dirs;
-                            max_dirs *= 2;
-                            log_print(LOG_WARNING, "stat_cache_prune: exceeded max_dirs (%d): %s %s", ndx, dirname, filename);
-                            for (idx = 0; idx < PHASES; idx++) {
-                                tmp_realloc = realloc(basename[idx], max_dirs * sizeof(char *));
-                                // If we fail to realloc, just return; otherwise we will run off the
-                                // end of the array and crash
-                                if (tmp_realloc == NULL) {
-                                    log_print(LOG_ERR, "stat_cache_prune: realloc failed. Returning ...");
-                                    return;
-                                }
-                                else {
-                                    basename[idx] = tmp_realloc;
-                                    log_print(LOG_NOTICE, "stat_cache_prune: realloc succeeded, phase %d (%d - %d).", idx, t_max, max_dirs);
-                                }
-                                for (jdx = t_max; jdx < max_dirs; jdx++) {
-                                    basename[idx][jdx] = calloc(1, PATH_MAX);
-                                }
-                            }
-                        }
-                        // We use phase for the previous; since this is the "next", use the opposite of phase
-                        tphase = phase ? 0 : 1;
-                        // Store this directory so we can use it on the iteration on next depth
-                        // Tack on a trailing slash, so we can keep the alphabet straight
-                        // (.../one < .../one-1, but .../one/file > .../one-1/file)
-                        len = strlen(filename);
-                        if (len < (PATH_MAX - 1)) {
-                            filename[len] = '/';
-                            filename[len + 1] = '\0';
-                        }
-                        else {
-                            log_print(LOG_ERR, "stat_cache_prune: strlen of %s too long", filename);
-                            return;
-                        }
-
-                        if (ndx == 0) alpha = 1;
-                        else alpha = strncmp(filename, basename[tphase][ndx - 1], PATH_MAX);
-                        if (alpha > 0) {
-                            log_print(LOG_DEBUG, "stat_cache_prune: added filename %s to nbasename[%d] at %d", filename, tphase, ndx);
-                            strncpy(basename[tphase][ndx], filename, PATH_MAX);
-                        }
-                        else {
-                            log_print(LOG_DEBUG, "stat_cache_prune: filename %s out of order to nbasename[%d] at %d", filename, tphase, ndx);
-                            if (insert_alpha(filename, basename[tphase], ndx - 1) < 0) {
-                                log_print(LOG_DEBUG, "stat_cache_prune: insert_alpha failed on %s", filename);
-                            }
-                        }
-                        // Set next to empty string; use this elsewhere as sentinel to stop iterating
-                        basename[tphase][ndx + 1][0] = '\0';
-                        ++ndx;
-                    }
-                    else {
-                        // It's legitimate, but since it's not a directory, don't store it for the next round
-                        log_print(LOG_DEBUG, "stat_cache_prune: filename %s is NOT dir", filename);
-                    }
-                }
-                else {
-                    // delete this item
-                    log_print(LOG_DEBUG, "stat_cache_prune: deleting %s", iterkey);
-                    ++deleted_entries;
-                    woptions = leveldb_writeoptions_create();
-                    leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
-                    leveldb_writeoptions_destroy(woptions);
-                    if (errptr != NULL) {
-                        log_print(LOG_ERR, "leveldb_delete error: %s", errptr);
-                        free(errptr);
-                    }
-                    else {
-                        // I've noticed incorrect entries (depth value does not equal actual depth)
-                        // which remain in the stat cache even after the above delete. Just signal them
-                        struct stat_cache_value *value;
-                        value = stat_cache_value_get(cache, key2path(iterkey), true);
-                        if (value) {
-                            log_print(LOG_NOTICE, "stat_cache_prune: still there after delete: %s", iterkey);
-                            free(value);
-                        }
-                        else {
-                            log_print(LOG_DEBUG, "stat_cache_prune: no longer there after delete: %s", iterkey);
-                        }
-                    }
-                }
-            }
-            leveldb_iter_next(iter);
-        }
-    }
-    leveldb_iter_destroy(iter);
-
-    for (idx = 0; idx < PHASES; idx++) {
-        for (jdx=0; jdx < max_dirs; jdx++) {
-            free(basename[idx][jdx]);
-        }
-        free(basename[idx]);
-    }
-
-    // Handle updated_children entries
-    roptions = leveldb_readoptions_create();
-    iter = leveldb_create_iterator(cache, roptions);
-    leveldb_readoptions_destroy(roptions);
-    leveldb_iter_seek(iter, "updated_children:", 17);
-
-    while (leveldb_iter_valid(iter)) {
-        struct stat_cache_value *value;
-        iterkey = leveldb_iter_key(iter, &klen);
-        ++visited_entries;
-        derivedkey = updated_children2canonicalkey(iterkey);
-        value = stat_cache_value_get(cache, key2path(derivedkey), true);
-        if (value) {
-            log_print(LOG_DEBUG, "stat_cache_prune: keeping: derivedkey %s (%s)", derivedkey, iterkey);
-            free(value);
-        }
-        else {
-            log_print(LOG_DEBUG, "stat_cache_prune: deleting: derivedkey %s (%s)", derivedkey, iterkey);
-            ++deleted_entries;
-            woptions = leveldb_writeoptions_create();
-            leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
-            leveldb_writeoptions_destroy(woptions);
-            if (errptr != NULL) {
-                log_print(LOG_ERR, "leveldb_delete error: %s", errptr);
-                free(errptr);
-            }
-        }
-        free(derivedkey);
-        leveldb_iter_next(iter);
-    }
-    leveldb_iter_destroy(iter);
-    log_print(LOG_INFO, "stat_cache_prune: visited %d cache entries; deleted %d", visited_entries, deleted_entries);
 }

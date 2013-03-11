@@ -2127,7 +2127,6 @@ static void *cache_cleanup(void *ptr) {
         // We would like to do cleanup on startup, to resolve issues
         // from errant stat and file caches
         ldb_filecache_cleanup(config->cache, config->cache_path);
-        stat_cache_prune(config->cache);
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
