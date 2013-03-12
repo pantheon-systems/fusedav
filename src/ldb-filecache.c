@@ -175,6 +175,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
 
     // The local copy currently trumps the server one, no matter how old.
     pdata->last_server_update = 0;
+
     log_print(LOG_DEBUG, "create_file: Updating file cache for %d : %s : %s : timestamp %ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
     ldb_filecache_pdata_set(cache, path, pdata);
     free(pdata);
@@ -329,6 +330,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
             if (pdata != NULL) {
                 // Mark the cache item as revalidated at the current time.
                 pdata->last_server_update = time(NULL);
+
                 log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
                 ldb_filecache_pdata_set(cache, path, pdata);
 
@@ -406,6 +408,7 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
             // Point the persistent cache to the new file content.
             pdata->last_server_update = time(NULL);
+
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
             ldb_filecache_pdata_set(cache, path, pdata);
 
@@ -480,7 +483,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
         if ((flags & O_CREAT) && (pdata != NULL)) {
             // This will orphan the previous filecache file
-            log_print(LOG_NOTICE, "ldb_filecache_open: creating a file that already has a cache entry: %s", path);
+            log_print(LOG_INFO, "ldb_filecache_open: creating a file that already has a cache entry: %s", path);
         }
         ret = create_file(sdata, cache_path, cache, path);
         if (ret < 0) {
@@ -522,7 +525,8 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
 
     if (sdata->fd >= 0) {
-        log_print(LOG_DEBUG, "ldb_filecache_open: Setting fd to session data structure with fd %d for %s :: %s.", sdata->fd, path, pdata->filename);
+        if (pdata) log_print(LOG_DEBUG, "ldb_filecache_open: Setting fd to session data structure with fd %d for %s :: %s:%ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
+        else log_print(LOG_DEBUG, "ldb_filecache_open: Setting fd to session data structure with fd %d for %s :: (no pdata).", sdata->fd, path);
         info->fh = (uint64_t) sdata;
         ret = 0;
         goto finish;
@@ -759,7 +763,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d)", path, sdata->fd);
     }
 
-    log_print(LOG_DEBUG, "Checking if file (%s) was writable.", path);
+    log_print(LOG_DEBUG, "ldb_filecache_sync: Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
         ret = 0;
         log_print(LOG_DEBUG, "ldb_filecache_sync: not writable");
@@ -775,48 +779,45 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     }
     log_print(LOG_DEBUG, "ldb_filecache_sync(%s, fd=%d): cachefile=%s", path, sdata->fd, pdata->filename);
 
-    if (do_put && sdata->modified) {
-        log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
-        if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
-            log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
-            ret = -1;
-            goto finish;
-        }
+    if (sdata->modified) {
+        if (do_put) {
+            log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
+            if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
+                log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
+                ret = -1;
+                goto finish;
+            }
 
-        log_print(LOG_DEBUG, "Getting libneon session.");
-        if (!(session = session_get(1))) {
-            errno = EIO;
-            ret = -1;
-            log_print(LOG_ERR, "ldb_filecache_sync: failed session");
-            goto finish;
-        }
+            log_print(LOG_DEBUG, "Getting libneon session.");
+            if (!(session = session_get(1))) {
+                errno = EIO;
+                ret = -1;
+                log_print(LOG_ERR, "ldb_filecache_sync: failed session");
+                goto finish;
+            }
 
-        log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
+            log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
-        if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
-            log_print(LOG_ERR, "ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
-            errno = ENOENT;
-            ret = -1;
-            goto finish;
-        }
+            if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
+                log_print(LOG_ERR, "ldb_filecache_sync: ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
+                errno = ENOENT;
+                ret = -1;
+                goto finish;
+            }
 
-        if (pdata) {
-            log_print(LOG_DEBUG, "ldb_filecache_sync: PUT successful: %s : %s : timestamp: %ul: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
+            log_print(LOG_DEBUG, "ldb_filecache_sync: PUT successful: %s : %s : old-timestamp: %ul: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
+
+            // If the PUT succeeded, the file isn't locally modified.
+            sdata->modified = false;
+            pdata->last_server_update = time(NULL);
         }
         else {
-            log_print(LOG_DEBUG, "ldb_filecache_sync: PUT successful: %s", path);
+            // If we don't PUT the file, we don't have an etag, so zero it out
+            strncpy(pdata->etag, "", 1);
+
+            // The local copy currently trumps the server one, no matter how old.
+            pdata->last_server_update = 0;
         }
-
-        // If the PUT succeeded, the file isn't locally modified.
-        sdata->modified = false;
-        pdata->last_server_update = time(NULL);
-    }
-    else {
-        // If we don't PUT the file, we don't have an etag, so zero it out
-        strncpy(pdata->etag, "", 1);
-
-        // The local copy currently trumps the server one, no matter how old.
-        pdata->last_server_update = 0;
     }
 
     // Point the persistent cache to the new file content.
@@ -836,12 +837,13 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     value.st.st_gid = getgid();
     value.prepopulated = false;
     stat_cache_value_set(cache, path, &value);
-    log_print(LOG_DEBUG, "ldb_filecache_sync: Updated stat cache %d:%s:%s", sdata->fd, path, pdata->filename);
+    log_print(LOG_DEBUG, "ldb_filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
-    free(pdata);
     ret = 0;
 
 finish:
+
+    if (pdata) free(pdata);
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Done syncing file (%s, fd=%d).", path, sdata->fd);
 
@@ -904,8 +906,10 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path, bool unlink_c
     free(key);
 
     if (unlink_cachefile && pdata) {
-        unlink(pdata->filename);
         log_print(LOG_DEBUG, "ldb_filecache_delete: unlinking %s", pdata->filename);
+        if (unlink(pdata->filename)) {
+            log_print(LOG_DEBUG, "ldb_filecache_delete: error unlinking %s", pdata->filename);
+        }
     }
 
     if (errptr != NULL) {
