@@ -831,7 +831,7 @@ static int dav_rmdir(const char *path) {
     }
 
     if (!S_ISDIR(st.st_mode)) {
-        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Not a directory", path);
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Not a directory", path);
         return -ENOTDIR;
     }
 
@@ -844,7 +844,7 @@ static int dav_rmdir(const char *path) {
     // so the stat cache should be up to date.
     has_child = stat_cache_dir_has_child(config->cache, path);
     if (has_child) {
-        log_print(LOG_NOTICE, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        log_print(LOG_INFO, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
         return -ENOTEMPTY;
     }
 
