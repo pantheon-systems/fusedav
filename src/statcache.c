@@ -675,11 +675,28 @@ int stat_cache_prune(stat_cache_t *cache) {
 
             if ((pass == 0 && depth < 10) || (pass == 1 && depth >= 10)) {
 
+                // If base_directory is in the stat cache, we don't want to compare it
+                // to its parent directory, find it absent in the filter, and remove base_directory
+                if (strncmp(path, base_directory, strlen(base_directory))) continue;
+
+                // Find the trailing slash
                 slash = strrchr(path, '/');
-                if (slash) slash[0] = '\0';
+
+                // If there's no slash, there's no parent directory to compare against.
+                // Effectively, we are ignorning this entry. Since base_directory is already
+                // in the stat cache, this must be an errant entry. We should error instead?
+                if (slash == NULL) {
+                    log_print(LOG_INFO, "stat_cache_prune: ignoring errant entry \'%s\'", path);
+                    continue;
+                }
+
+                // by putting a null in place of the last slash, path is now dirname(path)
+                slash[0] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
                     log_print(LOG_DEBUG, "stat_cache_prune: check returns TRUE on \'%s\'", path);
+                    // If the parent is in the filter, and this child is a directory, add it to
+                    // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
                         if (slash) slash[0] = '/';

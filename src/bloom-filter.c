@@ -54,8 +54,8 @@ static long set_salt(void) {
 /* calculate the sizes of values for the filter and for accessing it.
  * Based on investigations online, size of filter should be 1.44x the
  * max number of keys expected. Make this adjustment.
- * We use two bits to represent the key. Just because... We use an integer
- * of some size to index it.
+ * We use two bits to represent the key. Just because...
+ * We use an integer of some size to index it.
  * If the filter size is small enough to be indexed with a uchar (maxkeys < 88), do so;
  * if it requires a ushort (maxkeys < 22755), use it;
  * if it requires a uint (maxkeys < 1,491,308), use it;
@@ -67,19 +67,19 @@ static int calculate_sizes(bloomfilter_options_t *options) {
     if (((options->filtersize * 2) <= UCHAR_MAX) && (options->bits_in_hash_return >= 16)) {
         options->bits_in_chunk = 8;
         options->num_chunks = 2;
-        options->filtersize = (UCHAR_MAX + 1) / 8; // divide by 8 to get number of bytes
+        options->filtersize = ((UCHAR_MAX) / 8) + 1; // divide by 8 to get number of bytes
     }
     else if (((options->filtersize * 2) <= USHRT_MAX) && options->bits_in_hash_return >= 32) {
         options->bits_in_chunk = 16;
         options->num_chunks = 2;
-        options->filtersize = (USHRT_MAX + 1) / 8; // divide by 8 to get number of bytes
+        options->filtersize = ((USHRT_MAX) / 8) + 1; // divide by 8 to get number of bytes
         log_print(LOG_DEBUG, "calculate_sizes: %d %d %d", options->bits_in_chunk, options->num_chunks, options->filtersize);
 
     }
     else if (((options->filtersize * 2) <= UINT_MAX) && options->bits_in_hash_return >= 64) {
         options->bits_in_chunk = 32;
         options->num_chunks = 2;
-        options->filtersize = (UINT_MAX + 1) / 8; // divide by 8 to get number of bytes
+        options->filtersize = ((UINT_MAX) / 8) + 1; // divide by 8 to get number of bytes
     }
     else {
         return -1;
@@ -107,7 +107,7 @@ bloomfilter_options_t *bloomfilter_init(unsigned long maxkeys, unsigned long sal
             err = true;
             goto finish;
         }
-        strcpy(*errptr, "Failed to malloc options");
+        strcpy(*errptr, "Failed to alloc options");
         err = true;
         goto finish;
     }
