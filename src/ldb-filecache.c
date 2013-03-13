@@ -44,8 +44,7 @@
 #define REFRESH_INTERVAL 3
 
 // Remove filecache files older than 8 days
-// #define AGE_OUT_THRESHOLD 691200
-#define AGE_OUT_THRESHOLD 55
+#define AGE_OUT_THRESHOLD 691200
 
 // Entries for stat and file cache are in the ldb cache; fc: designates filecache entries
 static const char * filecache_prefix = "fc:";
