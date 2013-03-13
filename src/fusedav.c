@@ -89,7 +89,8 @@ int lock_thread_exit = 0;
 #define CLOCK_SKEW 10 // seconds
 
 // Run cache cleanup once a day.
-#define CACHE_CLEANUP_INTERVAL 86400
+// #define CACHE_CLEANUP_INTERVAL 86400
+#define CACHE_CLEANUP_INTERVAL 60
 
 struct fill_info {
     void *buf;
@@ -2120,13 +2121,15 @@ static int config_privileges(struct fusedav_config *config) {
 
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
+    bool first = 1;
 
     log_print(LOG_DEBUG, "enter cache_cleanup");
 
     while (1) {
         // We would like to do cleanup on startup, to resolve issues
         // from errant stat and file caches
-        ldb_filecache_cleanup(config->cache, config->cache_path);
+        ldb_filecache_cleanup(config->cache, config->cache_path, first);
+        first = false;
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
