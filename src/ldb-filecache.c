@@ -812,7 +812,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
                 goto finish;
             }
 
-            log_print(LOG_DEBUG, "ldb_filecache_sync: PUT successful: %s : %s : timestamp: %ul: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
+            log_print(LOG_DEBUG, "ldb_filecache_sync: PUT successful: %s : %s : old-timestamp: %ul: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
 
             // If the PUT succeeded, the file isn't locally modified.
             sdata->modified = false;
