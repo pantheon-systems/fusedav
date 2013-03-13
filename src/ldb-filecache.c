@@ -44,7 +44,8 @@
 #define REFRESH_INTERVAL 3
 
 // Remove filecache files older than 8 days
-#define AGE_OUT_THRESHOLD 691200
+// #define AGE_OUT_THRESHOLD 691200
+#define AGE_OUT_THRESHOLD 55
 
 // Entries for stat and file cache are in the ldb cache; fc: designates filecache entries
 static const char * filecache_prefix = "fc:";
@@ -1031,7 +1032,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
     return ret;
 }
 
-void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
+void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool first) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
     const struct ldb_filecache_pdata *pdata;
@@ -1064,7 +1065,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
         // if path is null, we've gone past the filecache entries
         if (path == NULL) break;
         pdata = (const struct ldb_filecache_pdata *)leveldb_iter_value(iter, &klen);
-        log_print(LOG_DEBUG, "ldb_filecache_cleanup: Visiting %s", path);
+        log_print(LOG_DEBUG, "ldb_filecache_cleanup: Visiting %s :: %s", path, pdata?pdata->filename:"no pdata");
         if (pdata) {
             ++cached_files;
             // We delete the entry, making pdata invalid, before we might need the filename to unlink,
@@ -1083,7 +1084,8 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
                     ++pruned_files;
                 }
             }
-            else if ((pdata->last_server_update != 0) && (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD)) {
+            else if ((first && pdata->last_server_update == 0) ||
+                     ((pdata->last_server_update != 0) && (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD))) {
                 log_print(LOG_DEBUG, "ldb_filecache_cleanup: Unlinking %s", fname);
                 ret = ldb_filecache_delete(cache, path, true);
                 if (ret) {
@@ -1091,12 +1093,9 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path) {
                     log_print(LOG_INFO, "ldb_filecache_cleanup: failed to remove entry \"%s\" from ldb cache", fname);
                     ++issues;
                 }
-                ret = unlink(fname);
-                if (ret) {
-                    log_print(LOG_NOTICE, "ldb_filecache_cleanup: failed to unlink %s from ldb cache", fname);
-                    ++issues;
-                }
                 else {
+                    // Not specifically true. We could succeed at unlink in ldb_filecache_delete
+                    // but return non-zero; still, close enough.
                     ++unlinked_files;
                 }
             }
