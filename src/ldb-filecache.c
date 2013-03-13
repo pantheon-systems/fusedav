@@ -1116,8 +1116,9 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
 
     log_print(LOG_INFO, "ldb_filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues", cached_files, unlinked_files, pruned_files, issues);
 
-    // check filestamps on each file in directory
-    ret = cleanup_orphans(cache_path, starttime);
+    // check filestamps on each file in directory. Set back a second to avoid unlikely but
+    // possible race where we are updating a file inside the window where we are starting the cache cleanup
+    ret = cleanup_orphans(cache_path, (starttime - 1));
     if (ret) {
         log_print(LOG_NOTICE, "ldb_filecache_cleanup: issues cleaning orphans");
     }
