@@ -855,7 +855,7 @@ static int dav_rmdir(const char *path) {
         log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
         return -ENOENT;
     }
-    log_print(LOG_INFO, "dav_rmdir: removed(%s)", path);
+    log_print(LOG_DEBUG, "dav_rmdir: removed(%s)", path);
 
     stat_cache_delete(config->cache, path);
 

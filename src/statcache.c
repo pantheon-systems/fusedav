@@ -600,8 +600,10 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
 int stat_cache_prune(stat_cache_t *cache) {
     // leveldb stuff
     leveldb_readoptions_t *roptions;
+    leveldb_writeoptions_t *woptions;
     struct leveldb_iterator_t *iter;
     const char *iterkey;
+    char *basepath = NULL;
     char path[PATH_MAX];
     char *slash;
     const struct stat_cache_value *itervalue;
@@ -618,6 +620,10 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     // Statistics
     int visited_entries = 0;
+    int deleted_entries = 0;
+    time_t elapsedtime;
+
+    elapsedtime = time(NULL);
 
     log_print(LOG_DEBUG, "stat_cache_prune: enter");
 
@@ -635,16 +641,16 @@ int stat_cache_prune(stat_cache_t *cache) {
         return ret;
     }
 
-    log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", path);
+    log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", base_directory);
 
     roptions = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(roptions, false);
     iter = leveldb_create_iterator(cache, roptions);
 
-
     // Entries are in alphabetical order, so 10 is before 6;
     // on the first pass, find the first depth less than 10, and process to the end;
     // on the second pass, process depth greater than 10
+    // @TODO accommodate up to 4096 directories in a path
     for (pass = 0; pass < passes; pass++) {
         log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d", pass);
         leveldb_iter_seek_to_first(iter);
@@ -654,7 +660,6 @@ int stat_cache_prune(stat_cache_t *cache) {
             strncpy(path, key2path(iterkey), PATH_MAX);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
             log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s", iterkey, path);
-            ++visited_entries;
 
             // We control what kinds of entries are in the leveldb db.
             // Those beginning with a number are stat cache entries and
@@ -675,9 +680,15 @@ int stat_cache_prune(stat_cache_t *cache) {
 
             if ((pass == 0 && depth < 10) || (pass == 1 && depth >= 10)) {
 
+                ++visited_entries;
+
                 // If base_directory is in the stat cache, we don't want to compare it
                 // to its parent directory, find it absent in the filter, and remove base_directory
-                if (strcmp(path, base_directory) == 0) continue;
+                if (strcmp(path, base_directory) == 0) {
+                    ret = 0;
+                    leveldb_iter_next(iter);
+                    continue;
+                }
 
                 // Find the trailing slash
                 slash = strrchr(path, '/');
@@ -687,6 +698,8 @@ int stat_cache_prune(stat_cache_t *cache) {
                 // in the stat cache, this must be an errant entry. We should error instead?
                 if (slash == NULL) {
                     log_print(LOG_INFO, "stat_cache_prune: ignoring errant entry \'%s\'", path);
+                    ret = 0;
+                    leveldb_iter_next(iter);
                     continue;
                 }
 
@@ -694,14 +707,14 @@ int stat_cache_prune(stat_cache_t *cache) {
                 slash[0] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
-                    log_print(LOG_DEBUG, "stat_cache_prune: check returns TRUE on \'%s\'", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter\'%s\'", path);
                     // If the parent is in the filter, and this child is a directory, add it to
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
                         if (slash) slash[0] = '/';
 
-                        log_print(LOG_INFO, "stat_cache_prune: add path to filter \'%s\')", path);
+                        log_print(LOG_DEBUG, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
                             log_print(LOG_ERR, "stat_cache_prune: error on bloomfilter_add: \'%s\')", path);
                             break;
@@ -709,10 +722,11 @@ int stat_cache_prune(stat_cache_t *cache) {
                     }
                 }
                 else {
-                    log_print(LOG_DEBUG, "stat_cache_prune: check returns FALSE on \'%s\'", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", path);
+                    ++deleted_entries;
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
-                    log_print(LOG_INFO, "stat_cache_prune: deleting \'%s\'", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path);
                 }
             }
@@ -720,8 +734,51 @@ int stat_cache_prune(stat_cache_t *cache) {
             leveldb_iter_next(iter);
         }
     }
-    leveldb_iter_destroy(iter);
+
+    // REVIEW: Can I just continue on with the same iterator? Seems like this is no different
+    // than what we were doing above on the multiple passes. The previous implementation
+    // created a whole new iterator
+
+    // Handle updated_children entries
+    leveldb_iter_seek(iter, "updated_children:", strlen("updated_children:") + 1);
+
+    while (leveldb_iter_valid(iter)) {
+        iterkey = leveldb_iter_key(iter, &klen);
+        ++visited_entries;
+        // basepath is the "path" we use for the filter, it has "updated_children:" removed
+        // If that path is in the filter, keep the updated_children entry; otherwise, delete
+        // Unlike the processing above, we do not add to the filter, nor do we deal with
+        // the parent path.
+        basepath = strchr(iterkey, '/');
+        if (basepath == NULL) {
+            log_print(LOG_NOTICE, "stat_cache_prune: key error in updated_children entry: %s", iterkey);
+        }
+
+        if (bloomfilter_exists(boptions, basepath, strlen(basepath))) {
+            log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter (basepath of)\'%s\'", iterkey);
+        }
+        else {
+            log_print(LOG_DEBUG, "stat_cache_prune: updated_children: deleting \'%s\'", iterkey);
+            ++deleted_entries;
+            // We recreate the basics of stat_cache_delete here, since we can't call it directly
+            // since it doesn't deal with keys with "updated_children:"
+            woptions = leveldb_writeoptions_create();
+            leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
+            leveldb_writeoptions_destroy(woptions);
+            if (errptr != NULL) {
+                log_print(LOG_ERR, "stat_cache_prune: leveldb_delete error: %s", errptr);
+                free(errptr);
+            }
+        }
+        leveldb_iter_next(iter);
+    }
+
     leveldb_readoptions_destroy(roptions);
+    leveldb_iter_destroy(iter);
+
+    elapsedtime = time(NULL) - elapsedtime;
+    log_print(LOG_INFO, "stat_cache_prune: visited %d cache entries; deleted %d; elapsedtime %ul", visited_entries, deleted_entries, elapsedtime);
+
     bloomfilter_destroy(boptions);
 
     return ret;
