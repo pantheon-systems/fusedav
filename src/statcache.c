@@ -677,7 +677,7 @@ int stat_cache_prune(stat_cache_t *cache) {
 
                 // If base_directory is in the stat cache, we don't want to compare it
                 // to its parent directory, find it absent in the filter, and remove base_directory
-                if (strncmp(path, base_directory, strlen(base_directory))) continue;
+                if (strcmp(path, base_directory) == 0) continue;
 
                 // Find the trailing slash
                 slash = strrchr(path, '/');
