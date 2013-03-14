@@ -381,7 +381,7 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
             *is_deleted = false;
         }
         else {
-            log_print(LOG_DEBUG, "DAV:event=%s", ev);
+            log_print(LOG_INFO, "DAV:event=%s", ev);
             *is_deleted = (strcmp(ev, "DESTROYED") == 0);
         }
     }
