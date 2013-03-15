@@ -100,6 +100,7 @@ struct statistics {
     unsigned create;
     unsigned fsync;
     unsigned ftruncate;
+    unsigned fgetattr;
     unsigned getattr;
     unsigned getxattr;
     unsigned listxattr;
@@ -240,6 +241,7 @@ static void sigusr2_handler(__unused int signum) {
     log_print(LOG_NOTICE, "  create:      %u", FETCH(create));
     log_print(LOG_NOTICE, "  fsync:       %u", FETCH(fsync));
     log_print(LOG_NOTICE, "  ftruncate:   %u", FETCH(ftruncate));
+    log_print(LOG_NOTICE, "  fgetattr:    %u", FETCH(fgetattr));
     log_print(LOG_NOTICE, "  getattr:     %u", FETCH(getattr));
     log_print(LOG_NOTICE, "  getxattr:    %u", FETCH(getxattr));
     log_print(LOG_NOTICE, "  listxattr:   %u", FETCH(listxattr));
@@ -708,21 +710,17 @@ static int get_stat(const char *path, struct stat *stbuf) {
     return -ENOENT;
 }
 
-static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
+static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int r;
-
-    BUMP(getattr);
+    int ret;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
-        path = path_cvt(path);
-        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path);
-        r = get_stat(path, stbuf);
-        if (r != 0) {
-            log_print(LOG_DEBUG, "dav_fgetattr(%s) failed on get_stat; %d %s", path, -r, strerror(-r));
-            return r;
+        ret = get_stat(path, stbuf);
+        if (ret != 0) {
+            log_print(LOG_DEBUG, "dav_fgetattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
+            return ret;
         }
         if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
             stbuf->st_mode = S_IFDIR | config->dir_mode;
@@ -731,7 +729,6 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
         // Fill in generic values
         int fd;
         fd = ldb_filecache_fd(info);
-        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(NULL path)");
         stbuf->st_mode = 0666 | S_IFREG;
         stbuf->st_nlink = 1;
         stbuf->st_size = lseek(fd, 0, SEEK_END);
@@ -742,7 +739,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
         stbuf->st_blocks = 8;
         stbuf->st_uid = getuid();
         stbuf->st_gid = getgid();
-        r = 0;
+        ret = 0;
     }
 
     // Zero-out unused nanosecond fields.
@@ -757,14 +754,35 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     if (S_ISREG(stbuf->st_mode) && config->file_mode)
         stbuf->st_mode = S_IFREG | config->file_mode;
 
-    log_print(LOG_DEBUG, "Done: getattr(%s)", path);
+    return ret;
+}
 
-    return r;
+static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
+    int ret;
+
+    BUMP(fgetattr);
+
+    if (path) path = path_cvt(path);
+
+    log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
+    ret = common_getattr(path, stbuf, info);
+    log_print(LOG_DEBUG, "Done: dav_fgetattr(%s)", path?path:"null path");
+
+    return ret;
 }
 
 static int dav_getattr(const char *path, struct stat *stbuf) {
-    log_print(LOG_INFO, "CALLBACK: dav_getattr( unconverted path %s)", path?path:"NULL");
-    return dav_fgetattr(path, stbuf, NULL);
+    int ret;
+
+    BUMP(getattr);
+
+    path = path_cvt(path);
+
+    log_print(LOG_INFO, "CALLBACK: dav_getattr(%s)", path);
+    ret = common_getattr(path, stbuf, NULL);
+    log_print(LOG_DEBUG, "Done: dav_getattr(%s)", path);
+
+    return ret;
 }
 
 static int dav_unlink(const char *path) {
