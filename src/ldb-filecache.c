@@ -138,7 +138,6 @@ finish:
 static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path,
         ldb_filecache_t *cache, const char *path) {
 
-    struct stat_cache_value value;
     struct ldb_filecache_pdata *pdata;
 
     log_print(LOG_DEBUG, "create_file: on %s", path);
@@ -148,21 +147,6 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
         log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
         return -1;
     }
-
-    // Prepopulate stat cache.
-    value.st.st_mode = 0660 | S_IFREG;
-    value.st.st_nlink = 1;
-    value.st.st_size = 0;
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = false;
-    stat_cache_value_set(cache, path, &value);
-    log_print(LOG_DEBUG, "create_file: Updated stat cache for %d : %s", sdata->fd, path);
 
     // Prepopulate filecache.
     pdata = malloc(sizeof(struct ldb_filecache_pdata));
@@ -748,7 +732,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     int ret = -1;
     struct ldb_filecache_pdata *pdata = NULL;
     ne_session *session;
-    struct stat_cache_value value;
 
     assert(sdata);
 
@@ -823,20 +806,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     // Point the persistent cache to the new file content.
     ldb_filecache_pdata_set(cache, path, pdata);
 
-    // Update stat cache.
-    // @TODO: Use actual mode.
-    value.st.st_mode = 0660 | S_IFREG;
-    value.st.st_nlink = 1;
-    value.st.st_size = lseek(sdata->fd, 0, SEEK_END);
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = false;
-    stat_cache_value_set(cache, path, &value);
     log_print(LOG_DEBUG, "ldb_filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
     ret = 0;
