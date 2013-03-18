@@ -614,9 +614,10 @@ int stat_cache_prune(stat_cache_t *cache) {
     char *errptr = NULL;
 
     int ret = -1;
-    int pass;
-    const int passes = 2;
+    int pass = 0;
+    int passes = 1; // passes will grow as we detect larger depths
     int depth;
+    int max_depth = 0;
 
     // Statistics
     int visited_entries = 0;
@@ -649,9 +650,11 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     // Entries are in alphabetical order, so 10 is before 6;
     // on the first pass, find the first depth less than 10, and process to the end;
-    // on the second pass, process depth greater than 10
-    // @TODO accommodate up to 4096 directories in a path
-    for (pass = 0; pass < passes; pass++) {
+    // on the second pass, process depth greater or equal to than 10 but less than 99;
+    // on the second pass, process depth greater or equal to than 100 but less than 999;
+    // on the second pass, process depth greater or equal to than 1000 but less than 9999;
+    while (pass < passes) {
+
         log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d", pass);
         leveldb_iter_seek_to_first(iter);
 
@@ -678,8 +681,34 @@ int stat_cache_prune(stat_cache_t *cache) {
                 break;
             }
 
-            if ((pass == 0 && depth < 10) || (pass == 1 && depth >= 10)) {
+            /* We need to handle paths which have up to 4096 directories in the path name.
+             * (Note, the length of the path name itself, not the number of directories in a
+             * particular subdirectory.)
+             * Since we don't expect depths greater than 99, we avoid iterating again
+             * when we know we don't have depths that great.
+             * When max_depth crosses a boundary (10, 100, 1000), set it to the max
+             * at that boundary (99, 999, 9999) to prevent continually calling this section.
+             */
+            if (depth > max_depth) {
+                max_depth = depth;
+                if (max_depth >= 1000) {
+                    passes = 4;
+                    max_depth = 9999;
+                }
+                else if (max_depth >= 100) {
+                    passes = 3;
+                    max_depth = 999;
+                }
+                else if (max_depth >= 10) {
+                    passes = 2;
+                    max_depth = 99;
+                }
+                log_print(LOG_DEBUG, "stat_cache_prune: New max_depth %d (%d)", max_depth, depth);
+            }
 
+            if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) || (pass == 2 && (depth >= 100 && depth <= 999)) || (pass = 3 && depth >= 1000)) {
+
+                log_print(LOG_DEBUG, "stat_cache_prune: Pass %d (%d)", pass, passes);
                 ++visited_entries;
 
                 // If base_directory is in the stat cache, we don't want to compare it
@@ -733,6 +762,7 @@ int stat_cache_prune(stat_cache_t *cache) {
             ret = 0;
             leveldb_iter_next(iter);
         }
+        ++pass;
     }
 
     // REVIEW: Can I just continue on with the same iterator? Seems like this is no different
