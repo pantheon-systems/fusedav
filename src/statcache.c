@@ -628,7 +628,7 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     log_print(LOG_DEBUG, "stat_cache_prune: enter");
 
-    boptions = bloomfilter_init(0, 0, NULL, 0, &errptr);
+    boptions = bloomfilter_init(0, NULL, 0, &errptr);
     if (boptions == NULL) {
         log_print(LOG_ERR, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
         if (errptr) free(errptr);

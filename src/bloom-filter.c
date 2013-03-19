@@ -1,8 +1,12 @@
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
+
 #include <limits.h>
 #include <time.h>
-#include <linux/time.h>
 #include <zlib.h>
 #include <malloc.h>
+#include <stdio.h>
 
 #include "bloom-filter.h"
 #include "log.h"
@@ -94,39 +98,27 @@ static unsigned long hashfunction(unsigned long salt, const void *key, size_t kl
 }
 
 /* Initialize the filter */
-bloomfilter_options_t *bloomfilter_init(unsigned long maxkeys, unsigned long salt,
-        unsigned long (*hashfcn)(unsigned long, const void *, size_t), unsigned int bits_in_hash_return, char **errptr) {
+bloomfilter_options_t *bloomfilter_init(unsigned long maxkeys,
+        unsigned long (*hashfcn)(unsigned long, const void *, size_t),
+        unsigned int bits_in_hash_return, char **errptr) {
     bloomfilter_options_t *options;
-    bool err = false;
 
     options = calloc(1, sizeof(bloomfilter_options_t));
     if (options == NULL) {
-        errptr = calloc(256, sizeof(char *));
-        if (errptr == NULL) {
-            // How do you tell them what the error is if you couldn't allocate the errptr?
-            err = true;
-            goto finish;
-        }
-        strcpy(*errptr, "Failed to alloc options");
-        err = true;
-        goto finish;
+        if (asprintf(errptr, "Failed to alloc options") < 0) *errptr = NULL;
+        goto fail;
     }
 
     if (maxkeys == 0) {
         options->maxkeys = 22755; // expected max keys; actually the calculated value that can use a short as an index, our default
-        log_print(LOG_DEBUG, "bloomfilter_init: max_keys %d", options->maxkeys);
     }
     else {
         options->maxkeys = maxkeys;
     }
+    log_print(LOG_DEBUG, "bloomfilter_init: max_keys %d", options->maxkeys);
 
-    if (salt == 0) {
-        options->salt = set_salt();
-        log_print(LOG_DEBUG, "bloomfilter_init: set_salt %d", options->salt);
-    }
-    else {
-        options->salt = salt;
-    }
+    options->salt = set_salt();
+    log_print(LOG_DEBUG, "bloomfilter_init: set_salt %d", options->salt);
 
     if (hashfcn == NULL) {
         options->hashfcn = &hashfunction;
@@ -136,53 +128,28 @@ bloomfilter_options_t *bloomfilter_init(unsigned long maxkeys, unsigned long sal
     else {
         options->hashfcn = hashfcn;
         if (bits_in_hash_return == 0) {
-            errptr = calloc(256, sizeof(char *));
-            if (errptr == NULL) {
-                // How do you tell them what the error is if you couldn't allocate the errptr?
-                err = true;
-                goto finish;
-            }
-            strcpy(*errptr, "If hash function is passed in, bits_in_hash_return must be non-zero");
-            err = true;
-            goto finish;
+            if (asprintf(errptr, "If hash function is passed in, bits_in_hash_return must be non-zero") < 0) *errptr = NULL;
+            goto fail;
         }
     }
 
     if (calculate_sizes(options) < 0) {
-        errptr = calloc(256, sizeof(char *));
-        if (errptr == NULL) {
-            // How do you tell them what the error is if you couldn't allocate the errptr?
-            err = true;
-            goto finish;
-        }
-        strcpy(*errptr, "Can't create filter; maxkeys too large for bits in hash function return");
-        err = true;
-        goto finish;
+        if (asprintf(errptr, "Can't create filter; maxkeys too large for bits in hash function return") < 0) *errptr = NULL;
+        goto fail;
     }
 
     options->bitfield = calloc(options->filtersize, sizeof(void *));
     if (options->bitfield == NULL) {
-        errptr = calloc(256, sizeof(char *));
-        if (errptr == NULL) {
-            // How do you tell them what the error is if you couldn't allocate the errptr?
-            err = true;
-            goto finish;
-        }
-        strcpy(*errptr, "Can't create filter; failed to allocate bitfield");
-        err = true;
-        goto finish;
+        if (asprintf(errptr, "Can't create filter; failed to allocate bitfield") < 0) *errptr = NULL;
+        goto fail;
     }
     log_print(LOG_DEBUG, "bloomfilter_init: bitfield %d", options->filtersize);
 
-finish:
-    if (err) {
-        if (options) {
-            free (options);
-            options = NULL;
-        }
-    }
-
     return options;
+
+fail:
+    free (options);
+    return NULL;
 }
 
 /* Calculate the byte location in the array, then the bit location in the byte
@@ -234,7 +201,7 @@ bool bloomfilter_exists(bloomfilter_options_t * options, const void *key, size_t
 void bloomfilter_destroy(bloomfilter_options_t * options) {
     if (options) {
         log_print(LOG_DEBUG, "bloomfilter_destroy: destroy");
-        if (options->bitfield) free(options->bitfield);
+        free(options->bitfield);
         free(options);
     }
 }
