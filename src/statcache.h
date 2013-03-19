@@ -70,6 +70,5 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigne
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
-int stat_cache_prune(stat_cache_t *cache);
 
 #endif
