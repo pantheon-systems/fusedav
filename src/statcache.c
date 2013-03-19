@@ -592,6 +592,7 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     }
     stat_cache_iterator_free(iter);
 
+    log_print(LOG_DEBUG, "stat_cache_delete_older: calling stat_cache_prune on %s", path_prefix);
     stat_cache_prune(cache);
 
     return 0;
@@ -655,7 +656,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     // on the second pass, process depth greater or equal to than 1000 but less than 9999;
     while (pass < passes) {
 
-        log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d", pass);
+        log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d (%d)", pass, passes);
         leveldb_iter_seek_to_first(iter);
 
         while (leveldb_iter_valid(iter)) {
@@ -703,10 +704,11 @@ int stat_cache_prune(stat_cache_t *cache) {
                     passes = 2;
                     max_depth = 99;
                 }
-                log_print(LOG_DEBUG, "stat_cache_prune: New max_depth %d (%d)", max_depth, depth);
+                log_print(LOG_DEBUG, "stat_cache_prune: New max_depth %d (%d :: %d %d)", max_depth, depth, pass, passes);
             }
 
-            if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) || (pass == 2 && (depth >= 100 && depth <= 999)) || (pass = 3 && depth >= 1000)) {
+            if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) ||
+                (pass == 2 && (depth >= 100 && depth <= 999)) || (pass == 3 && depth >= 1000)) {
 
                 log_print(LOG_DEBUG, "stat_cache_prune: Pass %d (%d)", pass, passes);
                 ++visited_entries;
@@ -763,6 +765,7 @@ int stat_cache_prune(stat_cache_t *cache) {
             leveldb_iter_next(iter);
         }
         ++pass;
+        log_print(LOG_DEBUG, "stat_cache_prune: updating pass %d", pass);
     }
 
     // REVIEW: Can I just continue on with the same iterator? Seems like this is no different
@@ -774,14 +777,29 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     while (leveldb_iter_valid(iter)) {
         iterkey = leveldb_iter_key(iter, &klen);
+
+        // If we pass the last key which begins with updated_children:, we're done
+        if (strncmp(iterkey, "updated_children:", strlen("updated_children:"))) {
+            break;
+        }
         ++visited_entries;
         // basepath is the "path" we use for the filter, it has "updated_children:" removed
         // If that path is in the filter, keep the updated_children entry; otherwise, delete
         // Unlike the processing above, we do not add to the filter, nor do we deal with
         // the parent path.
         basepath = strchr(iterkey, '/');
+
+        // Bad entry. Log, delete from cache, continue
         if (basepath == NULL) {
             log_print(LOG_NOTICE, "stat_cache_prune: key error in updated_children entry: %s", iterkey);
+            woptions = leveldb_writeoptions_create();
+            leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
+            leveldb_writeoptions_destroy(woptions);
+            if (errptr != NULL) {
+                log_print(LOG_ERR, "stat_cache_prune: leveldb_delete error: %s", errptr);
+                free(errptr);
+            }
+            break;
         }
 
         if (bloomfilter_exists(boptions, basepath, strlen(basepath))) {
