@@ -79,13 +79,13 @@ if test "x$GCC" = "xyes" ; then
 
     for flag in $DESIRED_FLAGS ; do
         AC_MSG_CHECKING([whether $CC accepts $flag])
-        if test_gcc_flag $flag ; then 
+        if test_gcc_flag $flag ; then
            CFLAGS="$CFLAGS $flag"
            AC_MSG_RESULT([yes])
         else
            AC_MSG_RESULT([no])
         fi
-    done 
+    done
 fi
 
 # 64 Bit LFS support
@@ -115,6 +115,7 @@ PKG_CHECK_MODULES(YAML, [ yaml-0.1 ] )
 PKG_CHECK_MODULES(LEVELDB, [ leveldb ])
 PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
+PKG_CHECK_MODULES(ZLIB, [ zlib >= 1.2.5 ])
 
 # LYNX documentation generation
 AC_ARG_ENABLE(lynx,
