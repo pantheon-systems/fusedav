@@ -2121,11 +2121,11 @@ static int config_privileges(struct fusedav_config *config) {
 
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
-    bool first = 1;
+    bool first = true;
 
     log_print(LOG_DEBUG, "enter cache_cleanup");
 
-    while (1) {
+    while (true) {
         // We would like to do cleanup on startup, to resolve issues
         // from errant stat and file caches
         ldb_filecache_cleanup(config->cache, config->cache_path, first);
