@@ -1050,8 +1050,8 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
     log_print(LOG_DEBUG, "enter: ldb_filecache_cleanup(cache %p)", cache);
 
     options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
     iter = leveldb_create_iterator(cache, options);
-    leveldb_readoptions_destroy(options);
 
     leveldb_iter_seek(iter, filecache_prefix, 3);
 
@@ -1113,6 +1113,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
     }
 
     leveldb_iter_destroy(iter);
+    leveldb_readoptions_destroy(options);
 
     log_print(LOG_INFO, "ldb_filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues", cached_files, unlinked_files, pruned_files, issues);
 

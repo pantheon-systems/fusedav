@@ -518,28 +518,25 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result != NE_OK) {
             log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
-            /* REVIEW:
-             * Here's the scenario:
+            /* Here's the scenario:
              * mkdir a/b/c/d/e/f/g
-             * rmdir a/b/c/d  (with the pre-fixed rmdir)
+             * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
              * mkdir a/b/c/d/e/f/g
              * ls a/b/c/d/e/f/g -> Operation not permitted
              *
              * /a/b/c/d gets made, because it didn't exist
              * /a/b/c/d/e doesn't get made, because it's in the cache
-             * /a/b/c/d/e/f fails when it tries to update parent, and server
+             * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
              * returns a 404.
              *
-             * if I include stat_cache_delete_parent, then the next
-             * mkdir a/b/c/d/e/f/g and
-             * ls a/b/c/d/e/f/g
-             * will work.
-             *
-             * Maybe if, with a fixed rmdir and this situation will only come up
-             * after calling stat_cache_delete_older and calling stat_cache_prune or some equivalent
-             * after stat_cache_delete_older will prevent the issue from occurring.
+             * REVIEW:
+             * Calling stat_cache_prune will fix this situation if the stat cache is in an
+             * inconsistent internal state (as in the above example). But if it is just a mismatch
+             * between cache and server, delete_parent should correct, and put the stat cache in a state
+             * where stat_cache_prune can reestablish consistency.
              */
             stat_cache_delete_parent(config->cache, path);
+            stat_cache_prune(config->cache);
             return -ENOENT;
         }
         stat_cache_delete_older(config->cache, path, min_generation);

@@ -821,8 +821,8 @@ int stat_cache_prune(stat_cache_t *cache) {
         leveldb_iter_next(iter);
     }
 
-    leveldb_readoptions_destroy(roptions);
     leveldb_iter_destroy(iter);
+    leveldb_readoptions_destroy(roptions);
 
     elapsedtime = time(NULL) - elapsedtime;
     log_print(LOG_INFO, "stat_cache_prune: visited %d cache entries; deleted %d; elapsedtime %ul", visited_entries, deleted_entries, elapsedtime);
