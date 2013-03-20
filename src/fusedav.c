@@ -384,7 +384,7 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
             *is_deleted = false;
         }
         else {
-            log_print(LOG_DEBUG, "DAV:event=%s", ev);
+            log_print(LOG_INFO, "DAV:event=%s", ev);
             *is_deleted = (strcmp(ev, "DESTROYED") == 0);
         }
     }
@@ -2129,6 +2129,8 @@ static void *cache_cleanup(void *ptr) {
         // from errant stat and file caches
         ldb_filecache_cleanup(config->cache, config->cache_path, first);
         first = false;
+
+        stat_cache_prune(config->cache);
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
