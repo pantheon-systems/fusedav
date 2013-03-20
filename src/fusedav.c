@@ -1013,10 +1013,10 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // pulling the file descriptor is the job of ldb_filecache, we'll have
     // to detect there.
     if ((ret = ldb_filecache_release(config->cache, path, info)) < 0) {
-        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, (path?path:"NULL"));
+        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, (path ? path : "null path"));
     }
 
-    log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path?path:"NULL"));
+    log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path ? path : "null path"));
 
     return ret;
 }
@@ -1040,10 +1040,8 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     // descriptor there
     if ((ret = ldb_filecache_sync(config->cache, path, info, true)) < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path);
-        goto finish;
+        return -errno;
     }
-
-finish:
 
     return ret;
 }
@@ -1122,7 +1120,7 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
     if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
-        return ret;
+        return -errno;
     }
 
     log_print(LOG_DEBUG, "do_open: after ldb_filecache_open");
@@ -1166,10 +1164,8 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, s
 
     if ((bytes_read = ldb_filecache_read(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
-        goto finish;
+        return -errno;
     }
-
-finish:
 
     return bytes_read;
 }
@@ -1193,16 +1189,14 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
 
     if ((bytes_written = ldb_filecache_write(info, buf, size, offset)) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
-        goto finish;
+        return -errno;
     }
 
     // Let sync handle the NULL path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
-        return -EIO;
+        return -errno;
     }
-
-finish:
 
    return bytes_written;
 }
@@ -1224,17 +1218,14 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
     if (ldb_filecache_truncate(info, size) < 0) {
         ret = -errno;
         log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", ret, strerror(ret));
-        goto finish;
+        return -errno;
     }
 
     // Let sync handle a NULL path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
-        ret = -EIO;
-        goto finish;
+        return -errno;
     }
-
-finish:
 
     log_print(LOG_DEBUG, "dav_ftruncate: ret=%d", ret);
     return ret;
@@ -1732,14 +1723,13 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     info->flags |= O_CREAT | O_TRUNC;
     ret = do_open(path, info);
 
-    if (ret < 0)
-        return ret;
+    if (ret < 0) return ret;
 
     ret = dav_chmod(path, mode);
 
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
-        return -EIO;
+        return -errno;
     }
 
     log_print(LOG_DEBUG, "Done: create()");
