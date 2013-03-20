@@ -882,10 +882,6 @@ static int dav_rmdir(const char *path) {
 
     stat_cache_delete(config->cache, path);
 
-    /* REVIEW:
-     * this is the part of stat_cache_delete_parent which no longer was happening.
-     * Is it correct and useful to include it here?
-     */
     // Delete Updated_children entry for path
     stat_cache_updated_children(config->cache, path, 0);
 

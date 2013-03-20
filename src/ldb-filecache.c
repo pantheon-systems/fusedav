@@ -969,7 +969,7 @@ static const char *key2path(const char *key) {
     prefix = strstr(key, filecache_prefix);
     // Looking for "fc:" (filecache_prefix) at the beginning of the key
     if (prefix == key) {
-        return key + 3;
+        return key + strlen(filecache_prefix);
     }
     return NULL;
 }
@@ -977,11 +977,14 @@ static const char *key2path(const char *key) {
 static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
     struct dirent *diriter;
     DIR *dir;
-    char cachefile_path[PATH_MAX]; // path to file in the cache
-    char filecache_path[PATH_MAX]; // path to the file cache itself
+    char cachefile_path[PATH_MAX + 1]; // path to file in the cache
+    char filecache_path[PATH_MAX + 1]; // path to the file cache itself
     int ret = 0;
     int visited = 0;
     int unlinked = 0;
+
+    cachefile_path[PATH_MAX] = '\0';
+    filecache_path[PATH_MAX] = '\0';
 
     snprintf(filecache_path, PATH_MAX, "%s/files", cache_path);
     dir = opendir(filecache_path);
@@ -1002,13 +1005,17 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
 
         if ((stbuf.st_mode & S_IFMT ) == S_IFDIR) {
             // We don't expect directories, but skip them
-            if (!cachefile_path[strlen(cachefile_path) - 1] == '.') {
+            if ((strcmp(diriter->d_name, ".") == 0) || (strcmp(diriter->d_name, "..") == 0)) {
+                log_print(LOG_DEBUG, "cleanup_orphans: found . or .. directory: %s", cachefile_path);
+            }
+            else {
                 log_print(LOG_NOTICE, "cleanup_orphans: unexpected directory in filecache: %s", cachefile_path);
                 --ret;
             }
-            else {
-                log_print(LOG_DEBUG, "cleanup_orphans: found . or .. directory: %s", cachefile_path);
-            }
+        }
+        else if ((stbuf.st_mode & S_IFMT ) != S_IFREG) {
+            log_print(LOG_NOTICE, "cleanup_orphans: found and ignoring non-regular file: %s", cachefile_path);
+            --ret;
         }
         else {
             ++visited;
@@ -1025,7 +1032,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
             }
         }
     }
-    log_print(LOG_INFO, "cleanup_orphans: visited %d files, unlinked %d, and had %d issues", visited, unlinked, ret);
+    log_print(LOG_NOTICE, "cleanup_orphans: visited %d files, unlinked %d, and had %d issues", visited, unlinked, ret);
 
     // ret is effectively the number of unexpected issues we encountered
     return ret;
@@ -1053,7 +1060,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
     leveldb_readoptions_set_fill_cache(options, false);
     iter = leveldb_create_iterator(cache, options);
 
-    leveldb_iter_seek(iter, filecache_prefix, 3);
+    leveldb_iter_seek(iter, filecache_prefix, strlen(filecache_prefix));
 
     starttime = time(NULL);
 
