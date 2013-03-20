@@ -529,14 +529,18 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
              * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
              * returns a 404.
              *
-             * REVIEW:
              * Calling stat_cache_prune will fix this situation if the stat cache is in an
              * inconsistent internal state (as in the above example). But if it is just a mismatch
              * between cache and server, delete_parent should correct, and put the stat cache in a state
              * where stat_cache_prune can reestablish consistency.
+             *
+             * We think we have made the fixes necessary to prevent this situation from happening.
+             * For now, don't bother making these calls. Leave this in for future reconsideration
+             * if we continue to see 404 on PROPFIND.
+             *
+             * stat_cache_delete_parent(config->cache, path);
+             * stat_cache_prune(config->cache);
              */
-            stat_cache_delete_parent(config->cache, path);
-            stat_cache_prune(config->cache);
             return -ENOENT;
         }
         stat_cache_delete_older(config->cache, path, min_generation);
