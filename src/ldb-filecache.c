@@ -1064,7 +1064,7 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
         // if path is null, we've gone past the filecache entries
         if (path == NULL) break;
         pdata = (const struct ldb_filecache_pdata *)leveldb_iter_value(iter, &klen);
-        log_print(LOG_DEBUG, "ldb_filecache_cleanup: Visiting %s :: %s", path, pdata?pdata->filename:"no pdata");
+        log_print(LOG_DEBUG, "ldb_filecache_cleanup: Visiting %s :: %s", path, pdata ? pdata->filename : "no pdata");
         if (pdata) {
             ++cached_files;
             // We delete the entry, making pdata invalid, before we might need the filename to unlink,
