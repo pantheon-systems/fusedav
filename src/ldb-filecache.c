@@ -806,8 +806,12 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
-        errno = EBADF;
-        log_print(LOG_ERR, "ldb_filecache_sync: not writable");
+        // We call sync from a variety of places and leave it up to sync to decide
+        // what needs to be done. Since it gets called as part of the normal course
+        // of events for non-writable files, it should not be an error when this is
+        // detected. Signal success and exit.
+        ret = 0;
+        log_print(LOG_DEBUG, "ldb_filecache_sync: not writable");
         goto finish;
     }
 
