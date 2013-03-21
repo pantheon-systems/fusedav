@@ -933,6 +933,14 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
     struct ldb_filecache_pdata *pdata = NULL;
     int ret = -1;
 
+    // If the new_path already exists, it is being overwritten. Delete its ldb cache entry
+    // and unlink its cache file; otherwise, the cache file is orphaned.
+    pdata = ldb_filecache_pdata_get(cache, new_path);
+    if (pdata != NULL) {
+        // ignore errors on delete; filecache_delete will log a message
+        ldb_filecache_delete(cache, new_path, true);
+    }
+
     pdata = ldb_filecache_pdata_get(cache, old_path);
 
     if (pdata == NULL) {
