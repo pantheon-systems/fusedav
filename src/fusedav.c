@@ -565,6 +565,29 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result != NE_OK) {
             log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
+            /* Here's the scenario:
+             * mkdir a/b/c/d/e/f/g
+             * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
+             * mkdir a/b/c/d/e/f/g
+             * ls a/b/c/d/e/f/g -> Operation not permitted
+             *
+             * /a/b/c/d gets made, because it didn't exist
+             * /a/b/c/d/e doesn't get made, because it's in the cache
+             * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
+             * returns a 404.
+             *
+             * Calling stat_cache_prune will fix this situation if the stat cache is in an
+             * inconsistent internal state (as in the above example). But if it is just a mismatch
+             * between cache and server, delete_parent should correct, and put the stat cache in a state
+             * where stat_cache_prune can reestablish consistency.
+             *
+             * We think we have made the fixes necessary to prevent this situation from happening.
+             * For now, don't bother making these calls. Leave this in for future reconsideration
+             * if we continue to see 404 on PROPFIND.
+             *
+             * stat_cache_delete_parent(config->cache, path);
+             * stat_cache_prune(config->cache);
+             */
             return -ENOENT;
         }
         stat_cache_delete_older(config->cache, path, min_generation);
@@ -893,6 +916,9 @@ static int dav_rmdir(const char *path) {
     log_print(LOG_DEBUG, "dav_rmdir: removed(%s)", path);
 
     stat_cache_delete(config->cache, path);
+
+    // Delete Updated_children entry for path
+    stat_cache_updated_children(config->cache, path, 0);
 
     return 0;
 }
@@ -2136,13 +2162,15 @@ static int config_privileges(struct fusedav_config *config) {
 
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
+    bool first = true;
 
     log_print(LOG_DEBUG, "enter cache_cleanup");
 
-    while (1) {
+    while (true) {
         // We would like to do cleanup on startup, to resolve issues
         // from errant stat and file caches
-        ////ldb_filecache_cleanup(config->cache, config->cache_path);
+        ldb_filecache_cleanup(config->cache, config->cache_path, first);
+        first = false;
         stat_cache_prune(config->cache);
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
@@ -2285,7 +2313,7 @@ int main(int argc, char *argv[]) {
 
     // Open the stat cache.
     if (stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path) < 0) {
-        log_print(LOG_WARNING, "Failed to open the stat cache.");
+        log_print(LOG_CRIT, "Failed to open the stat cache.");
         config.cache = NULL;
         goto finish;
     }
