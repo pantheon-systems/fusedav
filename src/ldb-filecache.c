@@ -933,6 +933,15 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
     struct ldb_filecache_pdata *pdata = NULL;
     int ret = -1;
 
+    // If the new_path already exists, it is being overwritten. Delete its ldb cache entry
+    // and unlink its cache file; otherwise, the cache file is orphaned.
+    pdata = ldb_filecache_pdata_get(cache, new_path);
+    if (pdata != NULL) {
+        // ignore errors on delete; filecache_delete will log a message
+        ldb_filecache_delete(cache, new_path, true);
+        free(pdata);
+    }
+
     pdata = ldb_filecache_pdata_get(cache, old_path);
 
     if (pdata == NULL) {
@@ -942,14 +951,12 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
 
     log_print(LOG_DEBUG, "ldb_filecache_pdata_move: Update last_server_update on %s: timestamp: %ul", pdata->filename, pdata->last_server_update);
 
-    log_print(LOG_DEBUG, "ldb_filecache_pdata_move: Update last_server_update on %s: timestamp: %ul", pdata->filename, pdata->last_server_update);
-
     if (ldb_filecache_pdata_set(cache, new_path, pdata) < 0) {
         log_print(LOG_ERR, "ldb_filecache_pdata_move: Moving entry from path %s to %s failed. Could not write new entry.", old_path, new_path);
         goto finish;
     }
 
-    // We don't want to unlink the cachefile for 'old' since we use it for 'new'
+    // "false", since we don't want to unlink the cachefile for 'old' since we use it for 'new'
     ldb_filecache_delete(cache, old_path, false);
 
     ret = 0;
@@ -958,7 +965,7 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
 
 finish:
 
-    if (pdata) free(pdata);
+    free(pdata);
 
     return ret;
 }
