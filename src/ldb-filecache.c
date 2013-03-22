@@ -227,9 +227,10 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
 }
 
 // Get a file descriptor pointing to the latest full copy of the file.
-static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
+static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         const char *cache_path, const char *path, struct ldb_filecache_sdata *sdata,
         struct ldb_filecache_pdata **pdatap, int flags) {
+    ne_session *session;
     int ret = -EBADFD;
     int code;
     ne_request *req = NULL;
@@ -297,6 +298,12 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
         ret = 0;
         // We're done; no need to access the server...
+        goto finish;
+    }
+
+    if (!(session = session_get(1))) {
+        ret = -EIO;
+        log_print(LOG_ERR, "ldb_filecache_open: Failed to get session");
         goto finish;
     }
 
@@ -449,19 +456,12 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
 // top-level open call
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
-    ne_session *session;
     struct ldb_filecache_pdata *pdata = NULL;
     struct ldb_filecache_sdata *sdata = NULL;
     int ret = -EBADF;
     int flags = info->flags;
 
     log_print(LOG_DEBUG, "ldb_filecache_open: %s", path);
-
-    if (!(session = session_get(1))) {
-        ret = -EIO;
-        log_print(LOG_ERR, "ldb_filecache_open: Failed to get session");
-        goto fail;
-    }
 
     // Allocate and zero-out a session data structure.
     sdata = malloc(sizeof(struct ldb_filecache_sdata));
@@ -503,7 +503,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         // Get a file descriptor pointing to a guaranteed-fresh file.
         do {
             ++retries;
-            ret = ldb_get_fresh_fd(session, cache, cache_path, path, sdata, &pdata, flags);
+            ret = ldb_get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags);
             if (ret == 0) {
                 log_print(LOG_DEBUG, "ldb_filecache_open: success on %s", path);
             }
