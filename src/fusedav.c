@@ -1742,7 +1742,7 @@ static int dav_chmod(const char *path, mode_t mode) {
 
     path = path_cvt(path);
 
-    log_print(LOG_DEBUG, "chmod(%s, %04o)", path, mode);
+    log_print(LOG_INFO, "CALLBACK: dav_chmod(%s, %04o)", path, mode);
 
     return do_chmod(path, mode, config);
 
