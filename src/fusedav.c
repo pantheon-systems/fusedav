@@ -193,7 +193,6 @@ static struct fuse_opt fusedav_opts[] = {
 };
 
 static int get_stat(const char *path, struct stat *stbuf);
-int file_exists_or_set_null(char **path);
 
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
@@ -2000,20 +1999,6 @@ static void *lock_thread_func(void *p) {
     log_print(LOG_DEBUG, "lock_thread exiting");
 
     return NULL;
-}
-
-int file_exists_or_set_null(char **path) {
-    FILE *file;
-
-    if ((file = fopen(*path, "r"))) {
-        fclose(file);
-        log_print(LOG_DEBUG, "file_exists_or_set_null(%s): found", *path);
-        return 0;
-    }
-    free(*path);
-    *path = NULL;
-    log_print(LOG_DEBUG, "file_exists_or_set_null(%s): not found", *path);
-    return 0;
 }
 
 static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
