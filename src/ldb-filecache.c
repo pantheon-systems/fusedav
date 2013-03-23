@@ -54,7 +54,6 @@ typedef int fd_t;
 // Session data
 struct ldb_filecache_sdata {
     fd_t fd; // LOCK_SH for write/truncation; LOCK_EX during PUT
-    char filename[PATH_MAX]; // Only used for new replacement files.
     bool readable;
     bool writable;
     bool modified;
@@ -150,9 +149,16 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     struct ldb_filecache_pdata *pdata;
 
     log_print(LOG_DEBUG, "create_file: on %s", path);
+
+    pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
+    if (pdata == NULL) {
+        log_print(LOG_ERR, "create_file: malloc returns NULL for pdata");
+        return -1;
+    }
+
     sdata->modified = true;
     sdata->writable = true;
-    if (new_cache_file(cache_path, sdata->filename, &sdata->fd) < 0) {
+    if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
         return -1;
     }
@@ -171,15 +177,6 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     value.prepopulated = false;
     stat_cache_value_set(cache, path, &value);
     log_print(LOG_DEBUG, "create_file: Updated stat cache for %d : %s", sdata->fd, path);
-
-    // Prepopulate filecache.
-    pdata = malloc(sizeof(struct ldb_filecache_pdata));
-    if (pdata == NULL) {
-        log_print(LOG_ERR, "create_file: malloc returns NULL for pdata");
-        return -1;
-    }
-    memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
-    strncpy(pdata->filename, sdata->filename, sizeof(pdata->filename));
 
     // The local copy currently trumps the server one, no matter how old.
     pdata->last_server_update = 0;
@@ -230,9 +227,10 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
 }
 
 // Get a file descriptor pointing to the latest full copy of the file.
-static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
+static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         const char *cache_path, const char *path, struct ldb_filecache_sdata *sdata,
         struct ldb_filecache_pdata **pdatap, int flags) {
+    ne_session *session;
     int ret = -EBADFD;
     int code;
     ne_request *req = NULL;
@@ -300,6 +298,12 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
         ret = 0;
         // We're done; no need to access the server...
+        goto finish;
+    }
+
+    if (!(session = session_get(1))) {
+        ret = -EIO;
+        log_print(LOG_ERR, "ldb_filecache_open: Failed to get session");
         goto finish;
     }
 
@@ -452,19 +456,12 @@ static int ldb_get_fresh_fd(ne_session *session, ldb_filecache_t *cache,
 
 // top-level open call
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
-    ne_session *session;
     struct ldb_filecache_pdata *pdata = NULL;
     struct ldb_filecache_sdata *sdata = NULL;
     int ret = -EBADF;
     int flags = info->flags;
 
     log_print(LOG_DEBUG, "ldb_filecache_open: %s", path);
-
-    if (!(session = session_get(1))) {
-        ret = -EIO;
-        log_print(LOG_ERR, "ldb_filecache_open: Failed to get session");
-        goto fail;
-    }
 
     // Allocate and zero-out a session data structure.
     sdata = malloc(sizeof(struct ldb_filecache_sdata));
@@ -506,7 +503,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         // Get a file descriptor pointing to a guaranteed-fresh file.
         do {
             ++retries;
-            ret = ldb_get_fresh_fd(session, cache, cache_path, path, sdata, &pdata, flags);
+            ret = ldb_get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags);
             if (ret == 0) {
                 log_print(LOG_DEBUG, "ldb_filecache_open: success on %s", path);
             }
