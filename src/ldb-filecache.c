@@ -38,6 +38,7 @@
 #include "statcache.h"
 #include "fusedav.h"
 #include "log.h"
+#include "macro.h"
 
 #include <ne_uri.h>
 
