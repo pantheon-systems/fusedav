@@ -1029,6 +1029,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
             }
         }
     }
+    closedir(dir);
     log_print(LOG_NOTICE, "cleanup_orphans: visited %d files, unlinked %d, and had %d issues", visited, unlinked, ret);
 
     // ret is effectively the number of unexpected issues we encountered
