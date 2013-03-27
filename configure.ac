@@ -108,7 +108,7 @@ AC_FUNC_MALLOC
 AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr memchr strchr strcspn])
 
 AC_CHECK_LIB([pthread], [pthread_create])
-AC_CHECK_LIB([jemalloc], [malloc], [:], [AC_MSG_ERROR(jemalloc not found or functional. Install the jemalloc allocator.)], [])
+# AC_CHECK_LIB([jemalloc], [malloc], [:], [AC_MSG_ERROR(jemalloc not found or functional. Install the jemalloc allocator.)], [])
 
 PKG_CHECK_MODULES(SYSTEMD, [ libsystemd-journal ] )
 PKG_CHECK_MODULES(YAML, [ yaml-0.1 ] )
