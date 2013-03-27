@@ -150,6 +150,9 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
 
     log_print(LOG_DEBUG, "create_file: on %s", path);
 
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
     if (pdata == NULL) {
         log_print(LOG_ERR, "create_file: malloc returns NULL for pdata");
@@ -754,6 +757,9 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct stat_cache_value value;
 
     assert(sdata);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     // We only do the sync if we have a path
     // If we are accessing a bare file descriptor (open/unlink/read|write),

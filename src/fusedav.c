@@ -441,6 +441,9 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
 
     path = strdup(u->path);
 
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
 
     // @TODO: Consider whether the is_dir check here is worth keeping
@@ -624,6 +627,9 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
     assert(st);
 
     path = strdup(u->path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     strip_trailing_slash(path, &is_dir);
 
@@ -924,6 +930,9 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     path = path_cvt(path);
 
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
     if (!(session = session_get(1))) {
@@ -1118,6 +1127,9 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     BUMP(mknod);
 
     path = path_cvt(path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     log_print(LOG_INFO, "CALLBACK: dav_mknod(%s)", path);
 
