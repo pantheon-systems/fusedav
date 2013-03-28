@@ -528,7 +528,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         min_generation = stat_cache_get_local_generation();
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result != NE_OK) {
-            log_print(LOG_WARNING, "Complete PROPFIND failed: %s", ne_get_error(session));
+            log_print(LOG_WARNING, "Complete PROPFIND failed on %s: %s", path, ne_get_error(session));
             /* Here's the scenario:
              * mkdir a/b/c/d/e/f/g
              * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
@@ -651,6 +651,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     int is_dir = 0;
     time_t parent_children_update_ts;
     bool is_base_directory;
+    int ret = -ENOENT;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -720,12 +721,30 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
     parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path);
-    log_print(LOG_DEBUG, "Parent was updated: %lu", parent_children_update_ts);
+    log_print(LOG_DEBUG, "Parent was updated: %s %lu", parent_path, parent_children_update_ts);
 
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
-        log_print(LOG_DEBUG, "Updating directory: %s", parent_path);
-        update_directory(parent_path, (parent_children_update_ts > 0));
+         ret = update_directory(parent_path, (parent_children_update_ts > 0));
+
+         // If the parent is not on the server, treat the child as not available,
+         // regardless of what might be in stat_cache. This likely will prevent
+         // the 404's we see when trying to open a file
+         if (ret == -ENOENT) {
+            log_print(LOG_NOTICE, "parent returns ENOENT: %s", parent_path);
+
+            /* REVIEW: We might also want to ensure the parent and child is not in stat_cache? */
+            stat_cache_delete(config->cache, path);
+            stat_cache_delete_parent(config->cache, path);
+            stat_cache_prune(config->cache);
+
+            // Need some cleanup before returning ...
+            free(nepp);
+            memset(stbuf, 0, sizeof(struct stat));
+
+            return ret;
+        }
+        // REVIEW: If ret < 0 but not -ENOENT, what should we do?
     }
 
     free(nepp);
