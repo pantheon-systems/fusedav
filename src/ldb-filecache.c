@@ -437,6 +437,11 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         }
         else if (code == 404) {
             log_print(LOG_WARNING, "ldb_get_fresh_fd: File expected to exist returns 404.");
+            /* we get a 404 because the stat_cache returned that the file existed, but it
+             * was not on the server. Deleting it from the stat_cache makes the stat_cache
+             * consistent, so the next access to the file will be handled correctly.
+             */
+            stat_cache_delete(cache, path);
             ret = -ENOENT;
         }
         else {
