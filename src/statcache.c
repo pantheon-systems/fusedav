@@ -50,9 +50,62 @@ struct stat_cache_entry {
     const struct stat_cache_value *value;
 };
 
+struct statistics {
+    unsigned local_gen;
+    unsigned path2key;
+    unsigned key2path;
+    unsigned open;
+    unsigned close;
+    unsigned value_get;
+    unsigned updated_ch;
+    unsigned read_updated;
+    unsigned value_set;
+    unsigned delete;
+    unsigned del_parent;
+    unsigned iter_free;
+    unsigned iter_init;
+    unsigned iter_current;
+    unsigned iter_next;
+    unsigned enumerate;
+    unsigned has_child;
+    unsigned delete_older;
+    unsigned prune;
+};
+
+static struct statistics stats;
+
+#define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
+#define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
+
+void stat_cache_print_stats(void) {
+    log_print(LOG_NOTICE, "Stat Cache Operations:");
+    log_print(LOG_NOTICE, "  local_gen:   %u", FETCH(local_gen));
+    log_print(LOG_NOTICE, "  path2key:    %u", FETCH(path2key));
+    log_print(LOG_NOTICE, "  key2path:    %u", FETCH(key2path));
+    log_print(LOG_NOTICE, "  open:        %u", FETCH(open));
+    log_print(LOG_NOTICE, "  close:       %u", FETCH(close));
+    log_print(LOG_NOTICE, "  value_get:   %u", FETCH(value_get));
+    log_print(LOG_NOTICE, "  updated_ch:  %u", FETCH(updated_ch));
+    log_print(LOG_NOTICE, "  read_updated:%u", FETCH(read_updated));
+    log_print(LOG_NOTICE, "  value_set:   %u", FETCH(value_set));
+    log_print(LOG_NOTICE, "  delete:      %u", FETCH(delete));
+    log_print(LOG_NOTICE, "  del_parent:  %u", FETCH(del_parent));
+    log_print(LOG_NOTICE, "  iter_free:   %u", FETCH(iter_free));
+    log_print(LOG_NOTICE, "  iter_init:   %u", FETCH(iter_init));
+    log_print(LOG_NOTICE, "  iter_current:%u", FETCH(iter_current));
+    log_print(LOG_NOTICE, "  iter_next:   %u", FETCH(iter_next));
+    log_print(LOG_NOTICE, "  enumerate:   %u", FETCH(enumerate));
+    log_print(LOG_NOTICE, "  has_child:   %u", FETCH(has_child));
+    log_print(LOG_NOTICE, "  delete_older:%u", FETCH(delete_older));
+    log_print(LOG_NOTICE, "  prune:      %u", FETCH(prune));
+}
+
 unsigned long stat_cache_get_local_generation(void) {
     static unsigned long counter = 0;
     unsigned long ret;
+
+    BUMP(local_gen);
+
     pthread_mutex_lock(&counter_mutex);
     if (counter == 0) {
         // Top 40 bits for the timestamp. Bottom 24 bits for the counter.
@@ -97,6 +150,8 @@ static char *path2key(const char *path, bool prefix) {
     bool slash_found = false;
     size_t last_slash_pos = 0;
 
+    BUMP(path2key);
+
     log_print(LOG_DEBUG, "path2key(%s, %i)", path, prefix);
 
     if (prefix)
@@ -130,6 +185,9 @@ static char *path2key(const char *path, bool prefix) {
 // Does *not* allocate a new string.
 static const char *key2path(const char *key) {
     size_t pos = 0;
+
+    BUMP(key2path);
+
     while (key[pos]) {
         if (key[pos] == '/')
             return key + pos;
@@ -141,6 +199,8 @@ static const char *key2path(const char *key) {
 int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path) {
     char *error = NULL;
     char storage_path[PATH_MAX];
+
+    BUMP(open);
 
     // Check that a directory is set.
     if (!cache_path) {
@@ -175,6 +235,9 @@ int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supple
 }
 
 int stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental) {
+
+    BUMP(close);
+
     if (cache != NULL)
         leveldb_close(cache);
     if (supplemental.options != NULL) {
@@ -194,6 +257,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     char *errptr = NULL;
     //void *f;
     time_t current_time;
+
+    BUMP(value_get);
 
     key = path2key(path, false);
 
@@ -265,6 +330,8 @@ int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t ti
     char *errptr = NULL;
     int r = 0;
 
+    BUMP(updated_ch);
+
     asprintf(&key, "updated_children:%s", path);
 
     options = leveldb_writeoptions_create();
@@ -292,6 +359,8 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     time_t *value = NULL;
     time_t r;
     size_t vallen;
+
+    BUMP(read_updated);
 
     asprintf(&key, "updated_children:%s", path);
 
@@ -323,6 +392,8 @@ int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cach
     char *errptr = NULL;
     char *key;
     int r = 0;
+
+    BUMP(value_set);
 
     assert(value);
 
@@ -356,6 +427,8 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
     int r = 0;
     char *errptr = NULL;
 
+    BUMP(delete);
+
     key = path2key(path, false);
 
     log_print(LOG_DEBUG, "stat_cache_delete: %s", key);
@@ -379,6 +452,8 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
 int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     char *p;
 
+    BUMP(del_parent);
+
     log_print(LOG_DEBUG, "stat_cache_delete_parent: %s", path);
     if ((p = ne_path_parent(path))) {
         int l = strlen(p);
@@ -400,6 +475,9 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
 }
 
 static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
+
+    BUMP(iter_free);
+
     leveldb_iter_destroy(iter->ldb_iter);
     leveldb_readoptions_destroy(iter->ldb_options);
     free(iter->key_prefix);
@@ -408,6 +486,8 @@ static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
 
 static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *path_prefix) {
     struct stat_cache_iterator *iter = NULL;
+
+    BUMP(iter_init);
 
     iter = malloc(sizeof(struct stat_cache_iterator));
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
@@ -436,6 +516,8 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     const struct stat_cache_value *value;
     const char *key;
     size_t klen, vlen;
+
+    BUMP(iter_current);
 
     assert(iter);
 
@@ -472,6 +554,9 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
 }
 
 static void stat_cache_iter_next(struct stat_cache_iterator *iter) {
+
+    BUMP(iter_next);
+
     leveldb_iter_next(iter->ldb_iter);
 }
 
@@ -521,6 +606,8 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     time_t timestamp;
     time_t current_time;
 
+    BUMP(enumerate);
+
     log_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
 
     //stat_cache_list_all(cache, path_prefix);
@@ -564,6 +651,8 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     struct stat_cache_entry *entry;
     bool has_children = false;
 
+    BUMP(has_child);
+
     log_print(LOG_DEBUG, "stat_cache_dir_has_children(%s)", path);
 
     iter = stat_cache_iter_init(cache, path);
@@ -580,6 +669,8 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
 int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
+
+    BUMP(delete_older);
 
     log_print(LOG_DEBUG, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
@@ -604,6 +695,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     leveldb_writeoptions_t *woptions;
     struct leveldb_iterator_t *iter;
     const char *iterkey;
+    const char *key;
     char *basepath = NULL;
     char path[PATH_MAX];
     char *slash;
@@ -624,6 +716,8 @@ int stat_cache_prune(stat_cache_t *cache) {
     int visited_entries = 0;
     int deleted_entries = 0;
     time_t elapsedtime;
+
+    BUMP(prune);
 
     elapsedtime = time(NULL);
 
@@ -661,9 +755,11 @@ int stat_cache_prune(stat_cache_t *cache) {
 
         while (leveldb_iter_valid(iter)) {
             iterkey = leveldb_iter_key(iter, &klen);
-            strncpy(path, key2path(iterkey), PATH_MAX);
+            assert(iterkey);
+            key = key2path(iterkey);
+            log_print(LOG_INFO, "stat_cache_prune: ITERKEY: \'%s\' :: %s :: %s", iterkey, path, key);
+            strncpy(path, key, PATH_MAX);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
-            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s", iterkey, path);
 
             // We control what kinds of entries are in the leveldb db.
             // Those beginning with a number are stat cache entries and
