@@ -624,6 +624,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     // Statistics
     int visited_entries = 0;
     int deleted_entries = 0;
+    int issues = 0;
     time_t elapsedtime;
 
     elapsedtime = time(NULL);
@@ -666,15 +667,25 @@ int stat_cache_prune(stat_cache_t *cache) {
             // armor against potential faults
             if (iterkey == NULL) {
                 log_print(LOG_NOTICE, "stat_cache_prune: ignoring NULL iterkey");
+                woptions = leveldb_writeoptions_create();
+                leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
+                leveldb_writeoptions_destroy(woptions);
+                ++issues;
+                leveldb_iter_next(iter);
                 continue;
             }
             key = key2path(iterkey);
             if (key == NULL) {
                 log_print(LOG_NOTICE, "stat_cache_prune: ignoring malformed iterkey");
+                woptions = leveldb_writeoptions_create();
+                leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
+                leveldb_writeoptions_destroy(woptions);
+                ++issues;
+                leveldb_iter_next(iter);
                 continue;
             }
-            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s :: %s", iterkey, path, key);
             strncpy(path, key, PATH_MAX);
+            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s :: %s", iterkey, path, key);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
 
             // We control what kinds of entries are in the leveldb db.
@@ -837,7 +848,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     leveldb_readoptions_destroy(roptions);
 
     elapsedtime = time(NULL) - elapsedtime;
-    log_print(LOG_NOTICE, "stat_cache_prune: visited %d cache entries; deleted %d; elapsedtime %ul", visited_entries, deleted_entries, elapsedtime);
+    log_print(LOG_NOTICE, "stat_cache_prune: visited %d cache entries; deleted %d; had %d issues; elapsedtime %ul", visited_entries, deleted_entries, issues, elapsedtime);
 
     bloomfilter_destroy(boptions);
 
