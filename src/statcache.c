@@ -604,6 +604,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     leveldb_writeoptions_t *woptions;
     struct leveldb_iterator_t *iter;
     const char *iterkey;
+    const char *key;
     char *basepath = NULL;
     char path[PATH_MAX];
     char *slash;
@@ -661,9 +662,20 @@ int stat_cache_prune(stat_cache_t *cache) {
 
         while (leveldb_iter_valid(iter)) {
             iterkey = leveldb_iter_key(iter, &klen);
-            strncpy(path, key2path(iterkey), PATH_MAX);
+            // I have encountered bad entries in stat cache during development;
+            // armor against potential faults
+            if (iterkey == NULL) {
+                log_print(LOG_NOTICE, "stat_cache_prune: ignoring NULL iterkey");
+                continue;
+            }
+            key = key2path(iterkey);
+            if (key == NULL) {
+                log_print(LOG_NOTICE, "stat_cache_prune: ignoring malformed iterkey");
+                continue;
+            }
+            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s :: %s", iterkey, path, key);
+            strncpy(path, key, PATH_MAX);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
-            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s", iterkey, path);
 
             // We control what kinds of entries are in the leveldb db.
             // Those beginning with a number are stat cache entries and
