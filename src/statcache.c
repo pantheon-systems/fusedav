@@ -97,7 +97,7 @@ void stat_cache_print_stats(void) {
     log_print(LOG_NOTICE, "  enumerate:   %u", FETCH(enumerate));
     log_print(LOG_NOTICE, "  has_child:   %u", FETCH(has_child));
     log_print(LOG_NOTICE, "  delete_older:%u", FETCH(delete_older));
-    log_print(LOG_NOTICE, "  prune:      %u", FETCH(prune));
+    log_print(LOG_NOTICE, "  prune:       %u", FETCH(prune));
 }
 
 unsigned long stat_cache_get_local_generation(void) {
