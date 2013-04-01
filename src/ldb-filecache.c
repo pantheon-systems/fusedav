@@ -213,6 +213,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
 
     struct stat_cache_value value;
     struct ldb_filecache_pdata *pdata;
+    int ret = -1;
 
     BUMP(create_file);
 
@@ -231,7 +232,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     sdata->writable = true;
     if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
-        return -1;
+        goto finish;
     }
 
     // Prepopulate stat cache.
@@ -254,6 +255,9 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
 
     log_print(LOG_DEBUG, "create_file: Updating file cache for %d : %s : %s : timestamp %ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
     ldb_filecache_pdata_set(cache, path, pdata);
+
+finish:
+
     free(pdata);
 
     return 0;
@@ -816,6 +820,8 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
         if (value) {
             strncpy(etag, value, ETAG_MAX);
             etag[ETAG_MAX] = '\0';
+        } else {
+            etag[0] = '\0';
         }
         log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
     }
