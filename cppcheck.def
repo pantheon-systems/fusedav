@@ -1,0 +1,89 @@
+void *leveldb_open() {
+    return malloc(1);
+}
+void leveldb_close(void *p) {
+    free(p);
+}
+
+void *leveldb_get() {
+    return malloc(1);
+}
+void *leveldb_property_value() {
+    return malloc(1);
+}
+void leveldb_free(void *p) {
+    free(p);
+}
+
+void *leveldb_create_iterator() {
+    return malloc(1);
+}
+void leveldb_iter_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_create_snapshot() {
+    return malloc(1);
+}
+void leveldb_release_snapshot(void *p) {
+    free(p);
+}
+
+void *leveldb_writebatch_create() {
+    return malloc(1);
+}
+void leveldb_writebatch_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_options_create() {
+    return malloc(1);
+}
+void leveldb_options_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_comparator_create() {
+    return malloc(1);
+}
+void leveldb_comparator_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_filterpolicy_create() {
+    return malloc(1);
+}
+void *leveldb_filterpolicy_create_bloom() {
+    return malloc(1);
+}
+void leveldb_filterpolicy_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_readoptions_create() {
+    return malloc(1);
+}
+void leveldb_readoptions_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_writeoptions_create() {
+    return malloc(1);
+}
+void leveldb_writeoptions_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_cache_create_lru() {
+    return malloc(1);
+}
+void leveldb_cache_destroy(void *p) {
+    free(p);
+}
+
+void *leveldb_create_default_env() {
+    return malloc(1);
+}
+void leveldb_env_destroy(void *p) {
+    free(p);
+}

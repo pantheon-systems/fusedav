@@ -163,6 +163,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     sdata->writable = true;
     if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
+        free(pdata);
         return -1;
     }
 
@@ -212,6 +213,7 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
+        free(pdata);
         return NULL;
     }
 
@@ -337,12 +339,12 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         // missing and handled it there.
         code = ne_get_status(req)->code;
         if (code == 304) {
-            log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
-
             // Gobble up any remaining data in the response.
             ne_discard_response(req);
 
             if (pdata != NULL) {
+                log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
+
                 // Mark the cache item as revalidated at the current time.
                 pdata->last_server_update = time(NULL);
 
@@ -644,8 +646,7 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
         log_print(LOG_ERR, "ldb_filecache_close: Session data lacks a cache file descriptor.");
     }
 
-    if (sdata != NULL)
-        free(sdata);
+    free(sdata);
 
     return ret;
 }
