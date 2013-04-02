@@ -362,7 +362,7 @@ static int proppatch_with_redirect(
 
 
 static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *is_deleted, int is_dir) {
-    const char *rt, *e, *gcl, *glm, *cd, *ev;
+    const char *rt, *e, *gcl, *glm, *cd;
     const ne_propname resourcetype = { "DAV:", "resourcetype" };
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
@@ -385,6 +385,7 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
     }
 
     if (is_deleted != NULL) {
+        const char *ev;
         ev = ne_propset_value(results, &event);
         if (ev == NULL) {
             *is_deleted = false;
@@ -489,7 +490,6 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     bool needs_update = true;
     ne_session *session;
-    unsigned int min_generation;
     time_t last_updated;
     time_t timestamp;
     char *update_path = NULL;
@@ -523,6 +523,8 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     // If we had *no data* or freshening failed, rebuild the cache
     // with a full PROPFIND.
     if (needs_update) {
+        unsigned int min_generation;
+
         log_print(LOG_DEBUG, "Replacing directory data: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
@@ -1375,7 +1377,6 @@ static int listxattr_iterator(
         __unused const ne_status *status) {
 
     struct listxattr_info *l = userdata;
-    int n;
 
     assert(l);
 
@@ -1383,6 +1384,7 @@ static int listxattr_iterator(
         return -1;
 
     if (l->list) {
+        int n;
         n = snprintf(l->list, l->space, "user.webdav(%s;%s)", pname->nspace, pname->name) + 1;
 
         if (n >= (int) l->space) {
@@ -1949,7 +1951,7 @@ static int create_lock(int lock_timeout) {
         if (!(owner = getenv("USER")))
             if (!(owner = getenv("LOGNAME"))) {
                 snprintf(_owner, sizeof(_owner), "%lu", (unsigned long) getuid());
-                owner = owner;
+                owner = _owner;
             }
 
     ne_fill_server_uri(session, &lock->uri);

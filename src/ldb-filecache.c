@@ -689,7 +689,6 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     ne_request *req;
     struct stat st;
     int ret = -1;
-    const char *value;
 
     log_print(LOG_DEBUG, "enter: ne_put_return_etag(,%s,%d,,)", path, fd);
 
@@ -729,6 +728,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     }
 
     if (ret == NE_OK) {
+        const char *value;
         value = ne_get_response_header(req, "etag");
         if (value) {
             strncpy(etag, value, ETAG_MAX);
@@ -759,7 +759,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
     struct ldb_filecache_pdata *pdata = NULL;
-    ne_session *session;
     struct stat_cache_value value;
 
     assert(sdata);
@@ -796,6 +795,8 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     if (sdata->modified) {
         if (do_put) {
+            ne_session *session;
+
             log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
             if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
                 log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
