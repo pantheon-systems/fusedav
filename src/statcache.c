@@ -304,7 +304,6 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
-        r = 0;
     }
 
     free(key);

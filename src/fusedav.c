@@ -2191,8 +2191,9 @@ int main(int argc, char *argv[]) {
     int lock_thread_running = 0;
     int fail = 0;
 
-    // Initialize the statistics.
+    // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
+    memset(&config, 0, sizeof(config));
 
     signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
@@ -2218,7 +2219,6 @@ int main(int argc, char *argv[]) {
     if (setup_signal_handlers() < 0)
         goto finish;
 
-    memset(&config, 0, sizeof(config));
     // default verbosity: LOG_NOTICE
     config.verbosity = 5;
 
@@ -2378,7 +2378,7 @@ finish:
     ne_sock_exit();
     log_print(LOG_DEBUG, "Unset libneon thread-safety locks.");
 
-    if (stat_cache_close(config.cache, config.cache_supplemental) < 0)
+    if (config.cache != NULL && stat_cache_close(config.cache, config.cache_supplemental) < 0)
         log_print(LOG_ERR, "Failed to close the stat cache.");
 
     log_print(LOG_NOTICE, "Shutdown was successful. Exiting.");
