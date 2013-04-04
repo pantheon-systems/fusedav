@@ -675,6 +675,8 @@ int stat_cache_prune(stat_cache_t *cache) {
                 leveldb_iter_next(iter);
                 continue;
             }
+            // We'll need to change path below, so we don't want it to be a part of iterkey.
+            // Make a copy first.
             strncpy(path, key, PATH_MAX);
             log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s :: %s", iterkey, path, key);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
