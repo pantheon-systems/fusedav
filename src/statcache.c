@@ -665,15 +665,6 @@ int stat_cache_prune(stat_cache_t *cache) {
             iterkey = leveldb_iter_key(iter, &klen);
             // I have encountered bad entries in stat cache during development;
             // armor against potential faults
-            if (iterkey == NULL) {
-                log_print(LOG_NOTICE, "stat_cache_prune: ignoring NULL iterkey");
-                woptions = leveldb_writeoptions_create();
-                leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
-                leveldb_writeoptions_destroy(woptions);
-                ++issues;
-                leveldb_iter_next(iter);
-                continue;
-            }
             key = key2path(iterkey);
             if (key == NULL) {
                 log_print(LOG_NOTICE, "stat_cache_prune: ignoring malformed iterkey");
