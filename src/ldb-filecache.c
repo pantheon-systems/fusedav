@@ -232,7 +232,8 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     sdata->writable = true;
     if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
-        goto finish;
+        free(pdata);
+        return -1;
     }
 
     // Prepopulate stat cache.
@@ -286,6 +287,7 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
+        free(pdata);
         return NULL;
     }
 
@@ -413,12 +415,12 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         // missing and handled it there.
         code = ne_get_status(req)->code;
         if (code == 304) {
-            log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
-
             // Gobble up any remaining data in the response.
             ne_discard_response(req);
 
             if (pdata != NULL) {
+                log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
+
                 // Mark the cache item as revalidated at the current time.
                 pdata->last_server_update = time(NULL);
 
@@ -728,8 +730,7 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
         log_print(LOG_ERR, "ldb_filecache_close: Session data lacks a cache file descriptor.");
     }
 
-    if (sdata != NULL)
-        free(sdata);
+    free(sdata);
 
     return ret;
 }
@@ -755,8 +756,6 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
 
     log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
 
-    ret = 0;
-
 finish:
 
     // close, even on error
@@ -774,7 +773,6 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     ne_request *req;
     struct stat st;
     int ret = -1;
-    const char *value;
 
     BUMP(return_etag);
 
@@ -816,6 +814,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     }
 
     if (ret == NE_OK) {
+        const char *value;
         value = ne_get_response_header(req, "etag");
         if (value) {
             strncpy(etag, value, ETAG_MAX);
@@ -848,7 +847,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
     struct ldb_filecache_pdata *pdata = NULL;
-    ne_session *session;
     struct stat_cache_value value;
 
     BUMP(sync);
@@ -887,6 +885,8 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     if (sdata->modified) {
         if (do_put) {
+            ne_session *session;
+
             log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
             if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
                 log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));

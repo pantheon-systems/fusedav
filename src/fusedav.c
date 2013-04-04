@@ -370,7 +370,7 @@ static int proppatch_with_redirect(
 
 
 static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *is_deleted, int is_dir) {
-    const char *rt, *e, *gcl, *glm, *cd, *ev;
+    const char *rt, *e, *gcl, *glm, *cd;
     const ne_propname resourcetype = { "DAV:", "resourcetype" };
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
@@ -393,6 +393,7 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
     }
 
     if (is_deleted != NULL) {
+        const char *ev;
         ev = ne_propset_value(results, &event);
         if (ev == NULL) {
             *is_deleted = false;
@@ -497,7 +498,6 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     bool needs_update = true;
     ne_session *session;
-    unsigned int min_generation;
     time_t last_updated;
     time_t timestamp;
     char *update_path = NULL;
@@ -531,6 +531,8 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     // If we had *no data* or freshening failed, rebuild the cache
     // with a full PROPFIND.
     if (needs_update) {
+        unsigned int min_generation;
+
         log_print(LOG_DEBUG, "Replacing directory data: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
@@ -827,7 +829,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 
     BUMP(fgetattr);
 
-    if (path) path = path_cvt(path);
+    path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
     ret = common_getattr(path, stbuf, info);
@@ -1076,9 +1078,9 @@ finish:
     if (entry != NULL)
         free(entry);
 
-    if (_from) free(_from);
-
     log_print(LOG_DEBUG, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
+
+    if (_from) free(_from);
 
     // if either the server move or the local move succeed, we return
     if (server_ret == 0 || local_ret == 0) return 0;
@@ -1383,7 +1385,6 @@ static int listxattr_iterator(
         __unused const ne_status *status) {
 
     struct listxattr_info *l = userdata;
-    int n;
 
     assert(l);
 
@@ -1391,6 +1392,7 @@ static int listxattr_iterator(
         return -1;
 
     if (l->list) {
+        int n;
         n = snprintf(l->list, l->space, "user.webdav(%s;%s)", pname->nspace, pname->name) + 1;
 
         if (n >= (int) l->space) {
@@ -1957,7 +1959,7 @@ static int create_lock(int lock_timeout) {
         if (!(owner = getenv("USER")))
             if (!(owner = getenv("LOGNAME"))) {
                 snprintf(_owner, sizeof(_owner), "%lu", (unsigned long) getuid());
-                owner = owner;
+                owner = _owner;
             }
 
     ne_fill_server_uri(session, &lock->uri);
@@ -2197,8 +2199,9 @@ int main(int argc, char *argv[]) {
     int lock_thread_running = 0;
     int fail = 0;
 
-    // Initialize the statistics.
+    // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
+    memset(&config, 0, sizeof(config));
 
     signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
@@ -2224,12 +2227,11 @@ int main(int argc, char *argv[]) {
     if (setup_signal_handlers() < 0)
         goto finish;
 
-    memset(&config, 0, sizeof(config));
     // default verbosity: LOG_NOTICE
     config.verbosity = 5;
 
     // Parse options.
-    if (!fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
+    if (fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
         goto finish;
     }
@@ -2384,7 +2386,7 @@ finish:
     ne_sock_exit();
     log_print(LOG_DEBUG, "Unset libneon thread-safety locks.");
 
-    if (stat_cache_close(config.cache, config.cache_supplemental) < 0)
+    if (config.cache != NULL && stat_cache_close(config.cache, config.cache_supplemental) < 0)
         log_print(LOG_ERR, "Failed to close the stat cache.");
 
     log_print(LOG_NOTICE, "Shutdown was successful. Exiting.");
