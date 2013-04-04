@@ -615,7 +615,6 @@ int stat_cache_prune(stat_cache_t *cache) {
     bloomfilter_options_t *boptions;
     char *errptr = NULL;
 
-    int ret = -1;
     int pass = 0;
     int passes = 1; // passes will grow as we detect larger depths
     int depth;
@@ -635,14 +634,14 @@ int stat_cache_prune(stat_cache_t *cache) {
     if (boptions == NULL) {
         log_print(LOG_ERR, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
         if (errptr) free(errptr);
-        return ret;
+        return -1;
     }
 
     // We need to make sure the base_directory is in the filter before continuing
     log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
     if (bloomfilter_add(boptions, base_directory, strlen(base_directory)) < 0) {
         log_print(LOG_ERR, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
-        return ret;
+        return -1;
     }
 
     log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", base_directory);
@@ -661,7 +660,7 @@ int stat_cache_prune(stat_cache_t *cache) {
         log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d (%d)", pass, passes);
         leveldb_iter_seek_to_first(iter);
 
-        while (leveldb_iter_valid(iter)) {
+        for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
             iterkey = leveldb_iter_key(iter, &klen);
             // I have encountered bad entries in stat cache during development;
             // armor against potential faults
@@ -672,7 +671,6 @@ int stat_cache_prune(stat_cache_t *cache) {
                 leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
                 leveldb_writeoptions_destroy(woptions);
                 ++issues;
-                leveldb_iter_next(iter);
                 continue;
             }
             // We'll need to change path below, so we don't want it to be a part of iterkey.
@@ -694,7 +692,6 @@ int stat_cache_prune(stat_cache_t *cache) {
             // @TODO seems not to set errno on returning 0
             if (depth == 0 /*&& errno != 0*/) {
                 log_print(LOG_DEBUG, "stat_cache_prune: depth = 0; break:%d, %d", depth, errno);
-                ret = 0;
                 break;
             }
 
@@ -732,8 +729,6 @@ int stat_cache_prune(stat_cache_t *cache) {
                 // If base_directory is in the stat cache, we don't want to compare it
                 // to its parent directory, find it absent in the filter, and remove base_directory
                 if (strcmp(path, base_directory) == 0) {
-                    ret = 0;
-                    leveldb_iter_next(iter);
                     continue;
                 }
 
@@ -745,8 +740,6 @@ int stat_cache_prune(stat_cache_t *cache) {
                 // in the stat cache, this must be an errant entry. We should error instead?
                 if (slash == NULL) {
                     log_print(LOG_INFO, "stat_cache_prune: ignoring errant entry \'%s\'", path);
-                    ret = 0;
-                    leveldb_iter_next(iter);
                     continue;
                 }
 
@@ -777,8 +770,6 @@ int stat_cache_prune(stat_cache_t *cache) {
                     stat_cache_delete(cache, path);
                 }
             }
-            ret = 0;
-            leveldb_iter_next(iter);
         }
         ++pass;
         log_print(LOG_DEBUG, "stat_cache_prune: updating pass %d", pass);
@@ -845,5 +836,5 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     bloomfilter_destroy(boptions);
 
-    return ret;
+    return 0;
 }
