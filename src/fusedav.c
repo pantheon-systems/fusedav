@@ -821,7 +821,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 
     BUMP(fgetattr);
 
-    if (path) path = path_cvt(path);
+    path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
     ret = common_getattr(path, stbuf, info);
