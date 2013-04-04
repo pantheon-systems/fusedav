@@ -1070,9 +1070,9 @@ finish:
     if (entry != NULL)
         free(entry);
 
-    if (_from) free(_from);
-
     log_print(LOG_DEBUG, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
+
+    if (_from) free(_from);
 
     // if either the server move or the local move succeed, we return
     if (server_ret == 0 || local_ret == 0) return 0;
@@ -2223,7 +2223,7 @@ int main(int argc, char *argv[]) {
     config.verbosity = 5;
 
     // Parse options.
-    if (!fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
+    if (fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
         goto finish;
     }
