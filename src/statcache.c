@@ -210,6 +210,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
+        free(value);
         return NULL;
     }
 
@@ -303,7 +304,6 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
-        r = 0;
     }
 
     free(key);
