@@ -30,6 +30,7 @@
 
 typedef leveldb_t ldb_filecache_t;
 
+void filecache_print_stats(void);
 int ldb_filecache_init(char *cache_path);
 int ldb_filecache_delete(ldb_filecache_t *cache, const char *path, bool unlink);
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info);
