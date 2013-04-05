@@ -213,7 +213,6 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
 
     struct stat_cache_value value;
     struct ldb_filecache_pdata *pdata;
-    int ret = -1;
 
     BUMP(create_file);
 
