@@ -256,8 +256,6 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     log_print(LOG_DEBUG, "create_file: Updating file cache for %d : %s : %s : timestamp %ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
     ldb_filecache_pdata_set(cache, path, pdata);
 
-finish:
-
     free(pdata);
 
     return 0;
