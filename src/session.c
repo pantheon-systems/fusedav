@@ -59,7 +59,8 @@ static pthread_mutex_t credential_mutex = PTHREAD_MUTEX_INITIALIZER;
 static char* ask_user(const char *p, int hidden) {
     char q[256], *r;
     struct termios t;
-    int c = 0, l;
+    int c = 0;
+    //int l;
 
     if (hidden) {
         if (!isatty(fileno(stdin)))
@@ -78,9 +79,11 @@ static char* ask_user(const char *p, int hidden) {
 
     fprintf(stderr, "%s: ", p);
     r = fgets(q, sizeof(q), stdin);
-    l = strlen(q);
-    if (l && q[l-1] == '\n')
-        q[l-1] = 0;
+
+    // According to cppcheck, this doesn't do anything. I think it's right.
+    //l = strlen(q);    
+    //if (l && q[l-1] == '\n')
+    //    q[l-1] = 0;
 
     if (hidden) {
         t.c_lflag = c;
