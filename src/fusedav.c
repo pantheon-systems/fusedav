@@ -2117,7 +2117,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     case KEY_VERSION:
         fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
         fprintf(stderr, "LevelDB version %d.%d\n", leveldb_major_version(), leveldb_minor_version());
-        fprintf(stderr, "neon version %s\n", ne_version_string());
+        fprintf(stderr, "%s\n", ne_version_string());
         //malloc_stats_print(NULL, NULL, "g");
         fuse_opt_add_arg(outargs, "--version");
         fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
