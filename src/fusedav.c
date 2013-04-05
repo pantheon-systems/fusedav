@@ -44,6 +44,8 @@
 #include <grp.h>
 #include <pwd.h>
 
+#include <curl/curl.h>
+
 #include <ne_request.h>
 #include <ne_basic.h>
 #include <ne_props.h>
