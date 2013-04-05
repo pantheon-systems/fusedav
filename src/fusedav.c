@@ -262,12 +262,20 @@ static void sigusr2_handler(__unused int signum) {
     log_print(LOG_NOTICE, "  unlink:      %u", FETCH(unlink));
     log_print(LOG_NOTICE, "  utimens:     %u", FETCH(utimens));
     log_print(LOG_NOTICE, "  write:       %u", FETCH(write));
+
+    filecache_print_stats();
+    stat_cache_print_stats();
 }
 
 static void path_cvt_tsd_key_init(void) {
     pthread_key_create(&path_cvt_tsd_key, free);
 }
 
+/* REVIEW: seems like the only reason we go through this pthread_* rigamarole is
+ * to pass in free so that the path gets free'd when the thread terminates.
+ * As opposed to calling free after each call to path_cvt.
+ * True?
+ */
 static const char *path_cvt(const char *path) {
     char *r, *t;
     int l;
