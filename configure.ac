@@ -115,6 +115,7 @@ PKG_CHECK_MODULES(YAML, [ yaml-0.1 ] )
 PKG_CHECK_MODULES(LEVELDB, [ leveldb ])
 PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(CURL, [ libcurl >= 7.24.0 ])
+PKG_CHECK_MODULES(XML2, [ libxml2 >= 2.7.8 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 PKG_CHECK_MODULES(ZLIB, [ zlib >= 1.2.5 ])
 

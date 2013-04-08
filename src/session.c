@@ -28,15 +28,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#include <ne_uri.h>
-#include <ne_request.h>
-#include <ne_basic.h>
-#include <ne_props.h>
-#include <ne_utils.h>
-#include <ne_socket.h>
-#include <ne_auth.h>
-#include <ne_dates.h>
-#include <ne_redirect.h>
+#include <curl/curl.h>
 
 #include "log.h"
 #include "session.h"
@@ -45,154 +37,52 @@
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
 
-ne_uri uri;
-static int b_uri = 0;
+static char *ca_certificate = NULL;
+static char *client_certificate = NULL;
+static char *base_url = NULL;
+static char *user_agent = NULL;
 
-char *username = NULL;
-static char *password = NULL;
-char *client_certificate = NULL;
-char *ca_certificate = NULL;
-char *base_directory = NULL;
+int session_config_init(char *base, char *ca_cert, char *client_cert) {
+    size_t base_len;
 
-static pthread_mutex_t credential_mutex = PTHREAD_MUTEX_INITIALIZER;
+    assert(base);
 
-static char* ask_user(const char *p, int hidden) {
-    char q[256], *r;
-    struct termios t;
-    int c = 0;
-    //int l;
-
-    if (hidden) {
-        if (!isatty(fileno(stdin)))
-            hidden = 0;
-        else {
-            if (tcgetattr(fileno(stdin),  &t) < 0)
-                hidden = 0;
-            else {
-                c = t.c_lflag;
-                t.c_lflag &= ~ECHO;
-                if (tcsetattr(fileno(stdin), TCSANOW, &t) < 0)
-                    hidden = 0;
-            }
-        }
+    if (curl_global_init(CURL_GLOBAL_ALL)) {
+        log_print(LOG_CRIT, "Failed to initialize libcurl.");
+        return -1;
     }
 
-    fprintf(stderr, "%s: ", p);
-    r = fgets(q, sizeof(q), stdin);
+    asprintf(&user_agent, "FuseDAV/%s", PACKAGE_VERSION);
 
-    // According to cppcheck, this doesn't do anything. I think it's right.
-    //l = strlen(q);    
-    //if (l && q[l-1] == '\n')
-    //    q[l-1] = 0;
+    // Ensure the base URL has a trailing slash.
+    base_len = strlen(base_url);
+    if (base[base_len - 1] == '/')
+        base_url = strdup(base);
+    else
+        asprintf(&base_url, "%s/", base);
 
-    if (hidden) {
-        t.c_lflag = c;
-        tcsetattr(fileno(stdin), TCSANOW, &t);
-        fprintf(stderr, "\n");
-    }
+    if (ca_cert != NULL)
+        ca_certificate = strdup(ca_cert);
 
-    return r ? strdup(r) : NULL;
-}
+    if (client_cert != NULL)
+        client_certificate = strdup(client_cert);
 
-static int ssl_verify_cb(__unused void *userdata, __unused int failures, __unused const ne_ssl_certificate *cert) {
     return 0;
 }
 
-static int ne_auth_creds_cb(__unused void *userdata, const char *realm, int attempt, char *u, char *p) {
-    int r = -1;
-
-    pthread_mutex_lock(&credential_mutex);
-
-    if (attempt) {
-        log_print(LOG_WARNING, "Authentication failure!");
-        fprintf(stderr, "Authentication failure!\n");
-        free((void*) username);
-        free((void*) password);
-        username = password = NULL;
-    }
-
-    if (!username || !password)
-        fprintf(stderr, "Realm '%s' requires authentication.\n", realm);
-
-    if (!username)
-        username = ask_user("Username", 0);
-
-    if (username && !password)
-        password = ask_user("Password", 1);
-
-    if (username && password) {
-        snprintf(u, NE_ABUFSIZ, "%s", username);
-        snprintf(p, NE_ABUFSIZ, "%s", password);
-        r  = 0;
-    }
-
-    pthread_mutex_unlock(&credential_mutex);
-    return r;
-}
-
-static ne_session *session_open(int with_lock) {
-    const char *scheme = NULL;
-    ne_session *session;
-
-    extern ne_lock_store *lock_store;
-
-    log_print(LOG_NOTICE, "Opening session.");
-
-    if (!b_uri)
-        return NULL;
-
-    scheme = uri.scheme ? uri.scheme : "http";
-
-    if (!(session = ne_session_create(scheme, uri.host, uri.port ? uri.port : ne_uri_defaultport(scheme)))) {
-        log_print(LOG_ERR, "Failed to create session");
-        return NULL;
-    }
-
-    if (ca_certificate) {
-        ne_ssl_certificate *ne_ca_cert = ne_ssl_cert_read(ca_certificate);
-        if (ne_ca_cert) {
-            ne_ssl_trust_cert(session, ne_ca_cert);
-            ne_ssl_cert_free(ne_ca_cert);
-        }
-        else {
-            log_print(LOG_CRIT, "Could not load CA certificate: %s", ca_certificate);
-            return NULL;
-        }
-    }
-
-    if (client_certificate) {
-        ne_ssl_client_cert *ne_client_cert = ne_ssl_clicert_read(client_certificate);
-        if (ne_client_cert == NULL) {
-           log_print(LOG_CRIT, "Could not load client certificate: %s", client_certificate);
-           return NULL;
-        } else if (ne_ssl_clicert_encrypted(ne_client_cert)) {
-           const char *certificate_password = "pantheon"; // @TODO: Make configurable.
-           if (ne_ssl_clicert_decrypt(ne_client_cert, certificate_password)) {
-              log_print(LOG_CRIT, "Could not decrypt the client certificate: %s", client_certificate);
-              return NULL;
-           }
-        }
-        ne_ssl_set_clicert(session, ne_client_cert);
-        ne_ssl_clicert_free(ne_client_cert);
-    }
-
-    ne_ssl_set_verify(session, ssl_verify_cb, NULL);
-    ne_set_server_auth(session, ne_auth_creds_cb, NULL);
-    ne_redirect_register(session);
-
-    if (with_lock && lock_store)
-        ne_lockstore_register(lock_store, session);
-
-    return session;
+void session_config_free(void) {
+    free(user_agent);
+    free(base_url);
+    free(ca_certificate);
+    free(client_certificate);
+    free(client_certificate_password);
 }
 
 static void session_destroy(void *s) {
-    ne_session *session = s;
-
+    CURL *session = s;
     log_print(LOG_NOTICE, "Destroying session.");
-
     assert(s);
-    ne_session_destroy(session);
+    curl_easy_cleanup(session);
 }
 
 static void session_tsd_key_init(void) {
@@ -200,93 +90,44 @@ static void session_tsd_key_init(void) {
     pthread_key_create(&session_tsd_key, session_destroy);
 }
 
-ne_session *session_get(int with_lock) {
-    ne_session *session;
+CURL *session_get_handle(void) {
+    CURL *session;
 
     pthread_once(&session_once, session_tsd_key_init);
 
     if ((session = pthread_getspecific(session_tsd_key)))
         return session;
 
-    session = session_open(with_lock);
+    log_print(LOG_NOTICE, "Opening session.");
+    session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
     return session;
 }
 
-int session_set_uri(const char *s, const char *u, const char *p, const char *client_cert, const char *ca_cert) {
-    int l;
+CURL *session_request_init(const char *path) {
+    CURL *session = session_get_handle();
+    char *full_url = NULL;
 
-    assert(!b_uri);
-    assert(!username);
-    assert(!password);
-    assert(!client_certificate);
-    assert(!ca_certificate);
+    curl_easy_reset(session);
 
-    if (ne_uri_parse(s, &uri)) {
-        log_print(LOG_CRIT, "Invalid URI <%s>", s);
-        goto finish;
+    asprintf(&full_url, "%s%s", base_url, path);
+    curl_easy_setopt(session, CURLOPT_URL, full_url);
+    free(full_url);
+
+    curl_easy_setopt(session, CURLOPT_USERAGENT, user_agent);
+    curl_easy_setopt(session, CURLOPT_URL, full_url);
+    if (ca_certificate != NULL)
+        curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
+    if (client_certificate != NULL) {
+        curl_easy_setopt(session, CURLOPT_SSLCERT, client_certificate);
+        curl_easy_setopt(session, CURLOPT_SSLKEY, client_certificate);
     }
+    curl_easy_setopt(session, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_easy_setopt(session, CURLOPT_SSL_VERIFYPEER, 1);
+    curl_easy_setopt(session, CURLOPT_FOLLOWLOCATION, 1);
+    curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 100);
+    curl_easy_setopt(session, CURLOPT_TIMEOUT, 600);
 
-    b_uri = 1;
-
-    if (!uri.host) {
-        log_print(LOG_CRIT, "Missing host part in URI <%s>", s);
-        goto finish;
-    }
-
-    base_directory = strdup(uri.path);
-    l = strlen(base_directory);
-    if (base_directory[l-1] == '/')
-        ((char*) base_directory)[l-1] = 0;
-
-    if (u)
-        username = strdup(u);
-
-    if (p)
-        password = strdup(p);
-
-    if (client_cert)
-        client_certificate = strdup(client_cert);
-
-    if (ca_cert)
-        ca_certificate = strdup(ca_cert);
-
-    return 0;
-
-finish:
-
-    if (b_uri) {
-        ne_uri_free(&uri);
-        b_uri = 0;
-    }
-
-    return -1;
-}
-
-
-void session_free(void) {
-    if (b_uri) {
-        ne_uri_free(&uri);
-        b_uri = 0;
-    }
-
-    free((char*) username);
-    free((char*) password);
-    free((char*) client_certificate);
-    free((char*) ca_certificate);
-    free((char*) base_directory);
-
-    client_certificate = ca_certificate = NULL;
-    username = password = base_directory = NULL;
-}
-
-int session_is_local(const ne_uri *u) {
-    assert(u);
-    assert(b_uri);
-
-    return
-        strcmp(u->scheme, uri.scheme) == 0 &&
-        strcmp(u->host, uri.host) == 0 &&
-        u->port == uri.port;
+    return session;
 }

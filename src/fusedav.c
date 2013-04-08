@@ -46,16 +46,6 @@
 
 #include <curl/curl.h>
 
-#include <ne_request.h>
-#include <ne_basic.h>
-#include <ne_props.h>
-#include <ne_utils.h>
-#include <ne_socket.h>
-#include <ne_auth.h>
-#include <ne_dates.h>
-#include <ne_redirect.h>
-#include <ne_uri.h>
-
 #include <fuse.h>
 #include <jemalloc/jemalloc.h>
 
@@ -67,6 +57,7 @@
 #include "session.h"
 #include "fusedav.h"
 
+/*
 const ne_propname query_properties[] = {
     { "DAV:", "resourcetype" },
     { "http://apache.org/dav/props/", "executable" },
@@ -76,12 +67,11 @@ const ne_propname query_properties[] = {
     { "DAV:", "event" }, // For optional progressive PROPFIND support.
     { NULL, NULL }
 };
+*/
 
 mode_t mask = 0;
 int debug = 1;
 struct fuse* fuse = NULL;
-ne_lock_store *lock_store = NULL;
-struct ne_lock *lock = NULL;
 int lock_thread_exit = 0;
 
 #define MIME_XATTR "user.mime_type"
@@ -137,7 +127,6 @@ struct fusedav_config {
     char *password;
     char *ca_certificate;
     char *client_certificate;
-    char *client_certificate_password;
     int  lock_timeout;
     bool lock_on_mount;
     int  verbosity;
@@ -170,7 +159,6 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("password=%s",                    password, 0),
      FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
      FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
-     FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
@@ -273,33 +261,31 @@ static void path_cvt_tsd_key_init(void) {
     pthread_key_create(&path_cvt_tsd_key, free);
 }
 
-/* REVIEW: seems like the only reason we go through this pthread_* rigamarole is
- * to pass in free so that the path gets free'd when the thread terminates.
- * As opposed to calling free after each call to path_cvt.
- * True?
- */
 static const char *path_cvt(const char *path) {
+    CURL *session;
     char *r, *t;
     int l;
+
+    log_print(LOG_DEBUG, "path_cvt(%s)", path ? path : "null path");
+
+    // Path might be NULL if file was unlinked but file descriptor remains open.
+    if (path == NULL)
+        return NULL;
+
+    session = session_get_handle();
 
     pthread_once(&path_cvt_once, path_cvt_tsd_key_init);
 
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
-        free(r);
+        curl_free(r);
 
-    log_print(LOG_DEBUG, "path_cvt(%s)", path ? path : "null path");
-
-    // Path might be null if file was unlinked but file descriptor remains open
-    if (path == NULL) return NULL;
-
-    t = malloc((l = strlen(base_directory) + strlen(path)) + 1);
+    asprintf(&t, "%s%s", base_directory, path);
     assert(t);
-    sprintf(t, "%s%s", base_directory, path);
 
     if (l > 1 && t[l-1] == '/')
         t[l-1] = 0;
 
-    r = ne_path_escape(t);
+    r = curl_easy_escape(session, t, strlen(t));
     free(t);
 
     pthread_setspecific(path_cvt_tsd_key, r);
@@ -309,8 +295,23 @@ static const char *path_cvt(const char *path) {
     return r;
 }
 
+// Return value is allocated and must be freed.
+char *path_parent(const char *uri) {
+    size_t len = strlen(uri);
+    const char *pnt = uri + len - 1;
+    // skip trailing slash (parent of "/foo/" is "/")
+    if (pnt >= uri && *pnt == '/')
+        pnt--;
+    // find previous slash
+    while (pnt > uri && *pnt != '/')
+        pnt--;
+    if (pnt < uri || (pnt == uri && *pnt != '/'))
+        return NULL;
+    return strndup(uri, pnt - uri + 1);
+}
+
 static int simple_propfind_with_redirect(
-        ne_session *session,
+        CURL *session,
         const char *path,
         int depth,
         const ne_propname *props,
@@ -330,9 +331,6 @@ static int simple_propfind_with_redirect(
         if (!(u = ne_redirect_location(session)))
             break;
 
-        if (!session_is_local(u))
-            break;
-
         log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
 
         path = u->path;
@@ -344,7 +342,7 @@ static int simple_propfind_with_redirect(
 }
 
 static int proppatch_with_redirect(
-        ne_session *session,
+        CURL *session,
         const char *path,
         const ne_proppatch_operation *ops) {
 
@@ -499,7 +497,7 @@ static void getdir_cache_callback(
 static int update_directory(const char *path, bool attempt_progessive_update) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     bool needs_update = true;
-    ne_session *session;
+    CURL *session;
     time_t last_updated;
     time_t timestamp;
     char *update_path = NULL;
@@ -656,7 +654,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
 
 static int get_stat(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    ne_session *session;
+    CURL *session;
     struct stat_cache_value *response;
     char *parent_path;
     char *nepp;
@@ -728,7 +726,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // directory stat data to, in turn, update the desired file stat data.
 
     // If it's not found, check the freshness of its directory.
-    nepp = ne_path_parent(path);
+    nepp = path_parent(path);
     parent_path = strip_trailing_slash(nepp, &is_dir);
 
     log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
@@ -858,7 +856,7 @@ static int dav_unlink(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int r;
     struct stat st;
-    ne_session *session;
+    CURL *session;
 
     BUMP(unlink);
 
@@ -900,7 +898,7 @@ static int dav_rmdir(const char *path) {
     int ret;
     bool has_child;
     struct stat st;
-    ne_session *session;
+    CURL *session;
 
     BUMP(rmdir);
 
@@ -955,7 +953,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     char fn[PATH_MAX];
-    ne_session *session;
+    CURL *session;
 
     BUMP(mkdir);
 
@@ -1000,7 +998,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    ne_session *session;
+    CURL *session;
     int server_ret = -EIO;
     int local_ret = -EIO;
     int ret;
@@ -1321,7 +1319,7 @@ finish:
 
 static int dav_utimens(const char *path, const struct timespec tv[2]) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    ne_session *session;
+    CURL *session;
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
     ne_proppatch_operation ops[2];
     int r = 0;
@@ -1430,7 +1428,7 @@ static int dav_listxattr(
         size_t size) {
 
     struct fusedav_config *config = fuse_get_context()->private_data;
-    ne_session *session;
+    CURL *session;
     struct listxattr_info l;
 
     BUMP(listxattr);
@@ -1570,7 +1568,7 @@ static int dav_getxattr(
         size_t size) {
 
     struct fusedav_config *config = fuse_get_context()->private_data;
-    ne_session *session;
+    CURL *session;
     struct getxattr_info g;
     ne_propname props[2];
     char dnspace[128], dname[128];
@@ -1631,7 +1629,7 @@ static int dav_setxattr(
         int flags) {
 
     struct fusedav_config *config = fuse_get_context()->private_data;
-    ne_session *session;
+    CURL *session;
     ne_propname propname;
     ne_proppatch_operation ops[2];
     int r = 0;
@@ -1704,7 +1702,7 @@ finish:
 
 static int dav_removexattr(const char *path, const char *name) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    ne_session *session;
+    CURL *session;
     ne_propname propname;
     ne_proppatch_operation ops[2];
     int r = 0;
@@ -1757,7 +1755,7 @@ finish:
 }
 
 static int do_chmod(const char *path, mode_t mode, struct fusedav_config *config) {
-    ne_session *session;
+    CURL *session;
     struct stat_cache_value *value;
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     ne_proppatch_operation ops[2];
@@ -1944,7 +1942,7 @@ static int setup_signal_handlers(void) {
 }
 
 static int create_lock(int lock_timeout) {
-    ne_session *session;
+    CURL *session;
     char _owner[64], *owner;
     int i;
     int ret;
@@ -2007,7 +2005,7 @@ static int create_lock(int lock_timeout) {
 }
 
 static int remove_lock(void) {
-    ne_session *session;
+    CURL *session;
 
     assert(lock);
 
@@ -2028,7 +2026,7 @@ static int remove_lock(void) {
 
 static void *lock_thread_func(void *p) {
     struct fusedav_config *conf = p;
-    ne_session *session;
+    CURL *session;
     sigset_t block;
 
     log_print(LOG_DEBUG, "lock_thread entering");
@@ -2127,7 +2125,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     case KEY_VERSION:
         fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
         fprintf(stderr, "LevelDB version %d.%d\n", leveldb_major_version(), leveldb_minor_version());
-        fprintf(stderr, "%s\n", ne_version_string());
+        fprintf(stderr, "%s\n", curl_version());
         //malloc_stats_print(NULL, NULL, "g");
         fuse_opt_add_arg(outargs, "--version");
         fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
@@ -2209,21 +2207,6 @@ int main(int argc, char *argv[]) {
     signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
 
-    if (ne_sock_init()) {
-        log_print(LOG_CRIT, "Failed to set libneon thread-safety locks.");
-        ++fail;
-    }
-
-    if (!ne_has_support(NE_FEATURE_SSL)) {
-        log_print(LOG_CRIT, "fusedav requires libneon built with SSL.");
-        ++fail;
-    }
-
-    if (!ne_has_support(NE_FEATURE_TS_SSL)) {
-        log_print(LOG_CRIT, "fusedav requires libneon built with TS_SSL.");
-        ++fail;
-    }
-
     mask = umask(0);
     umask(mask);
 
@@ -2236,6 +2219,11 @@ int main(int argc, char *argv[]) {
     // Parse options.
     if (fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
+        goto finish;
+    }
+
+    if (session_config_init(config.url, config.ca_certificate, config.client_certificate) < 0) {
+        log_print(LOG_CRIT, "Failed to initialize sessions.");
         goto finish;
     }
 
@@ -2362,7 +2350,6 @@ finish:
         pthread_kill(lock_thread, SIGUSR1);
         pthread_join(lock_thread, NULL);
         remove_lock();
-        ne_lockstore_destroy(lock_store);
 
         log_print(LOG_DEBUG, "Freed lock.");
     }
@@ -2383,11 +2370,8 @@ finish:
     fuse_opt_free_args(&args);
     log_print(LOG_DEBUG, "Freed arguments.");
 
-    session_free();
-    log_print(LOG_DEBUG, "Freed session.");
-
-    ne_sock_exit();
-    log_print(LOG_DEBUG, "Unset libneon thread-safety locks.");
+    session_config_free();
+    log_print(LOG_DEBUG, "Cleaned up session system.");
 
     if (config.cache != NULL && stat_cache_close(config.cache, config.cache_supplemental) < 0)
         log_print(LOG_ERR, "Failed to close the stat cache.");

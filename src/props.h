@@ -19,9 +19,8 @@
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***/
 
-int session_init(char *base, char *ca_cert, char *client_cert, char *client_cert_pass);
-CURL *session_request_init(const char *path);
-CURL *session_get_handle(void);
-void session_config_free(void);
+typedef void (*props_result)(const char *path, const prop_result_entry *result, void *userdata);
+
+int simple_propfind(CURL *sess, const char *path, size_t depth, props_result results, void *userdata);
 
 #endif
