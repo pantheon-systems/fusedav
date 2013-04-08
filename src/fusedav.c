@@ -417,8 +417,8 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
     }
 
     st->st_atime = time(NULL);
-    st->st_mtime = glm ? ne_rfc1123_parse(glm) : 0;
-    st->st_ctime = cd ? ne_iso8601_parse(cd) : 0;
+    st->st_mtime = glm ? ne_rfc1123_parse(glm) : st->st_atime;
+    st->st_ctime = cd ? ne_iso8601_parse(cd) : st->st_atime;
 
     st->st_blocks = (st->st_size+511)/512;
     /*log_print(LOG_DEBUG, "a: %u; m: %u; c: %u", st->st_atime, st->st_mtime, st->st_ctime);*/
@@ -427,6 +427,51 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
 
     st->st_uid = getuid();
     st->st_gid = getgid();
+
+}
+
+static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+
+    // initialize to 0
+    memset(st, 0, sizeof(struct stat));
+
+    if (is_dir) {
+        // Our default mode for directories is 0770, for files 0660; use them here if not specified
+        if (mode != 0) st->st_mode = mode;
+        else if (config->dir_mode) st->st_mode = config->dir_mode;
+        else st->st_mode = 0770; // Our "default" dir mode
+        st->st_mode |= S_IFDIR;
+        // In a POSIX systems, directories with subdirs have nlink = 3; otherwise 2. Just use 3
+        st->st_nlink = 3;
+        // on local systems, directories seem to have size 4096 when they have few files.
+        st->st_size = 4096;
+    }
+    else {
+        if (mode != 0) st->st_mode = mode;
+        else if (config->file_mode) st->st_mode = config->file_mode;
+        else st->st_mode = 0660; // Our "default" file mode
+        st->st_mode |= S_IFREG;
+        st->st_nlink = 1;
+        // If we are creating a file, size will start at 0.
+        st->st_size = 0;
+    }
+    st->st_atime = time(NULL);
+    st->st_mtime = st->st_atime;
+    st->st_ctime = st->st_mtime;
+    st->st_blksize = 4096;
+    st->st_uid = config->uid ? config->uid : getuid();
+    st->st_gid = config->gid ? config->gid : getgid();
+
+    if (fd >= 0) {
+        st->st_size = lseek(fd, 0, SEEK_END);
+        // Silently overlook error
+        if (st->st_size < 0) st->st_size = 0;
+    }
+
+    st->st_blocks = (st->st_size+511)/512;
+
+    log_print(LOG_DEBUG, "Done with fill_stat_generic.");
 }
 
 char *strip_trailing_slash(char *fn, int *is_dir) {
@@ -460,7 +505,6 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
     strip_trailing_slash(path, &is_dir);
 
     fill_stat(&value.st, results, &is_deleted, is_dir);
-    value.prepopulated = false;
 
     if (is_deleted) {
         log_print(LOG_DEBUG, "Removing path: %s", path);
@@ -679,17 +723,10 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // If it's the root directory and all attributes are specified,
     // construct a response.
     if (is_base_directory && config->dir_mode && config->uid && config->gid) {
-        memset(stbuf, 0, sizeof(struct stat));
-        stbuf->st_mode = S_IFDIR | config->dir_mode;
-        stbuf->st_nlink = 3;
-        stbuf->st_uid = config->uid;
-        stbuf->st_gid = config->gid;
-        stbuf->st_size = 0;
-        stbuf->st_blksize = 0;
-        stbuf->st_blocks = 0;
-        stbuf->st_atime = time(NULL);
-        stbuf->st_mtime = stbuf->st_atime;
-        stbuf->st_ctime = stbuf->st_mtime;
+
+        // mode = 0 (unspecified), is_dir = true; fd = -1, irrelevant for dir
+        fill_stat_generic(stbuf, 0, true, -1);
+
         log_print(LOG_DEBUG, "Used constructed stat data for base directory.");
         return 0;
     }
@@ -743,7 +780,6 @@ static int get_stat(const char *path, struct stat *stbuf) {
          if (ret == -ENOENT) {
             log_print(LOG_NOTICE, "parent returns ENOENT: %s", parent_path);
 
-            /* REVIEW: We might also want to ensure the parent and child is not in stat_cache? */
             stat_cache_delete(config->cache, path);
             stat_cache_delete_parent(config->cache, path);
             stat_cache_prune(config->cache);
@@ -793,19 +829,12 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
             stbuf->st_mode = S_IFDIR | config->dir_mode;
     }
     else {
-        // Fill in generic values
         int fd;
         fd = ldb_filecache_fd(info);
-        stbuf->st_mode = 0666 | S_IFREG;
-        stbuf->st_nlink = 1;
-        stbuf->st_size = lseek(fd, 0, SEEK_END);
-        stbuf->st_atime = time(NULL);
-        stbuf->st_mtime = stbuf->st_atime;
-        stbuf->st_ctime = stbuf->st_atime;
-        stbuf->st_blksize = 0;
-        stbuf->st_blocks = 8;
-        stbuf->st_uid = getuid();
-        stbuf->st_gid = getgid();
+        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(NULL path)");
+        // Fill in generic values
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(stbuf, 0, false, fd);
         ret = 0;
     }
 
@@ -976,18 +1005,9 @@ static int dav_mkdir(const char *path, mode_t mode) {
         return -ENOENT;
     }
 
-    // Prepopulate stat cache.
-    value.st.st_mode = mode | S_IFDIR;
-    value.st.st_nlink = 3;
-    value.st.st_size = 0;
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = true;
+    // Populate stat cache.
+    // is_dir = true; fd = -1 (not a regular file)
+    fill_stat_generic(&(value.st), mode, true, -1);
     stat_cache_value_set(config->cache, path, &value);
 
     //stat_cache_delete(config->cache, path);
@@ -1111,6 +1131,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
 static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value value;
+    int fd;
     int ret = 0;
 
     BUMP(fsync);
@@ -1124,7 +1146,15 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     ret = ldb_filecache_sync(config->cache, path, info, true);
     if (ret < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
+        goto finish;
     }
+
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
+
+finish:
 
     return ret;
 }
@@ -1187,18 +1217,8 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     */
 
     // Prepopulate stat cache.
-
-    value.st.st_mode = mode | S_IFREG;
-    value.st.st_nlink = 1;
-    value.st.st_size = 0;
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = true;
+    // is_dir = false, fd = -1, can't set size
+    fill_stat_generic(&(value.st), mode, false, -1);
     stat_cache_value_set(config->cache, path, &value);
 
     //stat_cache_delete(config->cache, path);
@@ -1209,6 +1229,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
 static int do_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value *value;
     int ret = 0;
 
     assert(info);
@@ -1216,6 +1237,23 @@ static int do_open(const char *path, struct fuse_file_info *info) {
     if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info)) < 0) {
         log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
         return ret;
+    }
+
+    /* If we create a new file, fill in a stat and put it in the stat cache.
+     * If we aren't creating a new file, perhaps we should be updating some
+     * values, but since we haven't been doing it up to now, I leave that
+     * as a question for the future.
+     */
+    // @TODO: Before public release: Lock for concurrency.
+    value = stat_cache_value_get(config->cache, path, false);
+    if (value == NULL) {
+        // Use a stack variable since that's how we do it everywhere else
+        struct stat_cache_value nvalue;
+        // mode = 0 (unspecified), is_dir = false; fd = -1, no need to get size on new file
+        fill_stat_generic(&(nvalue.st), 0, false, -1);
+        stat_cache_value_set(config->cache, path, &nvalue);
+    } else {
+        free(value);
     }
 
     log_print(LOG_DEBUG, "do_open: after ldb_filecache_open");

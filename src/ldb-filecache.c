@@ -211,15 +211,11 @@ finish:
 static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path,
         ldb_filecache_t *cache, const char *path) {
 
-    struct stat_cache_value value;
     struct ldb_filecache_pdata *pdata;
 
     BUMP(create_file);
 
     log_print(LOG_DEBUG, "create_file: on %s", path);
-
-    // Avoid valgrind warnings
-    memset(&value, 0, sizeof(struct stat_cache_value));
 
     pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
     if (pdata == NULL) {
@@ -234,21 +230,6 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
         free(pdata);
         return -1;
     }
-
-    // Prepopulate stat cache.
-    value.st.st_mode = 0660 | S_IFREG;
-    value.st.st_nlink = 1;
-    value.st.st_size = 0;
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = false;
-    stat_cache_value_set(cache, path, &value);
-    log_print(LOG_DEBUG, "create_file: Updated stat cache for %d : %s", sdata->fd, path);
 
     // The local copy currently trumps the server one, no matter how old.
     pdata->last_server_update = 0;
@@ -837,14 +818,10 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
     struct ldb_filecache_pdata *pdata = NULL;
-    struct stat_cache_value value;
 
     BUMP(sync);
 
     assert(sdata);
-
-    // Avoid valgrind warnings
-    memset(&value, 0, sizeof(struct stat_cache_value));
 
     // We only do the sync if we have a path
     // If we are accessing a bare file descriptor (open/unlink/read|write),
@@ -919,20 +896,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     // Point the persistent cache to the new file content.
     ldb_filecache_pdata_set(cache, path, pdata);
 
-    // Update stat cache.
-    // @TODO: Use actual mode.
-    value.st.st_mode = 0660 | S_IFREG;
-    value.st.st_nlink = 1;
-    value.st.st_size = lseek(sdata->fd, 0, SEEK_END);
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = false;
-    stat_cache_value_set(cache, path, &value);
     log_print(LOG_DEBUG, "ldb_filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
     ret = 0;
