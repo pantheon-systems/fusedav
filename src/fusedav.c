@@ -417,9 +417,8 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
     }
 
     st->st_atime = time(NULL);
-    // REVIEW: Is the 0 why we get Jan 1 1970 on many of our directories?
-    st->st_mtime = glm ? ne_rfc1123_parse(glm) : 0;
-    st->st_ctime = cd ? ne_iso8601_parse(cd) : 0;
+    st->st_mtime = glm ? ne_rfc1123_parse(glm) : st->st_atime;
+    st->st_ctime = cd ? ne_iso8601_parse(cd) : st->st_atime;
 
     st->st_blocks = (st->st_size+511)/512;
     /*log_print(LOG_DEBUG, "a: %u; m: %u; c: %u", st->st_atime, st->st_mtime, st->st_ctime);*/
@@ -458,20 +457,19 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
         st->st_size = 0;
     }
     st->st_atime = time(NULL);
-    st->st_mtime = st->st_atime; // REVIEW: see fill_stat(), which uses 0 if not otherwise set
-    st->st_ctime = st->st_mtime; // REVIEW: see fill_stat(), which uses 0 if not otherwise set
-    // REVIEW: seriously? 0? I made it 4096
+    st->st_mtime = st->st_atime;
+    st->st_ctime = st->st_mtime;
     st->st_blksize = 4096;
-    // REVIEW: why 8?
-    st->st_blocks = 8;
-    st->st_uid = config->uid ? config->uid : getuid(); // REVIEW: see fill_stat(), which uses getuid()
-    st->st_gid = config->gid ? config->gid : getgid(); // REVIEW: see fill_stat(), which uses getgid()
+    st->st_uid = config->uid ? config->uid : getuid();
+    st->st_gid = config->gid ? config->gid : getgid();
 
     if (fd >= 0) {
         st->st_size = lseek(fd, 0, SEEK_END);
         // Silently overlook error
         if (st->st_size < 0) st->st_size = 0;
     }
+
+    st->st_blocks = (st->st_size+511)/512;
 
     log_print(LOG_DEBUG, "Done with fill_stat_generic.");
 }
@@ -507,7 +505,6 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
     strip_trailing_slash(path, &is_dir);
 
     fill_stat(&value.st, results, &is_deleted, is_dir);
-    // REVIEW: ignore since we never read the value: value.prepopulated = false;
 
     if (is_deleted) {
         log_print(LOG_DEBUG, "Removing path: %s", path);
@@ -730,9 +727,6 @@ static int get_stat(const char *path, struct stat *stbuf) {
         // mode = 0 (unspecified), is_dir = true; fd = -1, irrelevant for dir
         fill_stat_generic(stbuf, 0, true, -1);
 
-        // REVIEW: Why 0 when it is 8 elsewhere? Probably needs to be deleted
-        stbuf->st_blocks = 0;
-
         log_print(LOG_DEBUG, "Used constructed stat data for base directory.");
         return 0;
     }
@@ -786,7 +780,6 @@ static int get_stat(const char *path, struct stat *stbuf) {
          if (ret == -ENOENT) {
             log_print(LOG_NOTICE, "parent returns ENOENT: %s", parent_path);
 
-            /* REVIEW: We might also want to ensure the parent and child is not in stat_cache? */
             stat_cache_delete(config->cache, path);
             stat_cache_delete_parent(config->cache, path);
             stat_cache_prune(config->cache);
@@ -1015,7 +1008,6 @@ static int dav_mkdir(const char *path, mode_t mode) {
     // Populate stat cache.
     // is_dir = true; fd = -1 (not a regular file)
     fill_stat_generic(&(value.st), mode, true, -1);
-    // REVIEW: ignoring since never read: value.prepopulated = true;
     stat_cache_value_set(config->cache, path, &value);
 
     //stat_cache_delete(config->cache, path);
@@ -1160,7 +1152,6 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     fd = ldb_filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
     fill_stat_generic(&(value.st), 0, false, fd);
-    // REVIEW: ignoring since never read: value.prepopulated = false;
     stat_cache_value_set(config->cache, path, &value);
 
 finish:
@@ -1228,7 +1219,6 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     // Prepopulate stat cache.
     // is_dir = false, fd = -1, can't set size
     fill_stat_generic(&(value.st), mode, false, -1);
-    // REVIEW: ignore since we never read the value : value.prepopulated = true;
     stat_cache_value_set(config->cache, path, &value);
 
     //stat_cache_delete(config->cache, path);
@@ -1261,7 +1251,6 @@ static int do_open(const char *path, struct fuse_file_info *info) {
         struct stat_cache_value nvalue;
         // mode = 0 (unspecified), is_dir = false; fd = -1, no need to get size on new file
         fill_stat_generic(&(nvalue.st), 0, false, -1);
-        // REVIEW: Ignoring since we never read it : value->prepopulated = false;
         stat_cache_value_set(config->cache, path, &nvalue);
     } else {
         free(value);
