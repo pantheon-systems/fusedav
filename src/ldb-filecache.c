@@ -70,8 +70,66 @@ struct ldb_filecache_pdata {
     time_t last_server_update;
 };
 
+struct statistics {
+    unsigned cache_file;
+    unsigned pdata_set;
+    unsigned create_file;
+    unsigned pdata_get;
+    unsigned fresh_fd;
+    unsigned open;
+    unsigned read;
+    unsigned write;
+    unsigned close;
+    unsigned release;
+    unsigned return_etag;
+    unsigned sync;
+    unsigned truncate;
+    unsigned delete;
+    unsigned pdata_move;
+    unsigned orphans;
+    unsigned cleanup;
+    unsigned get_fd;
+    unsigned init;
+    unsigned path2key;
+    unsigned key2path;
+};
+
+static struct statistics stats;
+
+#define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
+#define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
+
+void filecache_print_stats(void) {
+    log_print(LOG_NOTICE, "Filecache Operations:");
+    log_print(LOG_NOTICE, "  cache_file:  %u", FETCH(cache_file));
+    log_print(LOG_NOTICE, "  pdata_set:   %u", FETCH(pdata_set));
+    log_print(LOG_NOTICE, "  create_file: %u", FETCH(create_file));
+    log_print(LOG_NOTICE, "  pdata_get:   %u", FETCH(pdata_get));
+    log_print(LOG_NOTICE, "  fresh_fd:    %u", FETCH(fresh_fd));
+    log_print(LOG_NOTICE, "  open:        %u", FETCH(open));
+    log_print(LOG_NOTICE, "  read:        %u", FETCH(read));
+    log_print(LOG_NOTICE, "  write:       %u", FETCH(write));
+    log_print(LOG_NOTICE, "  close:       %u", FETCH(close));
+    log_print(LOG_NOTICE, "  release:     %u", FETCH(release));
+    log_print(LOG_NOTICE, "  return_etag: %u", FETCH(return_etag));
+    log_print(LOG_NOTICE, "  sync:        %u", FETCH(sync));
+    log_print(LOG_NOTICE, "  truncate:    %u", FETCH(truncate));
+    log_print(LOG_NOTICE, "  delete:      %u", FETCH(delete));
+    log_print(LOG_NOTICE, "  pdata_move:  %u", FETCH(pdata_move));
+    log_print(LOG_NOTICE, "  orphans:     %u", FETCH(orphans));
+    log_print(LOG_NOTICE, "  cleanup:     %u", FETCH(cleanup));
+    log_print(LOG_NOTICE, "  get_fd:      %u", FETCH(get_fd));
+    log_print(LOG_NOTICE, "  init:        %u", FETCH(init));
+    log_print(LOG_NOTICE, "  path2key:    %u", FETCH(path2key));
+    log_print(LOG_NOTICE, "  key2path:    %u", FETCH(key2path));
+
+}
+
 int ldb_filecache_init(char *cache_path) {
     char path[PATH_MAX];
+
+    BUMP(init);
+
     snprintf(path, PATH_MAX, "%s/files", cache_path);
     if (mkdir(cache_path, 0770) == -1) {
         if (errno != EEXIST) {
@@ -91,12 +149,18 @@ int ldb_filecache_init(char *cache_path) {
 // Allocates a new string.
 static char *path2key(const char *path) {
     char *key = NULL;
+
+    BUMP(path2key);
+
     asprintf(&key, "%s%s", filecache_prefix, path);
     return key;
 }
 
 // creates a new cache file
 static int new_cache_file(const char *cache_path, char *cache_file_path, fd_t *fd) {
+
+    BUMP(cache_file);
+
     snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-XXXXXX", cache_path);
     log_print(LOG_DEBUG, "Using pattern %s", cache_file_path);
     if ((*fd = mkstemp(cache_file_path)) < 0) {
@@ -114,6 +178,8 @@ static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, con
     char *errptr = NULL;
     char *key;
     int ret = -1;
+
+    BUMP(pdata_set);
 
     if (!pdata) {
         log_print(LOG_ERR, "ldb_filecache_pdata_set NULL pdata");
@@ -149,7 +215,12 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     struct stat_cache_value value;
     struct ldb_filecache_pdata *pdata;
 
+    BUMP(create_file);
+
     log_print(LOG_DEBUG, "create_file: on %s", path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
     if (pdata == NULL) {
@@ -161,6 +232,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     sdata->writable = true;
     if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
+        free(pdata);
         return -1;
     }
 
@@ -184,6 +256,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
 
     log_print(LOG_DEBUG, "create_file: Updating file cache for %d : %s : %s : timestamp %ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
     ldb_filecache_pdata_set(cache, path, pdata);
+
     free(pdata);
 
     return 0;
@@ -196,6 +269,8 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     leveldb_readoptions_t *options;
     size_t vallen;
     char *errptr = NULL;
+
+    BUMP(pdata_get);
 
     log_print(LOG_DEBUG, "Entered ldb_filecache_pdata_get: path=%s", path);
 
@@ -210,6 +285,7 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_get error: %s", errptr);
         free(errptr);
+        free(pdata);
         return NULL;
     }
 
@@ -237,6 +313,8 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     ne_request *req = NULL;
     int ne_ret;
     struct ldb_filecache_pdata *pdata;
+
+    BUMP(fresh_fd);
 
     assert(pdatap);
     pdata = *pdatap;
@@ -333,12 +411,12 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         // missing and handled it there.
         code = ne_get_status(req)->code;
         if (code == 304) {
-            log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
-
             // Gobble up any remaining data in the response.
             ne_discard_response(req);
 
             if (pdata != NULL) {
+                log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
+
                 // Mark the cache item as revalidated at the current time.
                 pdata->last_server_update = time(NULL);
 
@@ -433,6 +511,11 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         }
         else if (code == 404) {
             log_print(LOG_WARNING, "ldb_get_fresh_fd: File expected to exist returns 404.");
+            /* we get a 404 because the stat_cache returned that the file existed, but it
+             * was not on the server. Deleting it from the stat_cache makes the stat_cache
+             * consistent, so the next access to the file will be handled correctly.
+             */
+            stat_cache_delete(cache, path);
             ret = -ENOENT;
         }
         else {
@@ -461,6 +544,8 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     int flags = info->flags;
     unsigned retries = 0;
     const unsigned max_retries = 2;
+
+    BUMP(open);
 
     log_print(LOG_DEBUG, "ldb_filecache_open: %s", path);
 
@@ -550,6 +635,8 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     ssize_t ret = -1;
 
+    BUMP(read);
+
     log_print(LOG_DEBUG, "ldb_filecache_read: fd=%d", sdata->fd);
 
     if ((ret = pread(sdata->fd, buf, size, offset)) < 0) {
@@ -570,6 +657,8 @@ finish:
 ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     ssize_t ret = -1;
+
+    BUMP(write);
 
     log_print(LOG_DEBUG, "ldb_filecache_write: fd=%d", sdata->fd);
 
@@ -614,6 +703,8 @@ finish:
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     int ret = -EBADF;
 
+    BUMP(close);
+
     log_print(LOG_DEBUG, "ldb_filecache_close: fd (%d :: %d).", sdata->fd, sdata->fd);
 
     if (sdata->fd > 0)  {
@@ -630,8 +721,7 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
         log_print(LOG_ERR, "ldb_filecache_close: Session data lacks a cache file descriptor.");
     }
 
-    if (sdata != NULL)
-        free(sdata);
+    free(sdata);
 
     return ret;
 }
@@ -640,6 +730,8 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
 int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
+
+    BUMP(release);
 
     assert(sdata);
 
@@ -654,8 +746,6 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
     }
 
     log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
-
-    ret = 0;
 
 finish:
 
@@ -674,7 +764,8 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     ne_request *req;
     struct stat st;
     int ret = -1;
-    const char *value;
+
+    BUMP(return_etag);
 
     log_print(LOG_DEBUG, "enter: ne_put_return_etag(,%s,%d,,)", path, fd);
 
@@ -714,10 +805,13 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     }
 
     if (ret == NE_OK) {
+        const char *value;
         value = ne_get_response_header(req, "etag");
         if (value) {
             strncpy(etag, value, ETAG_MAX);
             etag[ETAG_MAX] = '\0';
+        } else {
+            etag[0] = '\0';
         }
         log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
     }
@@ -744,10 +838,14 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
     struct ldb_filecache_pdata *pdata = NULL;
-    ne_session *session;
     struct stat_cache_value value;
 
+    BUMP(sync);
+
     assert(sdata);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     // We only do the sync if we have a path
     // If we are accessing a bare file descriptor (open/unlink/read|write),
@@ -778,6 +876,8 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     if (sdata->modified) {
         if (do_put) {
+            ne_session *session;
+
             log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
             if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
                 log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
@@ -852,6 +952,8 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
 
+    BUMP(truncate);
+
     log_print(LOG_DEBUG, "ldb_filecache_truncate(%d)", sdata->fd);
 
     log_print(LOG_DEBUG, "ldb_filecache_truncate: acquiring shared file lock on fd %d", sdata->fd);
@@ -879,6 +981,8 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
 int ldb_filecache_fd(struct fuse_file_info *info) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
 
+    BUMP(get_fd);
+
     log_print(LOG_DEBUG, "ldb_filecache_fd: %d", sdata->fd);
     return sdata->fd;
 }
@@ -890,6 +994,8 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path, bool unlink_c
     char *key;
     int ret = 0;
     char *errptr = NULL;
+
+    BUMP(delete);
 
     log_print(LOG_DEBUG, "ldb_filecache_delete: path (%s).", path);
 
@@ -924,6 +1030,8 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
     struct ldb_filecache_pdata *pdata = NULL;
     int ret = -1;
 
+    BUMP(pdata_move);
+
     pdata = ldb_filecache_pdata_get(cache, old_path);
 
     if (pdata == NULL) {
@@ -957,6 +1065,9 @@ finish:
 // Does *not* allocate a new string.
 static const char *key2path(const char *key) {
     char *prefix;
+
+    BUMP(key2path);
+
     prefix = strstr(key, filecache_prefix);
     // Looking for "fc:" (filecache_prefix) at the beginning of the key
     if (prefix == key) {
@@ -973,6 +1084,8 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
     int ret = 0;
     int visited = 0;
     int unlinked = 0;
+
+    BUMP(orphans);
 
     cachefile_path[PATH_MAX] = '\0';
     filecache_path[PATH_MAX] = '\0';
@@ -1023,6 +1136,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
             }
         }
     }
+    closedir(dir);
     log_print(LOG_NOTICE, "cleanup_orphans: visited %d files, unlinked %d, and had %d issues", visited, unlinked, ret);
 
     // ret is effectively the number of unexpected issues we encountered
@@ -1044,6 +1158,8 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
     int unlinked_files = 0;
     int issues = 0;
     int pruned_files = 0;
+
+    BUMP(cleanup);
 
     log_print(LOG_DEBUG, "enter: ldb_filecache_cleanup(cache %p)", cache);
 
@@ -1122,3 +1238,4 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
         log_print(LOG_NOTICE, "ldb_filecache_cleanup: issues cleaning orphans");
     }
 }
+

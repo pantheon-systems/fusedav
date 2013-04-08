@@ -51,6 +51,7 @@ struct stat_cache_value {
     char remote_generation[RGEN_LEN];
 };
 
+void stat_cache_print_stats(void);
 int print_stat(struct stat *stbuf, const char *title);
 
 unsigned long stat_cache_get_local_generation(void);
