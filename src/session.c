@@ -28,6 +28,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <uriparser/Uri.h>
 #include <curl/curl.h>
 
 #include "log.h"
@@ -40,9 +41,49 @@ static pthread_key_t session_tsd_key;
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
+static char *base_directory = NULL;
 
 const char *get_base_url(void) {
     return base_url;
+}
+
+const char *get_base_directory(void) {
+    return base_directory;
+}
+
+static void set_base_directory(const char *url) {
+    UriParserStateA state;
+    UriUriA uri;
+    char *base;
+    off_t base_pos, addition;
+
+    state.uri = &uri;
+    if (uriParseUriA(&state, url) != URI_SUCCESS) {
+        uriFreeUriMembersA(&uri);
+    }
+
+    base = malloc(strlen(url));
+    base[0] = '/';
+    base_pos = 0;
+
+    for (UriPathSegmentA *cur = uri.pathHead; cur != NULL; cur = cur->next) {
+        ++base_pos;
+        addition = cur->text.afterLast - cur->text.first;
+        strncpy(base + base_pos, cur->text.first, addition);
+        base_pos += addition;
+        base[base_pos] = '/';
+    }
+    base[base_pos] = '\0';
+
+    // @TODO: Investigate. This seems to be necessary, but I don't think it should be.
+    if (base[base_pos - 1] == '/')
+        base[base_pos - 1] = '\0';
+
+    uriFreeUriMembersA(&uri);
+
+    log_print(LOG_INFO, "Using base directory: %s", base);
+
+    base_directory = base;
 }
 
 int session_config_init(char *base, char *ca_cert, char *client_cert) {
@@ -61,6 +102,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
         base_url = strdup(base);
     else
         asprintf(&base_url, "%s/", base);
+    set_base_directory(base_url);
 
     if (ca_cert != NULL)
         ca_certificate = strdup(ca_cert);

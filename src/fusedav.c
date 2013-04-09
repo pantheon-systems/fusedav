@@ -253,6 +253,7 @@ static const char *path_cvt(const char *path) {
     //CURL *session;
     char *r, *t;
     int l;
+    const char *base_dir;
 
     log_print(LOG_DEBUG, "path_cvt(%s)", path ? path : "null path");
 
@@ -264,17 +265,19 @@ static const char *path_cvt(const char *path) {
 
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
         free(r);
-//        curl_free(r);
+        //curl_free(r);
 
-    asprintf(&t, "%s%s", get_base_url(), path);
+    base_dir = get_base_directory();
+
+    log_print(LOG_DEBUG, "base_dir: %s", base_dir);
+
+    t = malloc((l = strlen(base_dir) + strlen(path)) + 1);
     assert(t);
-    l = strlen(t);
+    sprintf(t, "%s%s", base_dir, path);
 
     if (l > 1 && t[l-1] == '/')
         t[l-1] = 0;
 
-    //session = session_get_handle();
-    //r = curl_easy_escape(session, t, strlen(t));
     r = path_escape(t);
     free(t);
 
@@ -442,6 +445,8 @@ static int dav_readdir(
     struct fill_info f;
     int ret;
 
+    log_print(LOG_INFO, "Initialized with base directory: %s", get_base_directory());
+
     BUMP(readdir);
 
     // We might get a null path if we are accessing a bare file descriptor
@@ -513,7 +518,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
-    base_directory = get_base_url();
+    base_directory = get_base_directory();
 
     log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
     is_base_directory = (strcmp(path, base_directory) == 0);

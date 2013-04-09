@@ -118,6 +118,7 @@ PKG_CHECK_MODULES(LEVELDB, [ leveldb ])
 PKG_CHECK_MODULES(CURL, [ libcurl >= 7.24.0 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 PKG_CHECK_MODULES(ZLIB, [ zlib >= 1.2.5 ])
+PKG_CHECK_MODULES(URIPARSER, [ liburiparser >= 0.7.5 ])
 
 # LYNX documentation generation
 AC_ARG_ENABLE(lynx,
