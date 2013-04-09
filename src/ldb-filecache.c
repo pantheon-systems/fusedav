@@ -172,17 +172,16 @@ static int new_cache_file(const char *cache_path, char *cache_file_path, fd_t *f
 }
 
 // adds an entry to the ldb cache
-static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, const struct ldb_filecache_pdata *pdata) {
+static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, struct ldb_filecache_pdata *pdata) {
     leveldb_writeoptions_t *options;
     char *errptr = NULL;
     char *key;
-    int ret = -1;
 
     BUMP(pdata_set);
 
     if (!pdata) {
         log_print(LOG_ERR, "ldb_filecache_pdata_set NULL pdata");
-        goto finish;
+        return -1;
     }
 
     log_print(LOG_DEBUG, "ldb_filecache_pdata_set: path=%s ; cachefile=%s", path, pdata->filename);
@@ -197,14 +196,11 @@ static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, con
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
-        goto finish;
+        free(pdata);
+        return -1;
     }
 
-    ret = 0;
-
-finish:
-
-    return ret;
+    return 0;
 }
 
 // Create a new file to write into and set values
@@ -219,7 +215,8 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
 
     pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
     if (pdata == NULL) {
-        log_print(LOG_ERR, "create_file: malloc returns NULL for pdata");
+        // errno set on calloc
+        log_print(LOG_ERR, "create_file: calloc returns NULL for pdata");
         return -1;
     }
 
@@ -227,6 +224,7 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     sdata->writable = true;
     if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
         log_print(LOG_ERR, "ldb_filecache_open: Failed on new_cache_file");
+        // errno is set in new_cache_file
         free(pdata);
         return -1;
     }
@@ -235,7 +233,10 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
     pdata->last_server_update = 0;
 
     log_print(LOG_DEBUG, "create_file: Updating file cache for %d : %s : %s : timestamp %ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
-    ldb_filecache_pdata_set(cache, path, pdata);
+    if (ldb_filecache_pdata_set(cache, path, pdata) < 0) {
+        // Log the issue, but don't make it return an error, since the function otherwise succeeded
+        log_print(LOG_NOTICE, "create_file: Failed to insert entry into filecache: %s : %s", path, pdata->filename);
+    }
 
     free(pdata);
 
@@ -287,8 +288,8 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
 static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         const char *cache_path, const char *path, struct ldb_filecache_sdata *sdata,
         struct ldb_filecache_pdata **pdatap, int flags) {
+    int ret = -1;
     ne_session *session;
-    int ret = -EBADFD;
     int code;
     ne_request *req = NULL;
     int ne_ret;
@@ -321,6 +322,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                 log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
             }
             else {
+                // errno set by open
                 log_print(LOG_ERR, "ldb_get_fresh_fd: open on file returns < 0 on \"%s\": errno: %d, %s", path, errno, strerror(errno));
             }
             return ret;
@@ -332,17 +334,23 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquiring shared file lock on fd %d", sdata->fd);
             if (flock(sdata->fd, LOCK_SH)) {
                 log_print(LOG_ERR, "ldb_get_fresh_fd: error acquiring shared file lock");
+                // errno set by flock
                 goto finish;
             }
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: acquired shared file lock on fd %d", sdata->fd);
 
-            if (ftruncate(sdata->fd, 0)) {
+            if (ftruncate(sdata->fd, 0) < 0) {
+                int ftrunc_errno = errno;
                 log_print(LOG_WARNING, "ldb_get_fresh_fd: ftruncate failed; errno %d %s -- %d:%s::%s", errno, strerror(errno), sdata->fd, path, pdata->filename);
+                flock(sdata->fd, LOCK_UN);
+                errno = ftrunc_errno; // return errno from ftruncate, not flock if it resets it
+                goto finish;
             }
 
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: releasing shared file lock on fd %d", sdata->fd);
             if (flock(sdata->fd, LOCK_UN)) {
                 log_print(LOG_ERR, "ldb_get_fresh_fd: error releasing shared file lock");
+                // errno set by flock
                 goto finish;
             }
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: released shared file lock on fd %d", sdata->fd);
@@ -365,8 +373,9 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     }
 
     req = ne_request_create(session, "GET", path);
-    if (!req) {
+    if (req == NULL) {
         log_print(LOG_ERR, "ldb_get_fresh_fd: Failed ne_request_create on GET on %s", path);
+        errno = ENOMEM;
         goto finish;
     }
 
@@ -379,6 +388,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         if (ne_ret != NE_OK) {
             log_print(LOG_ERR, "ldb_get_fresh_fd: ne_begin_request is not NE_OK: %d %s",
                 ne_ret, ne_get_error(session));
+            errno = EIO;
             goto finish;
         }
 
@@ -401,7 +411,10 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                 pdata->last_server_update = time(NULL);
 
                 log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
-                ldb_filecache_pdata_set(cache, path, pdata);
+                if (ldb_filecache_pdata_set(cache, path, pdata) < 0) {
+                    // Log the issue, but don't make it return an error
+                    log_print(LOG_NOTICE, "ldb_get_fresh_fd: Failed to insert entry into filecache: %s : %s", path, pdata->filename);
+                }
 
                 sdata->fd = open(pdata->filename, flags);
 
@@ -430,6 +443,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
             }
             else {
                 log_print(LOG_WARNING, "ldb_get_fresh_fd: Got 304 without If-None-Match");
+                errno = EIO; // Not sure what to call this error
             }
         }
         else if (code == 200) {
@@ -444,6 +458,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                 if (pdata == NULL) {
                     log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
                     ne_end_request(req);
+                    errno = ENOMEM;
                     goto finish;
                 }
                 memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
@@ -470,6 +485,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                 log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
                 // Should we delete path from cache and/or null-out pdata?
                 ne_end_request(req);
+                // errno set in new_cache_file
                 goto finish;
             }
             ret = 0;
@@ -479,7 +495,10 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
             pdata->last_server_update = time(NULL);
 
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
-            ldb_filecache_pdata_set(cache, path, pdata);
+            if (ldb_filecache_pdata_set(cache, path, pdata) < 0) {
+                // Log the issue, but don't make it return an error
+                log_print(LOG_NOTICE, "ldb_get_fresh_fd: Failed to insert entry into filecache: %s : %s", path, pdata->filename);
+            }
 
             // Unlink the old cache file, which the persistent cache
             // no longer references. This will cause the file to be
@@ -491,12 +510,12 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         }
         else if (code == 404) {
             log_print(LOG_WARNING, "ldb_get_fresh_fd: File expected to exist returns 404.");
+            errno = ENOENT;
             /* we get a 404 because the stat_cache returned that the file existed, but it
              * was not on the server. Deleting it from the stat_cache makes the stat_cache
              * consistent, so the next access to the file will be handled correctly.
              */
             stat_cache_delete(cache, path);
-            ret = -ENOENT;
         }
         else {
             // Not sure what to do here; goto finish, or try the loop another time?
@@ -510,17 +529,19 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     // truncate.
     assert(!(flags & O_TRUNC));
 
-    finish:
-        if (req != NULL)
-            ne_request_destroy(req);
-        return ret;
+finish:
+
+    if (req != NULL)
+        ne_request_destroy(req);
+
+    return ret;
 }
 
 // top-level open call
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
     struct ldb_filecache_pdata *pdata = NULL;
     struct ldb_filecache_sdata *sdata = NULL;
-    int ret = -EBADF;
+    int ret = -1;
     int flags = info->flags;
     unsigned retries = 0;
     const unsigned max_retries = 2;
@@ -532,11 +553,15 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     // Allocate and zero-out a session data structure.
     sdata = malloc(sizeof(struct ldb_filecache_sdata));
     if (sdata == NULL) {
+        errno = ENOMEM;
         log_print(LOG_ERR, "ldb_filecache_open: Failed to malloc sdata");
         goto fail;
     }
     memset(sdata, 0, sizeof(struct ldb_filecache_sdata));
 
+    // @TODO: program flow is murky. We have to keep track of where we
+    // goto fail in order to know if we successfully retry or successfully
+    // recognize that we shouldn't retry. Fix it up.
     do {
         // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
         // the second time. (Unlike on a linux file system, where the second time open
@@ -557,6 +582,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
             }
             log_print(LOG_DEBUG, "ldb_filecache_open: calling create_file on %s", path);
             ret = create_file(sdata, cache_path, cache, path);
+            // if there's an error, errno is set in create_file
         }
         else {
             // Get a file descriptor pointing to a guaranteed-fresh file.
@@ -600,12 +626,10 @@ fail:
     log_print(LOG_ERR, "ldb_filecache_open: No valid fd set for path %s. Setting fh structure to NULL.", path);
     info->fh = (uint64_t) NULL;
 
-    if (sdata != NULL)
-        free(sdata);
+    free(sdata);
 
 finish:
-    if (pdata != NULL)
-        free(pdata);
+    free(pdata);
 
     return ret;
 }
@@ -613,24 +637,23 @@ finish:
 // top-level read call
 ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, ne_off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
-    ssize_t ret = -1;
+    ssize_t bytes_read;
 
     BUMP(read);
 
     log_print(LOG_DEBUG, "ldb_filecache_read: fd=%d", sdata->fd);
 
-    if ((ret = pread(sdata->fd, buf, size, offset)) < 0) {
-        ret = -errno;
-        log_print(LOG_ERR, "ldb_filecache_read: error %d; %d %s %d %ld", ret, sdata->fd, buf, size, offset);
-        goto finish;
+    bytes_read = pread(sdata->fd, buf, size, offset);
+    if (bytes_read < 0) {
+        // pread will have set errno
+        log_print(LOG_ERR, "ldb_filecache_read: error %d; %d %s %d %ld", bytes_read, sdata->fd, buf, size, offset);
+        return -1;
     }
 
-finish:
+    // ret is bytes read
+    log_print(LOG_DEBUG, "Done reading: %d from %d.", bytes_read, sdata->fd);
 
-    // ret is bytes read, or error
-    log_print(LOG_DEBUG, "Done reading: %d from %d.", ret, sdata->fd);
-
-    return ret;
+    return bytes_read;
 }
 
 // top-level write call
@@ -646,20 +669,21 @@ ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t
     log_print(LOG_DEBUG, "ldb_filecache_write: acquiring shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_SH)) {
         log_print(LOG_ERR, "ldb_filecache_write: error acquiring shared file lock");
-        // return 0 since it is the number of bytes written
-        return 0;
+        // errno from flock
+        return -1;
     }
     log_print(LOG_DEBUG, "ldb_filecache_write: acquired shared file lock on fd %d", sdata->fd);
 
     if (!sdata->writable) {
         errno = EBADF;
-        ret = 0;
         log_print(LOG_DEBUG, "ldb_filecache_write: not writable");
         goto finish;
     }
 
-    if ((ret = pwrite(sdata->fd, buf, size, offset)) < 0) {
-        ret = -errno;
+    ret = pwrite(sdata->fd, buf, size, offset);
+    if (ret < 0) {
+        ret = -1;
+        // errno will have been set by pwrite
         log_print(LOG_ERR, "ldb_filecache_write: error %d %d %s::%d %d %ld", ret, errno, strerror(errno), sdata->fd, size, offset);
         goto finish;
     }
@@ -675,13 +699,12 @@ finish:
     }
     log_print(LOG_DEBUG, "ldb_filecache_write: released shared file lock on fd %d", sdata->fd);
 
-    // ret is bytes written
+    // ret is bytes written, or -1
     return ret;
 }
 
 // close the file
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
-    int ret = -EBADF;
 
     BUMP(close);
 
@@ -689,21 +712,23 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
 
     if (sdata->fd > 0)  {
         if (close(sdata->fd) < 0) {
-            ret = -errno;
-            log_print(LOG_ERR, "ldb_filecache_close: Failed to close cache file; %d %s", ret, strerror(errno));
+            // close will have set errno
+            log_print(LOG_ERR, "ldb_filecache_close: Failed to close cache file; %d %s", errno, strerror(errno));
+            return -1;
         }
         else {
             log_print(LOG_DEBUG, "ldb_filecache_close: closed fd (%d).", sdata->fd);
-            ret = 0;
         }
     }
     else {
         log_print(LOG_ERR, "ldb_filecache_close: Session data lacks a cache file descriptor.");
+        errno = EBADF;
+        return -1;
     }
 
     free(sdata);
 
-    return ret;
+    return 0;
 }
 
 // top-level close/release call
@@ -720,19 +745,24 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
     // If path is NULL, sync will handle it. Likely sync was already called
     // during immediately preceding flush; in that case, file won't be
     // modifiable and will return immediate.
-    if ((ret = ldb_filecache_sync(cache, path, info, true)) < 0) {
+    if (ldb_filecache_sync(cache, path, info, true) < 0) {
         log_print(LOG_ERR, "ldb_filecache_release: ldb_filecache_sync returns error %d", ret);
+        // errno from ldb_filecache_sync
         goto finish;
     }
 
     log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
 
+    ret = 0;
+
 finish:
 
     // close, even on error
-    ret = ldb_filecache_close(sdata);
+    if (ldb_filecache_close(sdata) < 0) {
+        ret = -1;
+    }
 
-    log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path?path:"NULL");
+    log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path ? path : "null path");
 
     return ret;
 }
@@ -743,7 +773,12 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
 {
     ne_request *req;
     struct stat st;
-    int ret = -1;
+
+    /* Because this is a neon-replacement function, we'll use NE_ERROR as default
+     * error return value. It is true that errors in non-neon functions (e.g. flock) will
+     * use this mechanism, as well.
+     */
+    int ret = NE_ERROR;
 
     BUMP(return_etag);
 
@@ -758,6 +793,7 @@ static int ne_put_return_etag(ne_session *session, const char *path, int fd, cha
     assert(etag);
 
     if (fstat(fd, &st)) {
+        // fstat will have set errno
         log_print(LOG_ERR, "ne_put_return_etag: failed getting file size");
         goto finish;
     }
@@ -804,6 +840,8 @@ finish:
 
     log_print(LOG_DEBUG, "ne_put_return_etag: releasing exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_UN)) {
+        ret = NE_ERROR;
+        // flock will have set errno
         log_print(LOG_ERR, "ne_put_return_etag: error releasing exclusive file lock");
     }
     log_print(LOG_DEBUG, "ne_put_return_etag: released exclusive file lock on fd %d", fd);
@@ -836,6 +874,10 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
+        // We call sync from a variety of places and leave it up to sync to decide
+        // what needs to be done. Since it gets called as part of the normal course
+        // of events for non-writable files, it should not be an error when this is
+        // detected. Signal success and exit.
         ret = 0;
         log_print(LOG_DEBUG, "ldb_filecache_sync: not writable");
         goto finish;
@@ -845,6 +887,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     // Update the file cache
     pdata = ldb_filecache_pdata_get(cache, path);
     if (pdata == NULL) {
+        errno = ENOENT;
         log_print(LOG_ERR, "ldb_filecache_sync(%s, fd=%d): pdata is NULL", path, sdata->fd);
         goto finish;
     }
@@ -857,14 +900,13 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
             if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
                 log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
-                ret = -1;
+                // lseek will have set errno
                 goto finish;
             }
 
             log_print(LOG_DEBUG, "Getting libneon session.");
             if (!(session = session_get(1))) {
                 errno = EIO;
-                ret = -1;
                 log_print(LOG_ERR, "ldb_filecache_sync: failed session");
                 goto finish;
             }
@@ -874,7 +916,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
             if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
                 log_print(LOG_ERR, "ldb_filecache_sync: ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
                 errno = ENOENT;
-                ret = -1;
                 goto finish;
             }
 
@@ -894,7 +935,10 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     }
 
     // Point the persistent cache to the new file content.
-    ldb_filecache_pdata_set(cache, path, pdata);
+    if (ldb_filecache_pdata_set(cache, path, pdata) < 0) {
+        // Log the issue, but don't make it return an error
+        log_print(LOG_NOTICE, "ldb_filecache_sync: Failed to insert entry into filecache: %s : %s", path, pdata->filename);
+    }
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
@@ -902,7 +946,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
 finish:
 
-    if (pdata) free(pdata);
+    free(pdata);
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Done syncing file (%s, fd=%d).", path, sdata->fd);
 
@@ -919,18 +963,23 @@ int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
     log_print(LOG_DEBUG, "ldb_filecache_truncate(%d)", sdata->fd);
 
     log_print(LOG_DEBUG, "ldb_filecache_truncate: acquiring shared file lock on fd %d", sdata->fd);
-    if (flock(sdata->fd, LOCK_SH)) {
+    if (flock(sdata->fd, LOCK_SH) < 0) {
         log_print(LOG_ERR, "ldb_filecache_truncate: error acquiring shared file lock");
         return ret;
     }
     log_print(LOG_DEBUG, "ldb_filecache_truncate: acquired shared file lock on fd %d", sdata->fd);
 
-    if ((ret = ftruncate(sdata->fd, s)) < 0) {
+    ret = ftruncate(sdata->fd, s);
+    if (ret < 0) {
+        ret = -1;
+        // ftruncate will have set errno
         log_print(LOG_ERR, "ldb_filecache_truncate: error on ftruncate %d", ret);
     }
 
     log_print(LOG_DEBUG, "ldb_filecache_truncate: releasing shared file lock on fd %d", sdata->fd);
-    if (flock(sdata->fd, LOCK_UN)) {
+    if (flock(sdata->fd, LOCK_UN) < 0) {
+        ret = -1;
+        // flock will have set errno
         log_print(LOG_ERR, "ldb_filecache_truncate: error releasing shared file lock");
     }
     log_print(LOG_DEBUG, "ldb_filecache_truncate: released shared file lock on fd %d", sdata->fd);
@@ -998,6 +1047,7 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
 
     if (pdata == NULL) {
         log_print(LOG_NOTICE, "ldb_filecache_pdata_move: Path %s does not exist.", old_path);
+        errno = ENOENT;
         goto finish;
     }
 
@@ -1007,6 +1057,7 @@ int ldb_filecache_pdata_move(ldb_filecache_t *cache, const char *old_path, const
 
     if (ldb_filecache_pdata_set(cache, new_path, pdata) < 0) {
         log_print(LOG_ERR, "ldb_filecache_pdata_move: Moving entry from path %s to %s failed. Could not write new entry.", old_path, new_path);
+        errno = EIO; // Not sure what to use here
         goto finish;
     }
 

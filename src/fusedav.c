@@ -636,7 +636,7 @@ static int dav_readdir(
     // a scenario, we won't go out of our way to handle it. Exit with an error.
     if (path == NULL) {
         log_print(LOG_INFO, "CALLBACK: dav_readdir(NULL path)");
-        return -1;
+        return -ENOENT;
     }
 
     path = path_cvt(path);
@@ -658,9 +658,10 @@ static int dav_readdir(
         }
 
         log_print(LOG_DEBUG, "Updating directory: %s", path);
-        if (update_directory(path, (ret == -STAT_CACHE_OLD_DATA)) != 0) {
+        ret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
+        if (ret != 0) {
             log_print(LOG_ERR, "Failed to update directory: %s", path);
-            return -1;
+            return ret;
         }
 
         // Output the new data, skipping any cache freshness checks
@@ -815,12 +816,11 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
 static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
-        ret = get_stat(path, stbuf);
+        int ret = get_stat(path, stbuf);
         if (ret != 0) {
             log_print(LOG_DEBUG, "dav_fgetattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
             return ret;
@@ -835,7 +835,6 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
         // Fill in generic values
         // mode = 0 (unspecified), is_dir = false; fd to get size
         fill_stat_generic(stbuf, 0, false, fd);
-        ret = 0;
     }
 
     // Zero-out unused nanosecond fields.
@@ -850,7 +849,7 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
     if (S_ISREG(stbuf->st_mode) && config->file_mode)
         stbuf->st_mode = S_IFREG | config->file_mode;
 
-    return ret;
+    return 0;
 }
 
 static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
@@ -883,7 +882,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
 
 static int dav_unlink(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int r;
+    int ret;
     struct stat st;
     ne_session *session;
 
@@ -898,21 +897,22 @@ static int dav_unlink(const char *path) {
         return -EIO;
     }
 
-    if ((r = get_stat(path, &st)) < 0)
-        return r;
+    ret = get_stat(path, &st);
+    if (ret < 0)
+        return ret;
 
     if (!S_ISREG(st.st_mode))
         return -EISDIR;
 
-    log_print(LOG_DEBUG, "dav_unlink: calling ne_delete on %s", path);
     if (ne_delete(session, path)) {
         log_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
         return -ENOENT;
     }
 
-    log_print(LOG_DEBUG, "dav_unlink: calling ldb_filecache_delete on %s", path);
     if (ldb_filecache_delete(config->cache, path, true)) {
-        log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
+        // We treat an error on delete as a warning and don't set an error code.
+        // We can see an error here if there is a leveldb issue on the delete.
+        log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed on %s", path);
     }
 
     log_print(LOG_DEBUG, "dav_unlink: calling stat_cache_delete on %s", path);
@@ -1087,8 +1087,13 @@ static int dav_rename(const char *from, const char *to) {
     stat_cache_delete(config->cache, from);
 
     if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
-        log_print(LOG_NOTICE, "dav_rename: No local file cache data to move (or move failed).");
-        ldb_filecache_delete(config->cache, to, true);
+        // If we fail here, we fail the local move; the overall return value will
+        // reflect whether or not the server move succeeded
+        log_print(LOG_NOTICE, "dav_rename: No local file cache data to move (or move failed) from %s to %s.", from, to);
+        if (ldb_filecache_delete(config->cache, to, true) < 0) {
+            // Log, but don't set it as an error (we've already failed the local move anyway)
+            log_print(LOG_WARNING, "dav_rename: ldb_filecache_delete failed from %s to %s", from, to);
+        }
         goto finish;
     }
     local_ret = 0;
@@ -1109,7 +1114,7 @@ finish:
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret = 0;
+    int ret;
 
     BUMP(release);
 
@@ -1121,12 +1126,14 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // to detect there.
     ret = ldb_filecache_release(config->cache, path, info);
     if (ret < 0) {
-        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, (path ? path : "null path"));
+        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: on %s -- errno %d %s",
+            (path ? path : "null path"), errno, strerror(errno));
+        return -errno;
     }
 
     log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path ? path : "null path"));
 
-    return ret;
+    return 0;
 }
 
 static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
@@ -1145,8 +1152,9 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     // descriptor there
     ret = ldb_filecache_sync(config->cache, path, info, true);
     if (ret < 0) {
-        log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
-        goto finish;
+        log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync on %s -- errno %d %s",
+            path ? path : "null path", errno, strerror(errno));
+        return -errno;
     }
 
     fd = ldb_filecache_fd(info);
@@ -1154,14 +1162,11 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     fill_stat_generic(&(value.st), 0, false, fd);
     stat_cache_value_set(config->cache, path, &value);
 
-finish:
-
     return ret;
 }
 
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret = 0;
 
     BUMP(flush);
 
@@ -1171,12 +1176,13 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     // If path is NULL because we are accessing a bare file descriptor,
     // let ldb_filecache_sync handle it since we need to get the file
     // descriptor there
-    ret = ldb_filecache_sync(config->cache, path, info, true);
-    if (ret < 0) {
-        log_print(LOG_ERR, "dav_flush: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
+    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
+        log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error on %s -- errno %d %s",
+            path, errno, strerror(errno));
+        return -errno;
     }
 
-    return ret;
+    return 0;
 }
 
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
@@ -1230,13 +1236,12 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 static int do_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *value;
-    int ret = 0;
 
     assert(info);
 
-    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info)) < 0) {
-        log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
-        return ret;
+    if (ldb_filecache_open(config->cache_path, config->cache, path, info) < 0) {
+        log_print(LOG_ERR, "do_open: Failed ldb_filecache_open on %s -- errno %d %s", path, errno, strerror(errno));
+        return -errno;
     }
 
     /* If we create a new file, fill in a stat and put it in the stat cache.
@@ -1258,7 +1263,7 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
     log_print(LOG_DEBUG, "do_open: after ldb_filecache_open");
 
-    return ret;
+    return 0;
 }
 
 
@@ -1292,7 +1297,9 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, s
 
     bytes_read = ldb_filecache_read(info, buf, size, offset);
     if (bytes_read < 0) {
-        log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
+        log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error on %s -- errno %d %s",
+            path ? path : "null path", errno, strerror(errno));
+        return -errno;
     }
 
     return bytes_read;
@@ -1312,24 +1319,23 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
 
     bytes_written = ldb_filecache_write(info, buf, size, offset);
     if (bytes_written < 0) {
-        log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
-        goto finish;
+        log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error on %s -- errno %d %s",
+            path ? path : "null path", errno, strerror(errno));
+        return -errno;
     }
 
     // Let sync handle potential null path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
-        log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
-        return -EIO;
+        log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error on %s -- errno %d %s",
+            path, errno, strerror(errno));
+        return -errno;
     }
-
-finish:
 
    return bytes_written;
 }
 
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret = 0;
 
     BUMP(ftruncate);
 
@@ -1337,22 +1343,20 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
     log_print(LOG_INFO, "CALLBACK: dav_ftruncate(%s, %lu)", path ? path : "null path", (unsigned long) size);
 
     if (ldb_filecache_truncate(info, size) < 0) {
-        ret = -errno;
-        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", ret, strerror(ret));
-        goto finish;
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error on %s -- errno %d %s",
+            path, errno, strerror(errno));
+        return -errno;
     }
 
     // Let sync handle a NULL path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
-        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
-        ret = -EIO;
-        goto finish;
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error on %s -- errno %d %s",
+            path ? path : "null path", errno, strerror(errno));
+        return -errno;
     }
 
-finish:
-
-    log_print(LOG_DEBUG, "dav_ftruncate: ret=%d", ret);
-    return ret;
+    log_print(LOG_DEBUG, "dav_ftruncate: done");
+    return 0;
 }
 
 static int dav_utimens(const char *path, const struct timespec tv[2]) {
@@ -1360,14 +1364,14 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
     ne_session *session;
     const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
     ne_proppatch_operation ops[2];
-    int r = 0;
+    int ret = 0;
     char *date;
 
     BUMP(utimens);
 
     if (config->ignoreutimens) {
         //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
-        return r;
+        return ret;
     }
 
     assert(path);
@@ -1383,13 +1387,13 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
 
     if (!(session = session_get(1))) {
         log_print(LOG_ERR, "dav_utimens(%s): failed to get session", path);
-        r = -EIO;
+        ret = -EIO;
         goto finish;
     }
 
     if (proppatch_with_redirect(session, path, ops)) {
         log_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
-        r = -ENOTSUP;
+        ret = -ENOTSUP;
         goto finish;
     }
 
@@ -1399,7 +1403,7 @@ static int dav_utimens(const char *path, const struct timespec tv[2]) {
 finish:
     free(date);
 
-    return r;
+    return ret;
 }
 
 static const char *fix_xattr(const char *name) {
@@ -1670,7 +1674,7 @@ static int dav_setxattr(
     ne_session *session;
     ne_propname propname;
     ne_proppatch_operation ops[2];
-    int r = 0;
+    int ret = 0;
     char dnspace[128], dname[128];
     char *value_fixed = NULL;
 
@@ -1689,12 +1693,12 @@ static int dav_setxattr(
     log_print(LOG_INFO, "dav_setxattr(%s, %s)", path, name);
 
     if (flags) {
-        r = ENOTSUP;
+        ret = ENOTSUP;
         goto finish;
     }
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
-        r = -ENOATTR;
+        ret = -ENOATTR;
         goto finish;
     }
 
@@ -1720,13 +1724,13 @@ static int dav_setxattr(
 
     if (!(session = session_get(1))) {
         log_print(LOG_ERR, "dav_setxattr(%s): failed to get session", path);
-        r = -EIO;
+        ret = -EIO;
         goto finish;
     }
 
     if (proppatch_with_redirect(session, path, ops)) {
         log_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
-        r = -ENOTSUP;
+        ret = -ENOTSUP;
         goto finish;
     }
 
@@ -1735,7 +1739,7 @@ static int dav_setxattr(
 finish:
     free(value_fixed);
 
-    return r;
+    return ret;
 }
 
 static int dav_removexattr(const char *path, const char *name) {
@@ -1743,7 +1747,7 @@ static int dav_removexattr(const char *path, const char *name) {
     ne_session *session;
     ne_propname propname;
     ne_proppatch_operation ops[2];
-    int r = 0;
+    int ret = 0;
     char dnspace[128], dname[128];
 
     BUMP(removexattr);
@@ -1760,7 +1764,7 @@ static int dav_removexattr(const char *path, const char *name) {
     log_print(LOG_INFO, "dav_removexattr(%s, %s)", path, name);
 
     if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
-        r = -ENOATTR;
+        ret = -ENOATTR;
         goto finish;
     }
 
@@ -1775,13 +1779,13 @@ static int dav_removexattr(const char *path, const char *name) {
 
     if (!(session = session_get(1))) {
         log_print(LOG_ERR, "dav_removexattr(%s): failed to get session", path);
-        r = -EIO;
+        ret = -EIO;
         goto finish;
     }
 
     if (proppatch_with_redirect(session, path, ops)) {
         log_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
-        r = -ENOTSUP;
+        ret = -ENOTSUP;
         goto finish;
     }
 
@@ -1789,7 +1793,7 @@ static int dav_removexattr(const char *path, const char *name) {
 
 finish:
 
-    return r;
+    return ret;
 }
 
 static int do_chmod(const char *path, mode_t mode, struct fusedav_config *config) {
@@ -1797,7 +1801,6 @@ static int do_chmod(const char *path, mode_t mode, struct fusedav_config *config
     struct stat_cache_value *value;
     const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
     ne_proppatch_operation ops[2];
-    int ret = 0;
 
     ops[0].name = &executable;
     ops[0].type = ne_propset;
@@ -1822,7 +1825,7 @@ static int do_chmod(const char *path, mode_t mode, struct fusedav_config *config
         free(value);
     }
 
-    return ret;
+    return 0;
 }
 
 static int dav_chmod(const char *path, mode_t mode) {
@@ -1831,8 +1834,9 @@ static int dav_chmod(const char *path, mode_t mode) {
     BUMP(chmod);
 
     // If both file and dir modes are fixed, there is nothing to set.
-    if (config->file_mode && config->dir_mode)
+    if (config->file_mode && config->dir_mode) {
         return 0;
+    }
 
     assert(path);
 
@@ -1857,19 +1861,21 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     info->flags |= O_CREAT | O_TRUNC;
     ret = do_open(path, info);
 
-    if (ret < 0)
-        return ret;
+    if (ret < 0) {
+        return ret; // ret will be -errno from do_open
+    }
 
-    ret = do_chmod(path, mode, config);
+    do_chmod(path, mode, config); // ignorning errors
 
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
-        log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
-        return -EIO;
+        log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error on %s -- errno %d %s",
+            path, errno, strerror(errno));
+        return -errno;
     }
 
     log_print(LOG_DEBUG, "Done: create()");
 
-    return ret;
+    return 0;
 }
 
 static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
