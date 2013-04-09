@@ -54,6 +54,8 @@ static void characterDataHandler(void *userData, const XML_Char *s, int len) {
     struct propfind_state *state = (struct propfind_state *) userData;
     log_print(LOG_DEBUG, "characterDataHandler");
 
+    return;
+
     // If the current string is uninitialized, add one to the length
     // to accomodate the NUL terminator.
     if (state->pstate.current_data == NULL)
@@ -126,6 +128,7 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
 static void endElement(void *userData, const XML_Char *name) {
     struct propfind_state *state = (struct propfind_state *) userData;
     log_print(LOG_DEBUG, "endElement: %s", name);
+    return;
 
     /*
     const ne_propname resourcetype = { "DAV:", "resourcetype" };
@@ -152,7 +155,9 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     XML_Parser parser = (XML_Parser) userp;
     size_t real_size = length * nmemb;
 
-    if (XML_Parse(parser, contents, real_size, real_size == 0) == 0) {
+    log_print(LOG_INFO, "Got chunk of %u bytes.", real_size);
+
+    if (XML_Parse(parser, contents, real_size, 0) == 0) {
         int error_code = XML_GetErrorCode(parser);
         log_print(LOG_WARNING, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
         return 0; // Zero bytes processed is failure.
@@ -184,7 +189,7 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     XML_SetUserData(parser, &state);
     XML_SetElementHandler(parser, startElement, endElement);
     XML_SetCharacterDataHandler(parser, characterDataHandler);
-    curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) &parser);
+    curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) parser);
     curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_parsing_callback);
 
     // Add the Depth header and PROPFIND verb.
@@ -200,7 +205,14 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
      */
 
     // Perform the request and parse the response.
+    log_print(LOG_INFO, "About to perform PROPFIND.");
     res = curl_easy_perform(session);
+
+    // Finalize parsing.
+    if (XML_Parse(parser, NULL, 0, 1) == 0) {
+        int error_code = XML_GetErrorCode(parser);
+        log_print(LOG_WARNING, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+    }
 
     if (res != CURLE_OK) {
         log_print(LOG_WARNING, "PROPFIND failed: %s", curl_easy_strerror(res));
