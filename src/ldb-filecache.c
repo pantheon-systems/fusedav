@@ -702,7 +702,6 @@ finish:
 
 // close the file
 static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
-    int ret = -1;
 
     BUMP(close);
 
@@ -711,21 +710,22 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     if (sdata->fd > 0)  {
         if (close(sdata->fd) < 0) {
             // close will have set errno
-            log_print(LOG_ERR, "ldb_filecache_close: Failed to close cache file; %d %s", ret, strerror(errno));
+            log_print(LOG_ERR, "ldb_filecache_close: Failed to close cache file; %d %s", errno, strerror(errno));
+            return -1;
         }
         else {
             log_print(LOG_DEBUG, "ldb_filecache_close: closed fd (%d).", sdata->fd);
-            ret = 0;
         }
     }
     else {
         log_print(LOG_ERR, "ldb_filecache_close: Session data lacks a cache file descriptor.");
         errno = EBADF;
+        return -1;
     }
 
     free(sdata);
 
-    return ret;
+    return 0;
 }
 
 // top-level close/release call
@@ -749,6 +749,8 @@ int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_
     }
 
     log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
+
+    ret = 0;
 
 finish:
 
