@@ -45,21 +45,23 @@ struct propfind_state {
     struct parser_state pstate;
 };
 
-static void startElement(__unused void *userData, const XML_Char *name, __unused const XML_Char **atts) {
-    //struct propfind_state *state = (struct propfind_state *) userData;
-    log_print(LOG_DEBUG, "startElement: %s", name);
+static void startElement(__unused void *userData, __unused const XML_Char *name, __unused const XML_Char **atts) {
+    struct propfind_state *state = (struct propfind_state *) userData;
+    //log_print(LOG_DEBUG, "startElement: %s", name);
+    state->pstate.current_data = malloc(1);
+    state->pstate.current_data[0] = '\0';
+    state->pstate.current_data_len = 1;
 }
 
 static void characterDataHandler(void *userData, const XML_Char *s, int len) {
     struct propfind_state *state = (struct propfind_state *) userData;
-    log_print(LOG_DEBUG, "characterDataHandler");
+    //log_print(LOG_DEBUG, "characterDataHandler");
 
-    return;
-
-    // If the current string is uninitialized, add one to the length
-    // to accomodate the NUL terminator.
-    if (state->pstate.current_data == NULL)
-        ++len;
+    char *cdata = malloc(len + 1);
+    strncpy(cdata, s, len);
+    cdata[len] = '\0';
+    log_print(LOG_DEBUG, "Got characterDataHandler: %s", cdata);
+    free(cdata);
 
     // Extend the size of current_data by len. If it's uninitialized,
     // realloc will malloc for size len.
@@ -128,7 +130,15 @@ static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *
 static void endElement(void *userData, const XML_Char *name) {
     struct propfind_state *state = (struct propfind_state *) userData;
     log_print(LOG_DEBUG, "endElement: %s", name);
-    return;
+
+    if (strcmp(name, "href") == 0) {
+        log_print(LOG_DEBUG, "Path: %s", state->pstate.current_data);
+    }
+    else if (strcmp(name, "resourcetype") == 0) {
+        //if (strstr(state->pstate.current_data, "collection"))
+        //    state->pstate.st.st_mode |= S_IFDIR;
+        log_print(LOG_DEBUG, "Resource Type: %s", state->pstate.current_data);
+    }
 
     /*
     const ne_propname resourcetype = { "DAV:", "resourcetype" };
