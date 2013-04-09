@@ -656,7 +656,7 @@ ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, 
 // top-level write call
 ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
-    ssize_t ret;
+    ssize_t ret = -1;
 
     BUMP(write);
 
@@ -666,8 +666,8 @@ ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t
     log_print(LOG_DEBUG, "ldb_filecache_write: acquiring shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_SH)) {
         log_print(LOG_ERR, "ldb_filecache_write: error acquiring shared file lock");
-        // return 0 since it is the number of bytes written
-        return 0;
+        // errno from flock
+        return -1;
     }
     log_print(LOG_DEBUG, "ldb_filecache_write: acquired shared file lock on fd %d", sdata->fd);
 
