@@ -19,9 +19,12 @@
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***/
 
-int session_init(char *base, char *ca_cert, char *client_cert, char *client_cert_pass);
+#include <curl/curl.h>
+
+int session_config_init(char *base, char *ca_cert, char *client_cert);
 CURL *session_request_init(const char *path);
 CURL *session_get_handle(void);
 void session_config_free(void);
+const char *get_base_url(void);
 
 #endif

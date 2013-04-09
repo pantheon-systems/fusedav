@@ -36,7 +36,6 @@
 #include <sys/statfs.h>
 #include <sys/file.h>
 #include <getopt.h>
-#include <attr/xattr.h>
 #include <sys/types.h>
 #include <syscall.h>
 #include <sys/prctl.h>
@@ -56,6 +55,8 @@
 #include "ldb-filecache.h"
 #include "session.h"
 #include "fusedav.h"
+#include "props.h"
+#include "util.h"
 
 /*
 const ne_propname query_properties[] = {
@@ -72,11 +73,6 @@ const ne_propname query_properties[] = {
 mode_t mask = 0;
 int debug = 1;
 struct fuse* fuse = NULL;
-int lock_thread_exit = 0;
-
-#define MIME_XATTR "user.mime_type"
-
-#define MAX_REDIRECTS 10
 
 #define CLOCK_SKEW 10 // seconds
 
@@ -98,18 +94,14 @@ struct statistics {
     unsigned ftruncate;
     unsigned fgetattr;
     unsigned getattr;
-    unsigned getxattr;
-    unsigned listxattr;
     unsigned mkdir;
     unsigned mknod;
     unsigned open;
     unsigned read;
     unsigned readdir;
     unsigned release;
-    unsigned removexattr;
     unsigned rename;
     unsigned rmdir;
-    unsigned setxattr;
     unsigned unlink;
     unsigned utimens;
     unsigned write;
@@ -127,8 +119,6 @@ struct fusedav_config {
     char *password;
     char *ca_certificate;
     char *client_certificate;
-    int  lock_timeout;
-    bool lock_on_mount;
     int  verbosity;
     bool nodaemon;
     bool ignoreutimens;
@@ -143,7 +133,6 @@ struct fusedav_config {
     char *run_as_gid_name;
     bool progressive_propfind;
     bool refresh_dir_for_file_stat;
-    bool ignorexattr;
     bool singlethread;
 };
 
@@ -159,8 +148,6 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("password=%s",                    password, 0),
      FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
      FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
-     FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
-     FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
@@ -173,7 +160,6 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid_name, 0),
      FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
      FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
-     FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
      FUSEDAV_OPT("singlethread",                   singlethread, true),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
@@ -237,18 +223,14 @@ static void sigusr2_handler(__unused int signum) {
     log_print(LOG_NOTICE, "  ftruncate:   %u", FETCH(ftruncate));
     log_print(LOG_NOTICE, "  fgetattr:    %u", FETCH(fgetattr));
     log_print(LOG_NOTICE, "  getattr:     %u", FETCH(getattr));
-    log_print(LOG_NOTICE, "  getxattr:    %u", FETCH(getxattr));
-    log_print(LOG_NOTICE, "  listxattr:   %u", FETCH(listxattr));
     log_print(LOG_NOTICE, "  mkdir:       %u", FETCH(mkdir));
     log_print(LOG_NOTICE, "  mknod:       %u", FETCH(mknod));
     log_print(LOG_NOTICE, "  open:        %u", FETCH(open));
     log_print(LOG_NOTICE, "  read:        %u", FETCH(read));
     log_print(LOG_NOTICE, "  readdir:     %u", FETCH(readdir));
     log_print(LOG_NOTICE, "  release:     %u", FETCH(release));
-    log_print(LOG_NOTICE, "  removexattr: %u", FETCH(removexattr));
     log_print(LOG_NOTICE, "  rename:      %u", FETCH(rename));
     log_print(LOG_NOTICE, "  rmdir:       %u", FETCH(rmdir));
-    log_print(LOG_NOTICE, "  setxattr:    %u", FETCH(setxattr));
     log_print(LOG_NOTICE, "  unlink:      %u", FETCH(unlink));
     log_print(LOG_NOTICE, "  utimens:     %u", FETCH(utimens));
     log_print(LOG_NOTICE, "  write:       %u", FETCH(write));
@@ -279,8 +261,9 @@ static const char *path_cvt(const char *path) {
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
         curl_free(r);
 
-    asprintf(&t, "%s%s", base_directory, path);
+    asprintf(&t, "%s%s", get_base_url(), path);
     assert(t);
+    l = strlen(t);
 
     if (l > 1 && t[l-1] == '/')
         t[l-1] = 0;
@@ -295,138 +278,21 @@ static const char *path_cvt(const char *path) {
     return r;
 }
 
-// Return value is allocated and must be freed.
-char *path_parent(const char *uri) {
-    size_t len = strlen(uri);
-    const char *pnt = uri + len - 1;
-    // skip trailing slash (parent of "/foo/" is "/")
-    if (pnt >= uri && *pnt == '/')
-        pnt--;
-    // find previous slash
-    while (pnt > uri && *pnt != '/')
-        pnt--;
-    if (pnt < uri || (pnt == uri && *pnt != '/'))
-        return NULL;
-    return strndup(uri, pnt - uri + 1);
-}
-
 static int simple_propfind_with_redirect(
-        CURL *session,
         const char *path,
         int depth,
-        const ne_propname *props,
-        ne_props_result results,
+        props_result_callback result_callback,
         void *userdata) {
 
-    int i, ret;
+    int ret;
 
     log_print(LOG_DEBUG, "Performing PROPFIND of depth %d on path %s.", depth, path);
 
-    for (i = 0; i < MAX_REDIRECTS; i++) {
-        const ne_uri *u;
-
-        if ((ret = ne_simple_propfind(session, path, depth, props, results, userdata)) != NE_REDIRECT)
-            return ret;
-
-        if (!(u = ne_redirect_location(session)))
-            break;
-
-        log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
-
-        path = u->path;
-    }
+    ret = simple_propfind(path, depth, result_callback, userdata);
 
     log_print(LOG_DEBUG, "Done with PROPFIND.");
 
     return ret;
-}
-
-static int proppatch_with_redirect(
-        CURL *session,
-        const char *path,
-        const ne_proppatch_operation *ops) {
-
-    int i, ret;
-
-    for (i = 0; i < MAX_REDIRECTS; i++) {
-        const ne_uri *u;
-
-        if ((ret = ne_proppatch(session, path, ops)) != NE_REDIRECT)
-            return ret;
-
-        if (!(u = ne_redirect_location(session)))
-            break;
-
-        if (!session_is_local(u))
-            break;
-
-        log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", path, u->path);
-
-        path = u->path;
-    }
-
-    return ret;
-}
-
-
-static void fill_stat(struct stat *st, const ne_prop_result_set *results, bool *is_deleted, int is_dir) {
-    const char *rt, *e, *gcl, *glm, *cd;
-    const ne_propname resourcetype = { "DAV:", "resourcetype" };
-    const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
-    const ne_propname getcontentlength = { "DAV:", "getcontentlength" };
-    const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
-    const ne_propname creationdate = { "DAV:", "creationdate" };
-    const ne_propname event = { "DAV:", "event" };
-
-    assert(st && results);
-
-    rt = ne_propset_value(results, &resourcetype);
-    e = ne_propset_value(results, &executable);
-    gcl = ne_propset_value(results, &getcontentlength);
-    glm = ne_propset_value(results, &getlastmodified);
-    cd = ne_propset_value(results, &creationdate);
-
-    // If it's a collection, force the type to directory.
-    log_print(LOG_DEBUG, "fill_stat: resourcetype=%s", rt);
-    if (rt && strstr(rt, "collection")) {
-        is_dir = 1;
-    }
-
-    if (is_deleted != NULL) {
-        const char *ev;
-        ev = ne_propset_value(results, &event);
-        if (ev == NULL) {
-            *is_deleted = false;
-        }
-        else {
-            log_print(LOG_INFO, "DAV:event=%s", ev);
-            *is_deleted = (strcmp(ev, "DESTROYED") == 0);
-        }
-    }
-
-    memset(st, 0, sizeof(struct stat));
-
-    if (is_dir) {
-        st->st_mode = S_IFDIR | 0777;
-        st->st_nlink = 3;            /* find will ignore this directory if nlin <= and st_size == 0 */
-        st->st_size = 4096;
-    } else {
-        st->st_mode = S_IFREG | (e && (*e == 'T' || *e == 't') ? 0777 : 0666);
-        st->st_nlink = 1;
-        st->st_size = gcl ? atoll(gcl) : 0;
-    }
-
-    st->st_atime = time(NULL);
-    st->st_mtime = glm ? ne_rfc1123_parse(glm) : 0;
-    st->st_ctime = cd ? ne_iso8601_parse(cd) : 0;
-
-    st->st_blocks = (st->st_size+511)/512;
-    /*log_print(LOG_DEBUG, "a: %u; m: %u; c: %u", st->st_atime, st->st_mtime, st->st_ctime);*/
-
-    st->st_mode &= ~mask;
-
-    st->st_uid = getuid();
-    st->st_gid = getgid();
 }
 
 char *strip_trailing_slash(char *fn, int *is_dir) {
@@ -441,43 +307,37 @@ char *strip_trailing_slash(char *fn, int *is_dir) {
     return fn;
 }
 
-static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
-    char *path = NULL;
-    int is_dir = 0;
+static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st, bool exists) {
+    char *local_path = NULL;
+    //int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    bool is_deleted;
 
-    path = strdup(u->path);
+    local_path = strdup(path);
 
     // Avoid valgrind warnings
     memset(&value, 0, sizeof(struct stat_cache_value));
+    value.st = st;
 
     //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
 
     // @TODO: Consider whether the is_dir check here is worth keeping
     // now that we check whether it's a collection.
-    strip_trailing_slash(path, &is_dir);
+    //strip_trailing_slash(local_path, &is_dir);
 
-    fill_stat(&value.st, results, &is_deleted, is_dir);
-    value.prepopulated = false;
-
-    if (is_deleted) {
-        log_print(LOG_DEBUG, "Removing path: %s", path);
-        stat_cache_delete(config->cache, path);
-    }
-    else {
+    if (exists) {
         stat_cache_value_set(config->cache, path, &value);
     }
+    else {
+        log_print(LOG_DEBUG, "Removing path: %s", path);
+        stat_cache_delete(config->cache, local_path);
+    }
 
-    free(path);
+    free(local_path);
 }
 
-static void getdir_cache_callback(
-        const char *root,
-        const char *fn,
-        void *user) {
-
+static void getdir_cache_callback(const char *root, const char *fn, void *user) {
+    CURL *session = session_get_handle();
     struct fill_info *f = user;
     char path[PATH_MAX];
     char *h;
@@ -486,27 +346,21 @@ static void getdir_cache_callback(
 
     snprintf(path, sizeof(path), "%s/%s", !strcmp(root, "/") ? "" : root, fn);
 
-    h = ne_path_unescape(fn);
+    h = curl_easy_unescape(session, fn, strlen(fn), NULL);
 
     //log_print(LOG_DEBUG, "getdir_cache_callback fn: %s", h);
 
     f->filler(f->buf, h, NULL, 0);
-    free(h);
+    curl_free(h);
 }
 
 static int update_directory(const char *path, bool attempt_progessive_update) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     bool needs_update = true;
-    CURL *session;
     time_t last_updated;
     time_t timestamp;
     char *update_path = NULL;
-    int ne_result;
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_WARNING, "update_directory(%s): failed to get session", path);
-        return -EIO;
-    }
+    int propfind_result;
 
     // Attempt to freshen the cache.
     if (attempt_progessive_update && config->progressive_propfind) {
@@ -516,13 +370,10 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
 
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
 
-        ne_result = simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
-        if (ne_result == NE_OK) {
+        propfind_result = simple_propfind_with_redirect(update_path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
+        if (propfind_result < 0) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
-        }
-        else {
-            log_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
         }
 
         free(update_path);
@@ -536,9 +387,9 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         log_print(LOG_DEBUG, "Replacing directory data: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
-        ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
-        if (ne_result != NE_OK) {
-            log_print(LOG_WARNING, "Complete PROPFIND failed on %s: %s", path, ne_get_error(session));
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
+        if (propfind_result < 0) {
+            log_print(LOG_WARNING, "Complete PROPFIND failed on %s", path);
             /* Here's the scenario:
              * mkdir a/b/c/d/e/f/g
              * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
@@ -577,7 +428,7 @@ static int dav_readdir(
         const char *path,
         void *buf,
         fuse_fill_dir_t filler,
-        __unused ne_off_t offset,
+        __unused off_t offset,
         __unused struct fuse_file_info *fi) {
 
     struct fusedav_config *config = fuse_get_context()->private_data;
@@ -627,36 +478,24 @@ static int dav_readdir(
     return 0;
 }
 
-static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_prop_result_set *results) {
+static void getattr_propfind_callback(__unused void *userdata, const char *path, struct stat st, bool exists) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    struct stat *st = (struct stat*) userdata;
     struct stat_cache_value value;
-    char *path;
-    int is_dir;
-
-    assert(st);
-
-    path = strdup(u->path);
 
     // Avoid valgrind warnings
     memset(&value, 0, sizeof(struct stat_cache_value));
+    value.st = st;
 
-    strip_trailing_slash(path, &is_dir);
-
-    fill_stat(st, results, NULL, is_dir);
-
-    value.st = *st;
-    value.prepopulated = false;
-    stat_cache_value_set(config->cache, path, &value);
-
-    free(path);
+    if (exists)
+        stat_cache_value_set(config->cache, path, &value);
+    // @TODO: Delete if non-existent.
 }
 
 static int get_stat(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    CURL *session;
     struct stat_cache_value *response;
     char *parent_path;
+    const char *base_directory;
     char *nepp;
     int is_dir = 0;
     time_t parent_children_update_ts;
@@ -667,11 +506,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
 
-    if (!(session = session_get(1))) {
-        memset(stbuf, 0, sizeof(struct stat));
-        log_print(LOG_ERR, "get_stat(%s): failed to get session", path);
-        return -EIO;
-    }
+    base_directory = get_base_url();
 
     log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
     is_base_directory = (strcmp(path, base_directory) == 0);
@@ -711,9 +546,9 @@ static int get_stat(const char *path, struct stat *stbuf) {
     if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
         // @TODO: Armor this better if the server returns unexpected data.
-        if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
+        if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, getattr_propfind_callback, NULL) < 0) {
             stat_cache_delete(config->cache, path);
-            log_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
+            log_print(LOG_NOTICE, "PROPFIND failed");
             memset(stbuf, 0, sizeof(struct stat));
             log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
             return -ENOENT;
@@ -857,6 +692,7 @@ static int dav_unlink(const char *path) {
     int r;
     struct stat st;
     CURL *session;
+    CURLcode res;
 
     BUMP(unlink);
 
@@ -864,21 +700,24 @@ static int dav_unlink(const char *path) {
 
     log_print(LOG_INFO, "CALLBACK: dav_unlink(%s)", path);
 
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "dav_unlink(%s): failed to get session", path);
-        return -EIO;
-    }
-
     if ((r = get_stat(path, &st)) < 0)
         return r;
 
     if (!S_ISREG(st.st_mode))
         return -EISDIR;
 
-    log_print(LOG_DEBUG, "dav_unlink: calling ne_delete on %s", path);
-    if (ne_delete(session, path)) {
-        log_print(LOG_ERR, "DELETE failed: %s", ne_get_error(session));
-        return -ENOENT;
+    if (!(session = session_request_init(path))) {
+        log_print(LOG_ERR, "dav_unlink(%s): failed to get request session", path);
+        return -EIO;
+    }
+
+    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
+
+    log_print(LOG_DEBUG, "dav_unlink: calling DELETE on %s", path);
+    res = curl_easy_perform(session);
+    if(res != CURLE_OK) {
+        log_print(LOG_DEBUG, "DELETE failed: %s\n", curl_easy_strerror(res));
+        return -EIO;
     }
 
     log_print(LOG_DEBUG, "dav_unlink: calling ldb_filecache_delete on %s", path);
@@ -899,17 +738,13 @@ static int dav_rmdir(const char *path) {
     bool has_child;
     struct stat st;
     CURL *session;
+    CURLcode res;
 
     BUMP(rmdir);
 
     path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_rmdir(%s)", path);
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_WARNING, "dav_rmdir(%s): failed to get session", path);
-        return -EIO;
-    }
 
     ret = get_stat(path, &st);
     if (ret < 0) {
@@ -935,10 +770,19 @@ static int dav_rmdir(const char *path) {
         return -ENOTEMPTY;
     }
 
-    if (ne_delete(session, fn)) {
-        log_print(LOG_ERR, "dav_rmdir: DELETE on %s failed: %s", path, ne_get_error(session));
+    if (!(session = session_request_init(path))) {
+        log_print(LOG_WARNING, "dav_rmdir(%s): failed to get session", path);
+        return -EIO;
+    }
+
+    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
+
+    res = curl_easy_perform(session);
+    if (res != CURLE_OK) {
+        log_print(LOG_ERR, "dav_rmdir(%s): DELETE failed: %s", path, curl_easy_strerror(res));
         return -ENOENT;
     }
+
     log_print(LOG_DEBUG, "dav_rmdir: removed(%s)", path);
 
     stat_cache_delete(config->cache, path);
@@ -954,6 +798,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     struct stat_cache_value value;
     char fn[PATH_MAX];
     CURL *session;
+    CURLcode res;
 
     BUMP(mkdir);
 
@@ -964,15 +809,18 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     log_print(LOG_INFO, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
-    if (!(session = session_get(1))) {
+    snprintf(fn, sizeof(fn), "%s/", path);
+
+    if (!(session = session_request_init(fn))) {
         log_print(LOG_ERR, "dav_mkdir(%s): failed to get session", path);
         return -EIO;
     }
 
-    snprintf(fn, sizeof(fn), "%s/", path);
+    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
 
-    if (ne_mkcol(session, fn)) {
-        log_print(LOG_ERR, "MKCOL failed: %s", ne_get_error(session));
+    res = curl_easy_perform(session);
+    if (res != CURLE_OK) {
+        log_print(LOG_ERR, "dav_mkdir(%s): MKCOL failed: %s", path, curl_easy_strerror(res));
         return -ENOENT;
     }
 
@@ -998,7 +846,10 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    char *header = NULL;
     CURL *session;
+    struct curl_slist *slist = NULL;
+    CURLcode res;
     int server_ret = -EIO;
     int local_ret = -EIO;
     int ret;
@@ -1015,11 +866,6 @@ static int dav_rename(const char *from, const char *to) {
 
     log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
 
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "dav_rename: failed to get session for %d:%s", fd, from);
-        goto finish;
-    }
-
     if ((ret = get_stat(from, &st)) < 0) {
         log_print(LOG_ERR, "dav_rename: failed get_stat for %d:%s", fd, from);
         server_ret = ret;
@@ -1031,6 +877,18 @@ static int dav_rename(const char *from, const char *to) {
         from = fn;
     }
 
+    if (!(session = session_request_init(from))) {
+        log_print(LOG_ERR, "dav_rename: failed to get session for %d:%s", fd, from);
+        goto finish;
+    }
+
+    // Add the destination header.
+    // @TODO: Check that this is a URL.
+    asprintf(&header, "Destination: %s", to);
+    slist = curl_slist_append(slist, header);
+    free(header);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+
     /* ne_move:
      * succeeds: mv 'from' to 'to', delete 'from'
      * fails with 404: may be doing the move on an open file, so this may be ok
@@ -1038,16 +896,19 @@ static int dav_rename(const char *from, const char *to) {
      * fails, not 404: error, exit
      */
     // Do the server side move
-    if (ne_move(session, 1, from, to)) {
-        const char *errstr = ne_get_error(session);
-        if (strstr(errstr, "404") || strstr(errstr, "500")) {
+
+    res = curl_easy_perform(session);
+    if(res != CURLE_OK) {
+        unsigned long response_code;
+        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code == 404 || response_code == 500) {
             // We allow silent failures because we might have done a rename before the
             // file ever made it to the server
-            log_print(LOG_INFO, "dav_rename: MOVE failed with 404, recoverable: %s", errstr);
+            log_print(LOG_INFO, "dav_rename: MOVE failed with 404, recoverable: %s", curl_easy_strerror(res));
             // Allow the error code -EIO to percolate down, we need to pass the local move
         }
         else {
-            log_print(LOG_ERR, "dav_rename: MOVE failed: %s", ne_get_error(session));
+            log_print(LOG_ERR, "dav_rename: MOVE failed: %s", curl_easy_strerror(res));
             goto finish;
         }
     }
@@ -1075,16 +936,16 @@ static int dav_rename(const char *from, const char *to) {
 
 finish:
 
-    if (entry != NULL)
-        free(entry);
-
     log_print(LOG_DEBUG, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
 
-    if (_from) free(_from);
+    free(entry);
+    free(slist);
+    free(_from);
 
     // if either the server move or the local move succeed, we return
-    if (server_ret == 0 || local_ret == 0) return 0;
-    else return server_ret; // error from either get_stat or ne_move
+    if (server_ret == 0 || local_ret == 0)
+        return 0;
+    return server_ret; // error from either get_stat or curl_easy_getinfo
 }
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
@@ -1241,7 +1102,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     return do_open(path, info);
 }
 
-static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
+static int dav_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
 
     BUMP(read);
@@ -1260,7 +1121,7 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, s
     return bytes_read;
 }
 
-static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
+static int dav_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ssize_t bytes_written;
 
@@ -1289,7 +1150,7 @@ finish:
    return bytes_written;
 }
 
-static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
+static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
 
@@ -1317,493 +1178,16 @@ finish:
     return ret;
 }
 
-static int dav_utimens(const char *path, const struct timespec tv[2]) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-    CURL *session;
-    const ne_propname getlastmodified = { "DAV:", "getlastmodified" };
-    ne_proppatch_operation ops[2];
-    int r = 0;
-    char *date;
-
+static int dav_utimens(__unused const char *path, __unused const struct timespec tv[2]) {
     BUMP(utimens);
-
-    if (config->ignoreutimens) {
-        //log_print(LOG_DEBUG, "Skipping utimens attribute setting.");
-        return r;
-    }
-
-    assert(path);
-
-    path = path_cvt(path);
-
-    log_print(LOG_INFO, "CALLBACK: dav_utimens(%s, %lu, %lu)", path, tv[0].tv_sec, tv[1].tv_sec);
-
-    ops[0].name = &getlastmodified;
-    ops[0].type = ne_propset;
-    ops[0].value = date = ne_rfc1123_date(tv[1].tv_sec);
-    ops[1].name = NULL;
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "dav_utimens(%s): failed to get session", path);
-        r = -EIO;
-        goto finish;
-    }
-
-    if (proppatch_with_redirect(session, path, ops)) {
-        log_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
-        r = -ENOTSUP;
-        goto finish;
-    }
-
-    // @TODO: Before public release: Update the stat cache instead.
-    stat_cache_delete(config->cache, path);
-
-finish:
-    free(date);
-
-    return r;
-}
-
-static const char *fix_xattr(const char *name) {
-    assert(name);
-
-    if (!strcmp(name, MIME_XATTR))
-        return "user.webdav(DAV:;getcontenttype)";
-
-    return name;
-}
-
-struct listxattr_info {
-    char *list;
-    size_t space, size;
-};
-
-static int listxattr_iterator(
-        void *userdata,
-        const ne_propname *pname,
-        const char *value,
-        __unused const ne_status *status) {
-
-    struct listxattr_info *l = userdata;
-
-    assert(l);
-
-    if (!value || !pname)
-        return -1;
-
-    if (l->list) {
-        int n;
-        n = snprintf(l->list, l->space, "user.webdav(%s;%s)", pname->nspace, pname->name) + 1;
-
-        if (n >= (int) l->space) {
-            l->size += l->space;
-            l->space = 0;
-            return 1;
-
-        } else {
-            l->size += n;
-            l->space -= n;
-
-            if (l->list)
-                l->list += n;
-
-            return 0;
-        }
-    } else {
-        /* Calculate space */
-
-        l->size += strlen(pname->nspace) + strlen(pname->name) + 15;
-        return 0;
-    }
-}
-
-static void listxattr_propfind_callback(void *userdata, __unused const ne_uri *u, const ne_prop_result_set *results) {
-    struct listxattr_info *l = userdata;
-    ne_propset_iterate(results, listxattr_iterator, l);
-}
-
-static int dav_listxattr(
-        const char *path,
-        char *list,
-        size_t size) {
-
-    struct fusedav_config *config = fuse_get_context()->private_data;
-    CURL *session;
-    struct listxattr_info l;
-
-    BUMP(listxattr);
-
-    if (config->ignorexattr)
-        return 0;
-
-    assert(path);
-
-    path = path_cvt(path);
-
-    log_print(LOG_INFO, "dav_listxattr(%s, .., %lu)", path, (unsigned long) size);
-
-    if (list) {
-        l.list = list;
-        l.space = size-1;
-        l.size = 0;
-
-        if (l.space >= sizeof(MIME_XATTR)) {
-            memcpy(l.list, MIME_XATTR, sizeof(MIME_XATTR));
-            l.list += sizeof(MIME_XATTR);
-            l.space -= sizeof(MIME_XATTR);
-            l.size += sizeof(MIME_XATTR);
-        }
-
-    } else {
-        l.list = NULL;
-        l.space = 0;
-        l.size = sizeof(MIME_XATTR);
-    }
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "dav_listxattr(%s): failed to get session", path);
-        return -EIO;
-    }
-
-    if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, NULL, listxattr_propfind_callback, &l) != NE_OK) {
-        log_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
-        return -EIO;
-    }
-
-    if (l.list) {
-        assert(l.space > 0);
-        *l.list = 0;
-    }
-
-    return l.size+1;
-}
-
-struct getxattr_info {
-    ne_propname propname;
-    char *value;
-    size_t space, size;
-};
-
-static int getxattr_iterator(
-        void *userdata,
-        const ne_propname *pname,
-        const char *value,
-        __unused const ne_status *status) {
-
-    struct getxattr_info *g = userdata;
-
-    assert(g);
-
-    if (!value || !pname)
-        return -1;
-
-    if (strcmp(pname->nspace, g->propname.nspace) ||
-        strcmp(pname->name, g->propname.name))
-        return 0;
-
-    if (g->value) {
-        size_t l;
-
-        l = strlen(value);
-
-        if (l > g->space)
-            l = g->space;
-
-        memcpy(g->value, value, l);
-        g->size = l;
-    } else {
-        /* Calculate space */
-
-        g->size = strlen(value);
-        return 0;
-    }
-
+    log_print(LOG_INFO, "CALLBACK: dav_utimens(%s)", path);
     return 0;
 }
 
-static void getxattr_propfind_callback(void *userdata, __unused const ne_uri *u, const ne_prop_result_set *results) {
-    struct getxattr_info *g = userdata;
-    ne_propset_iterate(results, getxattr_iterator, g);
-}
-
-static int parse_xattr(const char *name, char *dnspace, size_t dnspace_length, char *dname, size_t dname_length) {
-    char *e;
-    size_t k;
-
-    assert(name);
-    assert(dnspace);
-    assert(dnspace_length);
-    assert(dname);
-    assert(dname_length);
-
-    if (strncmp(name, "user.webdav(", 12) ||
-        name[strlen(name)-1] != ')' ||
-        !(e = strchr(name+12, ';')))
-        return -1;
-
-    if ((k = strcspn(name+12, ";")) > dnspace_length-1)
-        return -1;
-
-    memcpy(dnspace, name+12, k);
-    dnspace[k] = 0;
-
-    e++;
-
-    if ((k = strlen(e)) > dname_length-1)
-        return -1;
-
-    assert(k > 0);
-    k--;
-
-    memcpy(dname, e, k);
-    dname[k] = 0;
-
-    return 0;
-}
-
-static int dav_getxattr(
-        const char *path,
-        const char *name,
-        char *value,
-        size_t size) {
-
-    struct fusedav_config *config = fuse_get_context()->private_data;
-    CURL *session;
-    struct getxattr_info g;
-    ne_propname props[2];
-    char dnspace[128], dname[128];
-
-    BUMP(getxattr);
-
-    if (config->ignorexattr)
-        return -ENOATTR;
-
-    assert(path);
-
-    path = path_cvt(path);
-    name = fix_xattr(name);
-
-    log_print(LOG_INFO, "dav_getxattr(%s, %s, .., %lu)", path, name, (unsigned long) size);
-
-    if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0)
-        return -ENOATTR;
-
-    props[0].nspace = dnspace;
-    props[0].name = dname;
-    props[1].nspace = NULL;
-    props[1].name = NULL;
-
-    if (value) {
-        g.value = value;
-        g.space = size;
-        g.size = (size_t) -1;
-    } else {
-        g.value = NULL;
-        g.space = 0;
-        g.size = (size_t) -1;
-    }
-
-    g.propname = props[0];
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "dav_getxattr(%s): failed to get session", path);
-        return -EIO;
-    }
-
-    if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, props, getxattr_propfind_callback, &g) != NE_OK) {
-        log_print(LOG_ERR, "PROPFIND failed: %s", ne_get_error(session));
-        return -EIO;
-    }
-
-    if (g.size == (size_t) -1)
-        return -ENOATTR;
-
-    return g.size;
-}
-
-static int dav_setxattr(
-        const char *path,
-        const char *name,
-        const char *value,
-        size_t size,
-        int flags) {
-
-    struct fusedav_config *config = fuse_get_context()->private_data;
-    CURL *session;
-    ne_propname propname;
-    ne_proppatch_operation ops[2];
-    int r = 0;
-    char dnspace[128], dname[128];
-    char *value_fixed = NULL;
-
-    BUMP(setxattr);
-
-    if (config->ignorexattr)
-        return 0;
-
-    assert(path);
-    assert(name);
-    assert(value);
-
-    path = path_cvt(path);
-    name = fix_xattr(name);
-
-    log_print(LOG_INFO, "dav_setxattr(%s, %s)", path, name);
-
-    if (flags) {
-        r = ENOTSUP;
-        goto finish;
-    }
-
-    if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
-        r = -ENOATTR;
-        goto finish;
-    }
-
-    propname.nspace = dnspace;
-    propname.name = dname;
-
-    /* Add trailing NUL byte if required */
-    if (!memchr(value, 0, size)) {
-        value_fixed = malloc(size+1);
-        assert(value_fixed);
-
-        memcpy(value_fixed, value, size);
-        value_fixed[size] = 0;
-
-        value = value_fixed;
-    }
-
-    ops[0].name = &propname;
-    ops[0].type = ne_propset;
-    ops[0].value = value;
-
-    ops[1].name = NULL;
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "dav_setxattr(%s): failed to get session", path);
-        r = -EIO;
-        goto finish;
-    }
-
-    if (proppatch_with_redirect(session, path, ops)) {
-        log_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
-        r = -ENOTSUP;
-        goto finish;
-    }
-
-    stat_cache_delete(config->cache, path);
-
-finish:
-    free(value_fixed);
-
-    return r;
-}
-
-static int dav_removexattr(const char *path, const char *name) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-    CURL *session;
-    ne_propname propname;
-    ne_proppatch_operation ops[2];
-    int r = 0;
-    char dnspace[128], dname[128];
-
-    BUMP(removexattr);
-
-    if (config->ignorexattr)
-        return 0;
-
-    assert(path);
-    assert(name);
-
-    path = path_cvt(path);
-    name = fix_xattr(name);
-
-    log_print(LOG_INFO, "dav_removexattr(%s, %s)", path, name);
-
-    if (parse_xattr(name, dnspace, sizeof(dnspace), dname, sizeof(dname)) < 0) {
-        r = -ENOATTR;
-        goto finish;
-    }
-
-    propname.nspace = dnspace;
-    propname.name = dname;
-
-    ops[0].name = &propname;
-    ops[0].type = ne_propremove;
-    ops[0].value = NULL;
-
-    ops[1].name = NULL;
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "dav_removexattr(%s): failed to get session", path);
-        r = -EIO;
-        goto finish;
-    }
-
-    if (proppatch_with_redirect(session, path, ops)) {
-        log_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
-        r = -ENOTSUP;
-        goto finish;
-    }
-
-    stat_cache_delete(config->cache, path);
-
-finish:
-
-    return r;
-}
-
-static int do_chmod(const char *path, mode_t mode, struct fusedav_config *config) {
-    CURL *session;
-    struct stat_cache_value *value;
-    const ne_propname executable = { "http://apache.org/dav/props/", "executable" };
-    ne_proppatch_operation ops[2];
-    int ret = 0;
-
-    ops[0].name = &executable;
-    ops[0].type = ne_propset;
-    ops[0].value = mode & 0111 ? "T" : "F";
-    ops[1].name = NULL;
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "do_chmod(%s): failed to get session", path);
-        return -EIO;
-    }
-
-    if (proppatch_with_redirect(session, path, ops)) {
-        log_print(LOG_ERR, "PROPPATCH failed: %s", ne_get_error(session));
-        return -ENOTSUP;
-    }
-
-    // @TODO: Before public release: Lock for concurrency.
-    value = stat_cache_value_get(config->cache, path, true);
-    if (value != NULL) {
-        value->st.st_mode = mode;
-        stat_cache_value_set(config->cache, path, value);
-        free(value);
-    }
-
-    return ret;
-}
-
-static int dav_chmod(const char *path, mode_t mode) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-
+static int dav_chmod(__unused const char *path, __unused mode_t mode) {
     BUMP(chmod);
-
-    // If both file and dir modes are fixed, there is nothing to set.
-    if (config->file_mode && config->dir_mode)
-        return 0;
-
-    assert(path);
-
-    path = path_cvt(path);
-
     log_print(LOG_INFO, "CALLBACK: dav_chmod(%s, %04o)", path, mode);
-
-    return do_chmod(path, mode, config);
-
+    return 0;
 }
 
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
@@ -1822,7 +1206,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     if (ret < 0)
         return ret;
 
-    ret = do_chmod(path, mode, config);
+    // @TODO: Perform a chmod here based on mode.
 
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
@@ -1882,10 +1266,6 @@ static struct fuse_operations dav_oper = {
     .release     = dav_release,
     .fsync       = dav_fsync,
     .flush       = dav_flush,
-    .setxattr    = dav_setxattr,
-    .getxattr    = dav_getxattr,
-    .listxattr   = dav_listxattr,
-    .removexattr = dav_removexattr,
     .flag_nullpath_ok = 1,
 };
 
@@ -1941,134 +1321,6 @@ static int setup_signal_handlers(void) {
     return 0;
 }
 
-static int create_lock(int lock_timeout) {
-    CURL *session;
-    char _owner[64], *owner;
-    int i;
-    int ret;
-
-    lock = ne_lock_create();
-    assert(lock);
-
-    if (!(session = session_get(0))) {
-        log_print(LOG_ERR, "create_lock: failed to get session");
-        return -EIO;
-    }
-
-    if (!(owner = username))
-        if (!(owner = getenv("USER")))
-            if (!(owner = getenv("LOGNAME"))) {
-                snprintf(_owner, sizeof(_owner), "%lu", (unsigned long) getuid());
-                owner = _owner;
-            }
-
-    ne_fill_server_uri(session, &lock->uri);
-
-    lock->uri.path = strdup(base_directory);
-    lock->depth = NE_DEPTH_INFINITE;
-    lock->timeout = lock_timeout;
-    lock->owner = strdup(owner);
-
-    log_print(LOG_DEBUG, "Acquiring lock...");
-
-    for (i = 0; i < MAX_REDIRECTS; i++) {
-        const ne_uri *u;
-
-        if ((ret = ne_lock(session, lock)) != NE_REDIRECT)
-            break;
-
-        if (!(u = ne_redirect_location(session)))
-            break;
-
-        if (!session_is_local(u))
-            break;
-
-        log_print(LOG_DEBUG, "REDIRECT FROM '%s' to '%s'", lock->uri.path, u->path);
-
-        free(lock->uri.path);
-        lock->uri.path = strdup(u->path);
-    }
-
-    if (ret) {
-        log_print(LOG_ERR, "LOCK failed: %s", ne_get_error(session));
-        ne_lock_destroy(lock);
-        lock = NULL;
-        return -1;
-    }
-
-    lock_store = ne_lockstore_create();
-    assert(lock_store);
-
-    ne_lockstore_add(lock_store, lock);
-
-    return 0;
-}
-
-static int remove_lock(void) {
-    CURL *session;
-
-    assert(lock);
-
-    if (!(session = session_get(0))) {
-        log_print(LOG_ERR, "remove_lock: failed to get session");
-        return -EIO;
-    }
-
-    log_print(LOG_DEBUG, "Removing lock...");
-
-    if (ne_unlock(session, lock)) {
-        log_print(LOG_ERR, "UNLOCK failed: %s", ne_get_error(session));
-        return -1;
-    }
-
-    return 0;
-}
-
-static void *lock_thread_func(void *p) {
-    struct fusedav_config *conf = p;
-    CURL *session;
-    sigset_t block;
-
-    log_print(LOG_DEBUG, "lock_thread entering");
-
-    if (!(session = session_get(1))) {
-        log_print(LOG_ERR, "lock_thread_func: failed to get session");
-        return NULL;
-    }
-
-    sigemptyset(&block);
-    sigaddset(&block, SIGUSR1);
-
-    assert(lock);
-
-    while (!lock_thread_exit) {
-        int r, t;
-
-        lock->timeout = conf->lock_timeout;
-
-        pthread_sigmask(SIG_BLOCK, &block, NULL);
-        r = ne_lock_refresh(session, lock);
-        pthread_sigmask(SIG_UNBLOCK, &block, NULL);
-
-        if (r) {
-            log_print(LOG_ERR, "LOCK refresh failed: %s", ne_get_error(session));
-            break;
-        }
-
-        if (lock_thread_exit)
-            break;
-
-        t = conf->lock_timeout/2;
-        if (t <= 0)
-            t = 1;
-        sleep(t);
-    }
-
-    log_print(LOG_DEBUG, "lock_thread exiting");
-
-    return NULL;
-}
-
 static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
     struct fusedav_config *config = data;
 
@@ -2105,7 +1357,6 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o file_mode=OCTAL (masks file permissions)\n"
                 "        -o dir_mode=OCTAL (masks directory permissions)\n"
                 "        -o ignoreutimens\n"
-                "        -o ignorexattr\n"
                 "    Protocol and performance options:\n"
                 "        -o progressive_propfind\n"
                 "        -o refresh_dir_for_file_stat\n"
@@ -2195,9 +1446,7 @@ int main(int argc, char *argv[]) {
     struct fuse_chan *ch = NULL;
     char *mountpoint = NULL;
     int ret = 1;
-    pthread_t lock_thread;
     pthread_t filecache_cleanup_thread;
-    int lock_thread_running = 0;
     int fail = 0;
 
     // Initialize the statistics and configuration.
@@ -2222,7 +1471,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if (session_config_init(config.url, config.ca_certificate, config.client_certificate) < 0) {
+    if (session_config_init(config.uri, config.ca_certificate, config.client_certificate) < 0) {
         log_print(LOG_CRIT, "Failed to initialize sessions.");
         goto finish;
     }
@@ -2240,9 +1489,6 @@ int main(int argc, char *argv[]) {
     if (config.ignoreutimens)
         log_print(LOG_DEBUG, "Ignoring utimens requests.");
 
-    if (config.ignorexattr)
-        log_print(LOG_DEBUG, "Ignoring extended attributes.");
-
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
         goto finish;
@@ -2257,12 +1503,6 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if (session_set_uri(config.uri, config.username, config.password, config.client_certificate, config.ca_certificate) < 0) {
-        log_print(LOG_CRIT, "Failed to initialize the session URI.");
-        goto finish;
-    }
-    log_print(LOG_DEBUG, "Set session URI and configuration.");
-
     if (!(ch = fuse_mount(mountpoint, &args))) {
         log_print(LOG_CRIT, "Failed to mount FUSE file system.");
         goto finish;
@@ -2274,17 +1514,6 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
     log_print(LOG_DEBUG, "Created the FUSE object.");
-
-    if (config.lock_on_mount && create_lock(config.lock_timeout) >= 0) {
-        int r;
-        if ((r = pthread_create(&lock_thread, NULL, lock_thread_func, &config)) < 0) {
-            log_print(LOG_CRIT, "pthread_create(): %s", strerror(r));
-            goto finish;
-        }
-
-        lock_thread_running = 1;
-        log_print(LOG_DEBUG, "Acquired lock.");
-    }
 
     if (config.nodaemon) {
         log_print(LOG_DEBUG, "Running in foreground (skipping daemonization).");
@@ -2345,15 +1574,6 @@ int main(int argc, char *argv[]) {
     ret = 0;
 
 finish:
-    if (lock_thread_running) {
-        lock_thread_exit = 1;
-        pthread_kill(lock_thread, SIGUSR1);
-        pthread_join(lock_thread, NULL);
-        remove_lock();
-
-        log_print(LOG_DEBUG, "Freed lock.");
-    }
-
     if (ch != NULL) {
         log_print(LOG_DEBUG, "Unmounting: %s", mountpoint);
         fuse_unmount(mountpoint, ch);

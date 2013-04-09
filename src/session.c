@@ -42,6 +42,10 @@ static char *client_certificate = NULL;
 static char *base_url = NULL;
 static char *user_agent = NULL;
 
+const char *get_base_url(void) {
+    return base_url;
+}
+
 int session_config_init(char *base, char *ca_cert, char *client_cert) {
     size_t base_len;
 
@@ -75,7 +79,6 @@ void session_config_free(void) {
     free(base_url);
     free(ca_certificate);
     free(client_certificate);
-    free(client_certificate_password);
 }
 
 static void session_destroy(void *s) {

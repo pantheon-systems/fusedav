@@ -38,8 +38,7 @@
 #include "log.h"
 #include "session.h"
 #include "bloom-filter.h"
-
-#include <ne_uri.h>
+#include "util.h"
 
 #define CACHE_TIMEOUT 3
 
@@ -301,7 +300,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
             log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
 
             // If that's too old, check the last update of the directory.
-            directory = strip_trailing_slash(ne_path_parent(path), &is_dir);
+            directory = strip_trailing_slash(path_parent(path), &is_dir);
             directory_updated = stat_cache_read_updated_children(cache, directory);
             //log_print(LOG_DEBUG, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
             free(directory);
@@ -455,7 +454,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     BUMP(del_parent);
 
     log_print(LOG_DEBUG, "stat_cache_delete_parent: %s", path);
-    if ((p = ne_path_parent(path))) {
+    if ((p = path_parent(path))) {
         int l = strlen(p);
 
         if (strcmp(p, "/") && l) {
@@ -710,6 +709,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     int passes = 1; // passes will grow as we detect larger depths
     int depth;
     int max_depth = 0;
+    const char *base_directory = get_base_url();
 
     // Statistics
     int visited_entries = 0;

@@ -1,5 +1,5 @@
-#ifndef foosessionhfoo
-#define foosessionhfoo
+#ifndef foopropshfoo
+#define foopropshfoo
 
 /***
   This file is part of fusedav.
@@ -19,8 +19,14 @@
   Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 ***/
 
-typedef void (*props_result)(const char *path, const prop_result_entry *result, void *userdata);
+#include <sys/types.h>
+#include <sys/stat.h>
 
-int simple_propfind(CURL *sess, const char *path, size_t depth, props_result results, void *userdata);
+#define PROPFIND_DEPTH_ZERO 0
+#define PROPFIND_DEPTH_ONE 1
+#define PROPFIND_DEPTH_INFINITY 2
+
+typedef void (*props_result_callback)(void *userdata, const char *href, struct stat st, bool exists);
+int simple_propfind(const char *path, size_t depth, props_result_callback results, void *userdata);
 
 #endif

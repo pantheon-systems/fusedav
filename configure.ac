@@ -110,12 +110,12 @@ AC_CHECK_FUNCS([ftruncate memset strdup strerror strrchr memchr strchr strcspn])
 AC_CHECK_LIB([pthread], [pthread_create])
 AC_CHECK_LIB([jemalloc], [malloc], [:], [AC_MSG_ERROR(jemalloc not found or functional. Install the jemalloc allocator.)], [])
 
+AC_CHECK_HEADER(expat.h, [], [AC_MSG_ERROR(expat.h not found. Install Expat.)], [])
+
 PKG_CHECK_MODULES(SYSTEMD, [ libsystemd-journal ] )
 PKG_CHECK_MODULES(YAML, [ yaml-0.1 ] )
 PKG_CHECK_MODULES(LEVELDB, [ leveldb ])
-PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(CURL, [ libcurl >= 7.24.0 ])
-PKG_CHECK_MODULES(XML2, [ libxml2 >= 2.7.8 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 PKG_CHECK_MODULES(ZLIB, [ zlib >= 1.2.5 ])
 

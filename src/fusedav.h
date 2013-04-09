@@ -21,12 +21,6 @@
 
 extern int debug;
 
-#ifdef __GNUC__
-#define __unused __attribute__ ((unused))
-#else
-#define __unused
-#endif
-
 // @TODO: Move this elsewhere.
 char *strip_trailing_slash(char *fn, int *is_dir);
 

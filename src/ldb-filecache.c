@@ -33,13 +33,12 @@
 #include <stdbool.h>
 #include <sys/stat.h>
 #include <sys/file.h>
+#include <stdlib.h>
 
 #include "ldb-filecache.h"
 #include "statcache.h"
 #include "fusedav.h"
 #include "log.h"
-
-#include <ne_uri.h>
 
 #define REFRESH_INTERVAL 3
 
@@ -302,16 +301,48 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
     return pdata;
 }
 
+// Stores the header value into into *userdata if it's "ETag."
+static size_t capture_etag(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    size_t real_size = size * nmemb;
+    char *header = (char *) ptr;
+    char **etag = (char **) userdata; // Allocated to ETAG_MAX length.
+    char *colon_position;
+
+    colon_position = (char *) memchr(header, ':', real_size);
+
+    if (colon_position == NULL)
+        return 0; // Indicates failure.
+
+    // If it's not four characters long, it's not an ETag.
+    if (colon_position - header != 4)
+        goto finish;
+
+    // If the ETag is too long, bail.
+    if (real_size - 4 > ETAG_MAX)
+        goto finish;
+
+    // Is it an ETag? If so, store it.
+    if (strncasecmp(header, "ETag", 4) == 0) {
+        memcpy(*etag, colon_position + 1, real_size - 5);
+        *etag[real_size - 5] = '\0';
+    }
+
+finish:
+    return real_size;
+}
+
 // Get a file descriptor pointing to the latest full copy of the file.
 static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         const char *cache_path, const char *path, struct ldb_filecache_sdata *sdata,
         struct ldb_filecache_pdata **pdatap, int flags) {
-    ne_session *session;
+    CURL *session;
     int ret = -EBADFD;
-    int code;
-    ne_request *req = NULL;
-    int ne_ret;
+    unsigned long code;
+    CURLcode res;
     struct ldb_filecache_pdata *pdata;
+    char etag[ETAG_MAX];
+    char old_filename[PATH_MAX];
+    bool unlink_old = false;
 
     BUMP(fresh_fd);
 
@@ -379,27 +410,59 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         goto finish;
     }
 
-    if (!(session = session_get(1))) {
-        ret = -EIO;
-        log_print(LOG_ERR, "ldb_filecache_open: Failed to get session");
+    session = session_request_init(path);
+    if (!session) {
+        log_print(LOG_ERR, "ldb_get_fresh_fd: Failed session_request_init on GET on %s", path);
         goto finish;
     }
 
-    req = ne_request_create(session, "GET", path);
-    if (!req) {
-        log_print(LOG_ERR, "ldb_get_fresh_fd: Failed ne_request_create on GET on %s", path);
+    if (pdata) {
+        char *header = NULL;
+        struct curl_slist *slist = NULL;
+
+        // In case we have stale cache data, set a header to aim for a 304.
+        asprintf(&header, "If-None-Match: %s", pdata->etag);
+        slist = curl_slist_append(slist, header);
+        free(header);
+        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+
+        // Back up the file name for cleanup later if it's a miss.
+        strncpy(old_filename, pdata->filename, PATH_MAX);
+        unlink_old = true;
+    }
+    else {
+        // If there's no incoming pdata, we'll need one.
+        *pdatap = malloc(sizeof(struct ldb_filecache_pdata));
+        pdata = *pdatap;
+        if (pdata == NULL) {
+            log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
+            goto finish;
+        }
+        memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
+    }
+
+    // Set a header capture path.
+    etag[0] = '\0';
+    curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
+    curl_easy_setopt(session, CURLOPT_WRITEHEADER, &etag);
+
+    // Create a new temp file in case cURL needs to write to one.
+    if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
+        log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
+        // Should we delete path from cache and/or null-out pdata?
         goto finish;
     }
 
-    // If we have stale cache data, set a header to aim for a 304.
-    if (pdata)
-        ne_add_request_header(req, "If-None-Match", pdata->etag);
+    // Give cURL the FILE pointer for handling the response body.
+    // The fdopen() does not need any corresponding close action besides
+    // how we already close the file descriptor.
+    curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) fdopen(sdata->fd, "w"));
 
     do {
-        ne_ret = ne_begin_request(req);
-        if (ne_ret != NE_OK) {
-            log_print(LOG_ERR, "ldb_get_fresh_fd: ne_begin_request is not NE_OK: %d %s",
-                ne_ret, ne_get_error(session));
+        res = curl_easy_perform(session);
+        if (res != CURLE_OK) {
+            log_print(LOG_ERR, "ldb_get_fresh_fd: curl_easy_perform is not CURLE_OK: %d %s",
+                res, curl_easy_strerror(res));
             goto finish;
         }
 
@@ -410,72 +473,43 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         // We should not get a 404 here; either the open included O_CREAT and we create a new
         // file, or the getattr/get_stat calls in fusedav.c should have detected the file was
         // missing and handled it there.
-        code = ne_get_status(req)->code;
+        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &code);
         if (code == 304) {
-            // Gobble up any remaining data in the response.
-            ne_discard_response(req);
+            log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
 
-            if (pdata != NULL) {
-                log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
+            // Mark the cache item as revalidated at the current time.
+            pdata->last_server_update = time(NULL);
 
-                // Mark the cache item as revalidated at the current time.
-                pdata->last_server_update = time(NULL);
+            log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
+            ldb_filecache_pdata_set(cache, path, pdata);
 
-                log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
-                ldb_filecache_pdata_set(cache, path, pdata);
+            sdata->fd = open(pdata->filename, flags);
 
-                sdata->fd = open(pdata->filename, flags);
-
-                if (sdata->fd < 0) {
-                    // If the cachefile named in pdata->filename does not exist ...
-                    if (errno == ENOENT) {
-                        // delete pdata from cache, we can't trust its values.
-                        // We see one site continually failing on the same non-existent cache file.
-                        if (ldb_filecache_delete(cache, path, true) < 0) {
-                            log_print(LOG_ERR, "ldb_get_fresh_fd: ENOENT on 304 failed to delete filecache entry for %s", path);
-                        }
-                        else {
-                            // Now that we've gotten rid of pdata
-                            ret = -EAGAIN;
-                            log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT, cause retry: open for 304 on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
-                        }
+            if (sdata->fd < 0) {
+                // If the cachefile named in pdata->filename does not exist ...
+                if (errno == ENOENT) {
+                    // delete pdata from cache, we can't trust its values.
+                    // We see one site continually failing on the same non-existent cache file.
+                    if (ldb_filecache_delete(cache, path, true) < 0) {
+                        log_print(LOG_ERR, "ldb_get_fresh_fd: ENOENT on 304 failed to delete filecache entry for %s", path);
                     }
                     else {
-                        log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
+                        // Now that we've gotten rid of pdata
+                        ret = -EAGAIN;
+                        log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT, cause retry: open for 304 on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
                     }
                 }
                 else {
-                    ret = 0;
-                    log_print(LOG_DEBUG, "ldb_get_fresh_fd: open for 304 on %s with flags %x succeeded; fd %d", pdata->filename, flags, sdata->fd);
+                    log_print(LOG_ERR, "ldb_get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
                 }
             }
             else {
-                log_print(LOG_WARNING, "ldb_get_fresh_fd: Got 304 without If-None-Match");
+                ret = 0;
+                log_print(LOG_DEBUG, "ldb_get_fresh_fd: open for 304 on %s with flags %x succeeded; fd %d", pdata->filename, flags, sdata->fd);
             }
         }
         else if (code == 200) {
-            // Archive the old temp file path for unlinking after replacement.
-            char old_filename[PATH_MAX];
-            bool unlink_old = false;
-            const char *etag = NULL;
-
-            if (pdata == NULL) {
-                *pdatap = malloc(sizeof(struct ldb_filecache_pdata));
-                pdata = *pdatap;
-                if (pdata == NULL) {
-                    log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
-                    ne_end_request(req);
-                    goto finish;
-                }
-                memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
-            }
-            else {
-                strncpy(old_filename, pdata->filename, PATH_MAX);
-                unlink_old = true;
-            }
-
             // Fill in ETag.
-            etag = ne_get_response_header(req, "ETag");
             if (etag != NULL) {
                 log_print(LOG_DEBUG, "Got ETag: %s", etag);
                 strncpy(pdata->etag, etag, ETAG_MAX);
@@ -486,15 +520,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                 pdata->etag[0] = '\0';
             }
 
-            // Create a new temp file and read the file content into it.
-            if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
-                log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
-                // Should we delete path from cache and/or null-out pdata?
-                ne_end_request(req);
-                goto finish;
-            }
             ret = 0;
-            ne_read_response_to_fd(req, sdata->fd);
 
             // Point the persistent cache to the new file content.
             pdata->last_server_update = time(NULL);
@@ -523,17 +549,14 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
             // Not sure what to do here; goto finish, or try the loop another time?
             log_print(LOG_WARNING, "ldb_get_fresh_fd: returns %d; expected 304 or 200", code);
         }
-
-        ne_ret = ne_end_request(req);
-    } while (ne_ret == NE_RETRY);
+    } while (false); // @TODO: Retry here with cURL?
 
     // No check for O_TRUNC here because we skip server access and just
     // truncate.
     assert(!(flags & O_TRUNC));
 
     finish:
-        if (req != NULL)
-            ne_request_destroy(req);
+        free(etag);
         return ret;
 }
 
@@ -637,7 +660,7 @@ finish:
 }
 
 // top-level read call
-ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, ne_off_t offset) {
+ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     ssize_t ret = -1;
 
@@ -660,7 +683,7 @@ finish:
 }
 
 // top-level write call
-ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset) {
+ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     ssize_t ret = -1;
 
@@ -765,76 +788,71 @@ finish:
 
 /* PUT's from fd to URI */
 /* Our modification to include etag support on put */
-static int ne_put_return_etag(ne_session *session, const char *path, int fd, char *etag)
-{
-    ne_request *req;
+static int put_return_etag(const char *path, int fd, char *etag) {
+    CURL *session;
+    CURLcode res;
     struct stat st;
     int ret = -1;
+    unsigned int response_code;
 
     BUMP(return_etag);
 
-    log_print(LOG_DEBUG, "enter: ne_put_return_etag(,%s,%d,,)", path, fd);
+    log_print(LOG_DEBUG, "enter: put_return_etag(,%s,%d,,)", path, fd);
 
-    log_print(LOG_DEBUG, "ne_put_return_etag: acquiring exclusive file lock on fd %d", fd);
+    log_print(LOG_DEBUG, "put_return_etag: acquiring exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_EX)) {
-        log_print(LOG_ERR, "ne_put_return_etag: error acquiring exclusive file lock");
+        log_print(LOG_ERR, "put_return_etag: error acquiring exclusive file lock");
     }
-    log_print(LOG_DEBUG, "ne_put_return_etag: acquired exclusive file lock on fd %d", fd);
+    log_print(LOG_DEBUG, "put_return_etag: acquired exclusive file lock on fd %d", fd);
 
     assert(etag);
 
     if (fstat(fd, &st)) {
-        log_print(LOG_ERR, "ne_put_return_etag: failed getting file size");
+        log_print(LOG_ERR, "put_return_etag: failed getting file size");
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "ne_put_return_etag: file size %d", st.st_size);
+    log_print(LOG_DEBUG, "put_return_etag: file size %d", st.st_size);
 
-    req = ne_request_create(session, "PUT", path);
+    session = session_request_init(path);
 
-    ne_lock_using_resource(req, path, 0);
-    ne_lock_using_parent(req, path);
+    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(session, CURLOPT_READDATA, (void *) fdopen(fd, "r"));
 
-    ne_set_request_body_fd(req, fd, 0, st.st_size);
+    // Set a header capture path.
+    etag[0] = '\0';
+    curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
+    curl_easy_setopt(session, CURLOPT_WRITEHEADER, &etag);
 
-    ret = ne_request_dispatch(req);
-
-    if (ret != NE_OK) {
-        log_print(LOG_WARNING, "ne_put_return_etag: ne_request_dispatch returns error (%d:%s: fd=%d)", ret, ne_get_error(session), fd);
+    res = curl_easy_perform(session);
+    if (res != CURLE_OK) {
+        log_print(LOG_WARNING, "put_return_etag: curl_easy_perform returns error (%d:%s: fd=%d)", ret, curl_easy_strerror(res), fd);
     }
     else {
-        log_print(LOG_DEBUG, "ne_put_return_etag: ne_request_dispatch succeeds (fd=%d)", fd);
+        log_print(LOG_DEBUG, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
+        ret = 0;
     }
 
-    if (ret == NE_OK && ne_get_status(req)->klass != 2) {
-        ret = NE_ERROR;
+    // Ensure that it's a 2xx response code.
+    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+
+    if (response_code < 200 || response_code >= 300) {
+        ret = -1;
     }
 
-    if (ret == NE_OK) {
-        const char *value;
-        value = ne_get_response_header(req, "etag");
-        if (value) {
-            strncpy(etag, value, ETAG_MAX);
-            etag[ETAG_MAX] = '\0';
-        } else {
-            etag[0] = '\0';
-        }
+    if (ret == 0) {
         log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
     }
-    else {
-        etag[0] = '\0';
-    }
-    ne_request_destroy(req);
 
 finish:
 
-    log_print(LOG_DEBUG, "ne_put_return_etag: releasing exclusive file lock on fd %d", fd);
+    log_print(LOG_DEBUG, "put_return_etag: releasing exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_UN)) {
-        log_print(LOG_ERR, "ne_put_return_etag: error releasing exclusive file lock");
+        log_print(LOG_ERR, "put_return_etag: error releasing exclusive file lock");
     }
-    log_print(LOG_DEBUG, "ne_put_return_etag: released exclusive file lock on fd %d", fd);
+    log_print(LOG_DEBUG, "put_return_etag: released exclusive file lock on fd %d", fd);
 
-    log_print(LOG_DEBUG, "exit: ne_put_return_etag");
+    log_print(LOG_DEBUG, "exit: put_return_etag");
 
     return ret;
 }
@@ -882,27 +900,17 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
     if (sdata->modified) {
         if (do_put) {
-            ne_session *session;
-
             log_print(LOG_DEBUG, "ldb_filecache_sync: Seeking fd=%d", sdata->fd);
-            if (lseek(sdata->fd, 0, SEEK_SET) == (ne_off_t)-1) {
+            if (lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) {
                 log_print(LOG_ERR, "ldb_filecache_sync: failed lseek :: %d %d %s", sdata->fd, errno, strerror(errno));
                 ret = -1;
                 goto finish;
             }
 
-            log_print(LOG_DEBUG, "Getting libneon session.");
-            if (!(session = session_get(1))) {
-                errno = EIO;
-                ret = -1;
-                log_print(LOG_ERR, "ldb_filecache_sync: failed session");
-                goto finish;
-            }
-
             log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
-            if (ne_put_return_etag(session, path, sdata->fd, pdata->etag)) {
-                log_print(LOG_ERR, "ldb_filecache_sync: ne_put PUT failed: %s: fd=%d", ne_get_error(session), sdata->fd);
+            if (put_return_etag(path, sdata->fd, pdata->etag)) {
+                log_print(LOG_ERR, "ldb_filecache_sync: put_return_etag PUT failed for fd=%d", sdata->fd);
                 errno = ENOENT;
                 ret = -1;
                 goto finish;
@@ -954,7 +962,7 @@ finish:
 }
 
 // top-level truncate call
-int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s) {
+int ldb_filecache_truncate(struct fuse_file_info *info, off_t s) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
 
@@ -1244,4 +1252,3 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
         log_print(LOG_NOTICE, "ldb_filecache_cleanup: issues cleaning orphans");
     }
 }
-
