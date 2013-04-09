@@ -40,7 +40,6 @@ static pthread_key_t session_tsd_key;
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
-static char *user_agent = NULL;
 
 const char *get_base_url(void) {
     return base_url;
@@ -56,10 +55,8 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
         return -1;
     }
 
-    asprintf(&user_agent, "FuseDAV/%s", PACKAGE_VERSION);
-
     // Ensure the base URL has a trailing slash.
-    base_len = strlen(base_url);
+    base_len = strlen(base);
     if (base[base_len - 1] == '/')
         base_url = strdup(base);
     else
@@ -71,11 +68,16 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     if (client_cert != NULL)
         client_certificate = strdup(client_cert);
 
+    // Repair p12 to point to pem for now.
+    if (strcmp(client_certificate + strlen(client_certificate) - 4, "p12") == 0)
+        strncpy(client_certificate + strlen(client_certificate) - 4, "pem", 3);
+
+    log_print(LOG_NOTICE, "Using client certificate at path: %s", client_certificate);
+
     return 0;
 }
 
 void session_config_free(void) {
-    free(user_agent);
     free(base_url);
     free(ca_certificate);
     free(client_certificate);
@@ -103,34 +105,47 @@ CURL *session_get_handle(void) {
 
     log_print(LOG_NOTICE, "Opening session.");
     session = curl_easy_init();
+    log_print(LOG_NOTICE, "Session opened.");
     pthread_setspecific(session_tsd_key, session);
 
     return session;
 }
 
 CURL *session_request_init(const char *path) {
-    CURL *session = session_get_handle();
+    CURL *session;
     char *full_url = NULL;
 
+    log_print(LOG_NOTICE, "0");
+
+    session = session_get_handle();
+
     curl_easy_reset(session);
+
+    log_print(LOG_NOTICE, "10");
 
     asprintf(&full_url, "%s%s", base_url, path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
     free(full_url);
 
-    curl_easy_setopt(session, CURLOPT_USERAGENT, user_agent);
+    log_print(LOG_NOTICE, "20");
+    curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/PACKAGE_VERSION");
+    log_print(LOG_NOTICE, "30");
     curl_easy_setopt(session, CURLOPT_URL, full_url);
+    log_print(LOG_NOTICE, "40");
     if (ca_certificate != NULL)
         curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
     if (client_certificate != NULL) {
         curl_easy_setopt(session, CURLOPT_SSLCERT, client_certificate);
         curl_easy_setopt(session, CURLOPT_SSLKEY, client_certificate);
     }
+    log_print(LOG_NOTICE, "50");
     curl_easy_setopt(session, CURLOPT_SSL_VERIFYHOST, 0);
     curl_easy_setopt(session, CURLOPT_SSL_VERIFYPEER, 1);
     curl_easy_setopt(session, CURLOPT_FOLLOWLOCATION, 1);
     curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 100);
     curl_easy_setopt(session, CURLOPT_TIMEOUT, 600);
+
+    log_print(LOG_NOTICE, "Initialized request to: %s", path);
 
     return session;
 }

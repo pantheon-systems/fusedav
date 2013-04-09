@@ -119,6 +119,7 @@ struct fusedav_config {
     char *password;
     char *ca_certificate;
     char *client_certificate;
+    char *client_certificate_password;
     int  verbosity;
     bool nodaemon;
     bool ignoreutimens;
@@ -133,6 +134,7 @@ struct fusedav_config {
     char *run_as_gid_name;
     bool progressive_propfind;
     bool refresh_dir_for_file_stat;
+    bool ignorexattr;
     bool singlethread;
 };
 
@@ -161,6 +163,10 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
      FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
      FUSEDAV_OPT("singlethread",                   singlethread, true),
+
+     // These options have no effect.
+     FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
+     FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
 
      FUSE_OPT_KEY("-V",             KEY_VERSION),
      FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -244,7 +250,7 @@ static void path_cvt_tsd_key_init(void) {
 }
 
 static const char *path_cvt(const char *path) {
-    CURL *session;
+    //CURL *session;
     char *r, *t;
     int l;
 
@@ -254,12 +260,11 @@ static const char *path_cvt(const char *path) {
     if (path == NULL)
         return NULL;
 
-    session = session_get_handle();
-
     pthread_once(&path_cvt_once, path_cvt_tsd_key_init);
 
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
-        curl_free(r);
+        free(r);
+//        curl_free(r);
 
     asprintf(&t, "%s%s", get_base_url(), path);
     assert(t);
@@ -268,7 +273,9 @@ static const char *path_cvt(const char *path) {
     if (l > 1 && t[l-1] == '/')
         t[l-1] = 0;
 
-    r = curl_easy_escape(session, t, strlen(t));
+    //session = session_get_handle();
+    //r = curl_easy_escape(session, t, strlen(t));
+    r = path_escape(t);
     free(t);
 
     pthread_setspecific(path_cvt_tsd_key, r);
@@ -1453,7 +1460,7 @@ int main(int argc, char *argv[]) {
     memset(&stats, 0, sizeof(struct statistics));
     memset(&config, 0, sizeof(config));
 
-    signal(SIGSEGV, sigsegv_handler);
+    //signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
 
     mask = umask(0);
