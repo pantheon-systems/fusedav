@@ -52,7 +52,7 @@ const char *get_base_directory(void) {
     return base_directory;
 }
 
-static const char *get_base_host(void) {
+const char *get_base_host(void) {
     return base_host;
 }
 

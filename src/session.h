@@ -27,5 +27,6 @@ CURL *session_get_handle(void);
 void session_config_free(void);
 const char *get_base_url(void);
 const char *get_base_directory(void);
+const char *get_base_host(void);
 
 #endif

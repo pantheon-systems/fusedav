@@ -132,12 +132,19 @@ static void endElement(void *userData, const XML_Char *name) {
     log_print(LOG_DEBUG, "endElement: %s", name);
 
     if (strcmp(name, "href") == 0) {
-        log_print(LOG_DEBUG, "Path: %s", state->pstate.current_data);
+        if (strstr(state->pstate.current_data, get_base_host()) == state->pstate.current_data) {
+            strncpy(state->pstate.path, state->pstate.current_data + strlen(get_base_host()), PATH_MAX);
+            log_print(LOG_DEBUG, "Path: %s", state->pstate.path);
+        }
     }
     else if (strcmp(name, "resourcetype") == 0) {
         //if (strstr(state->pstate.current_data, "collection"))
         //    state->pstate.st.st_mode |= S_IFDIR;
         log_print(LOG_DEBUG, "Resource Type: %s", state->pstate.current_data);
+    }
+    else if (strcmp(name, "getcontentlength") == 0) {
+        state->pstate.st.st_size = atol(state->pstate.current_data);
+        log_print(LOG_DEBUG, "Got size: %u", state->pstate.st.st_size);
     }
 
     /*
