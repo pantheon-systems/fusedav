@@ -41,6 +41,7 @@ static pthread_key_t session_tsd_key;
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
+static char *base_host = NULL;
 static char *base_directory = NULL;
 
 const char *get_base_url(void) {
@@ -51,7 +52,11 @@ const char *get_base_directory(void) {
     return base_directory;
 }
 
-static void set_base_directory(const char *url) {
+static const char *get_base_host(void) {
+    return base_host;
+}
+
+static void set_bases(const char *url) {
     UriParserStateA state;
     UriUriA uri;
     char *base;
@@ -79,9 +84,33 @@ static void set_base_directory(const char *url) {
     if (base[base_pos - 1] == '/')
         base[base_pos - 1] = '\0';
 
+    // Assemble the base host.
+    base_host = malloc(strlen(url));
+
+    // Scheme.
+    addition = uri.scheme.afterLast - uri.scheme.first;
+    strncpy(base_host, uri.scheme.first, addition);
+    base_pos = addition;
+    base_host[base_pos++] = ':';
+    base_host[base_pos++] = '/';
+    base_host[base_pos++] = '/';
+
+    // Host.
+    addition = uri.hostText.afterLast - uri.hostText.first;
+    strncpy(base_host + base_pos, uri.hostText.first, addition);
+    base_pos += addition;
+    base_host[base_pos++] = ':';
+
+    // Port.
+    addition = uri.portText.afterLast - uri.portText.first;
+    strncpy(base_host + base_pos, uri.portText.first, addition);
+    base_pos += addition;
+    base_host[base_pos++] = '\0';
+
     uriFreeUriMembersA(&uri);
 
     log_print(LOG_INFO, "Using base directory: %s", base);
+    log_print(LOG_INFO, "Using base host: %s", base_host);
 
     base_directory = base;
 }
@@ -102,7 +131,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
         base_url = strdup(base);
     else
         asprintf(&base_url, "%s/", base);
-    set_base_directory(base_url);
+    set_bases(base_url);
 
     if (ca_cert != NULL)
         ca_certificate = strdup(ca_cert);
@@ -159,37 +188,28 @@ CURL *session_request_init(const char *path) {
     CURL *session;
     char *full_url = NULL;
 
-    log_print(LOG_NOTICE, "0");
-
     session = session_get_handle();
 
     curl_easy_reset(session);
 
-    log_print(LOG_NOTICE, "10");
-
-    asprintf(&full_url, "%s%s", base_url, path);
+    asprintf(&full_url, "%s%s", get_base_host(), path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
+    log_print(LOG_INFO, "Initializing request to URL: %s", full_url);
     free(full_url);
 
-    log_print(LOG_NOTICE, "20");
     curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/PACKAGE_VERSION");
-    log_print(LOG_NOTICE, "30");
     curl_easy_setopt(session, CURLOPT_URL, full_url);
-    log_print(LOG_NOTICE, "40");
     if (ca_certificate != NULL)
         curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
     if (client_certificate != NULL) {
         curl_easy_setopt(session, CURLOPT_SSLCERT, client_certificate);
         curl_easy_setopt(session, CURLOPT_SSLKEY, client_certificate);
     }
-    log_print(LOG_NOTICE, "50");
     curl_easy_setopt(session, CURLOPT_SSL_VERIFYHOST, 0);
     curl_easy_setopt(session, CURLOPT_SSL_VERIFYPEER, 1);
     curl_easy_setopt(session, CURLOPT_FOLLOWLOCATION, 1);
     curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 100);
     curl_easy_setopt(session, CURLOPT_TIMEOUT, 600);
-
-    log_print(LOG_NOTICE, "Initialized request to: %s", path);
 
     return session;
 }
