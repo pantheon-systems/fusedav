@@ -318,7 +318,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
             // If the cachefile named in pdata->filename does not exist ...
             if (errno == ENOENT) {
                 // try again
-                errno = -EAGAIN;
+                ret = -EAGAIN;
                 log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
             }
             else {
@@ -343,7 +343,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                 int ftrunc_errno = errno;
                 log_print(LOG_WARNING, "ldb_get_fresh_fd: ftruncate failed; errno %d %s -- %d:%s::%s", errno, strerror(errno), sdata->fd, path, pdata->filename);
                 flock(sdata->fd, LOCK_UN);
-                errno = ftrunc_errno;
+                errno = ftrunc_errno; // return errno from ftruncate, not flock if it resets it
                 goto finish;
             }
 
@@ -428,7 +428,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                         }
                         else {
                             // Now that we've gotten rid of pdata
-                            errno = -EAGAIN;
+                            ret = -EAGAIN;
                             log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT, cause retry: open for 304 on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
                         }
                     }
@@ -559,6 +559,9 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     }
     memset(sdata, 0, sizeof(struct ldb_filecache_sdata));
 
+    // @TODO: program flow is murky. We have to keep track of where we
+    // goto fail in order to know if we successfully retry or successfully
+    // recognize that we shouldn't retry. Fix it up.
     do {
         // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
         // the second time. (Unlike on a linux file system, where the second time open
