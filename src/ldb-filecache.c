@@ -79,7 +79,6 @@ struct statistics {
     unsigned read;
     unsigned write;
     unsigned close;
-    unsigned release;
     unsigned return_etag;
     unsigned sync;
     unsigned truncate;
@@ -109,7 +108,6 @@ void filecache_print_stats(void) {
     log_print(LOG_NOTICE, "  read:        %u", FETCH(read));
     log_print(LOG_NOTICE, "  write:       %u", FETCH(write));
     log_print(LOG_NOTICE, "  close:       %u", FETCH(close));
-    log_print(LOG_NOTICE, "  release:     %u", FETCH(release));
     log_print(LOG_NOTICE, "  return_etag: %u", FETCH(return_etag));
     log_print(LOG_NOTICE, "  sync:        %u", FETCH(sync));
     log_print(LOG_NOTICE, "  truncate:    %u", FETCH(truncate));
@@ -680,7 +678,8 @@ finish:
 }
 
 // close the file
-static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
+int ldb_filecache_close(struct fuse_file_info *info) {
+    struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -EBADF;
 
     BUMP(close);
@@ -702,37 +701,6 @@ static int ldb_filecache_close(struct ldb_filecache_sdata *sdata) {
     }
 
     free(sdata);
-
-    return ret;
-}
-
-// top-level close/release call
-int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
-    struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
-    int ret = -1;
-
-    BUMP(release);
-
-    assert(sdata);
-
-    log_print(LOG_DEBUG, "ldb_filecache_release: %s : %d", path?path:"NULL", sdata->fd);
-
-    // If path is NULL, sync will handle it. Likely sync was already called
-    // during immediately preceding flush; in that case, file won't be
-    // modifiable and will return immediate.
-    if ((ret = ldb_filecache_sync(cache, path, info, true)) < 0) {
-        log_print(LOG_ERR, "ldb_filecache_release: ldb_filecache_sync returns error %d", ret);
-        goto finish;
-    }
-
-    log_print(LOG_DEBUG, "Done syncing file (%s) for release, calling ldb_filecache_close.", path);
-
-finish:
-
-    // close, even on error
-    ret = ldb_filecache_close(sdata);
-
-    log_print(LOG_DEBUG, "ldb_filecache_release: Done releasing file (%s).", path?path:"NULL");
 
     return ret;
 }

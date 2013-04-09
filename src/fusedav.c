@@ -436,6 +436,8 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
     // initialize to 0
     memset(st, 0, sizeof(struct stat));
 
+    log_print(LOG_INFO, "fill_stat_generic: Enter");
+
     if (is_dir) {
         // Our default mode for directories is 0770, for files 0660; use them here if not specified
         if (mode != 0) st->st_mode = mode;
@@ -465,12 +467,14 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
 
     if (fd >= 0) {
         st->st_size = lseek(fd, 0, SEEK_END);
+        log_print(LOG_INFO, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", fd, st->st_size, errno, strerror(errno));
         // Silently overlook error
         if (st->st_size < 0) st->st_size = 0;
     }
 
     st->st_blocks = (st->st_size+511)/512;
 
+    log_print(LOG_INFO, "fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
     log_print(LOG_DEBUG, "Done with fill_stat_generic.");
 }
 
@@ -1109,20 +1113,32 @@ finish:
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value value;
     int ret = 0;
 
     BUMP(release);
 
     path = path_cvt(path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
     // path might be NULL if we are accessing a bare file descriptor. Since
     // pulling the file descriptor is the job of ldb_filecache, we'll have
     // to detect there.
-    ret = ldb_filecache_release(config->cache, path, info);
+    ret = ldb_filecache_sync(config->cache, path, info, true);
     if (ret < 0) {
-        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, (path ? path : "null path"));
+        log_print(LOG_ERR, "dav_release: error on ldb_filecache_sync: %d::%s", ret, (path ? path : "null path"));
+    } else {
+        int fd = ldb_filecache_fd(info);
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(&(value.st), 0, false, fd);
+        stat_cache_value_set(config->cache, path, &value);
     }
+
+    ldb_filecache_close(info);
 
     log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path ? path : "null path"));
 
@@ -1138,6 +1154,10 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     BUMP(fsync);
 
     path = path_cvt(path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_fsync(%s)", path ? path : "null path");
 
     // If path is NULL because we are accessing a bare file descriptor,
@@ -1161,11 +1181,17 @@ finish:
 
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value value;
+    int fd;
     int ret = 0;
 
     BUMP(flush);
 
     path = path_cvt(path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_flush(%s)", path ? path : "null path");
 
     // If path is NULL because we are accessing a bare file descriptor,
@@ -1175,6 +1201,11 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     if (ret < 0) {
         log_print(LOG_ERR, "dav_flush: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
     }
+
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
 
     return ret;
 }
@@ -1301,6 +1332,8 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, s
 static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ssize_t bytes_written;
+    struct stat_cache_value value;
+    int fd;
 
     BUMP(write);
 
@@ -1308,6 +1341,10 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     // (we have unlinked the path but kept the file descriptor open)
     // In this case we continue to do the write, but we skip the sync below
     path = path_cvt(path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path ? path : "null path", (unsigned long) offset, (unsigned long) size);
 
     bytes_written = ldb_filecache_write(info, buf, size, offset);
@@ -1322,6 +1359,11 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
         return -EIO;
     }
 
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
+
 finish:
 
    return bytes_written;
@@ -1330,10 +1372,16 @@ finish:
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     int ret = 0;
+    struct stat_cache_value value;
+    int fd;
 
     BUMP(ftruncate);
 
     path = path_cvt(path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_ftruncate(%s, %lu)", path ? path : "null path", (unsigned long) size);
 
     if (ldb_filecache_truncate(info, size) < 0) {
@@ -1348,6 +1396,11 @@ static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info 
         ret = -EIO;
         goto finish;
     }
+
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
 
 finish:
 
@@ -1846,11 +1899,16 @@ static int dav_chmod(const char *path, mode_t mode) {
 
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value value;
+    int fd;
     int ret = 0;
 
     BUMP(create);
 
     path = path_cvt(path);
+
+    // Avoid valgrind warnings
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     log_print(LOG_INFO, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
@@ -1866,6 +1924,11 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
         log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
         return -EIO;
     }
+
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
 
     log_print(LOG_DEBUG, "Done: create()");
 
