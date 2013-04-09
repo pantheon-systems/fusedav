@@ -151,10 +151,9 @@ static void endElement(void *userData, const XML_Char *name) {
 static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb, void *userp) {
     XML_Parser parser = (XML_Parser) userp;
     size_t real_size = length * nmemb;
-    int error_code;
 
     if (XML_Parse(parser, contents, real_size, real_size == 0) == 0) {
-        error_code = XML_GetErrorCode(parser);
+        int error_code = XML_GetErrorCode(parser);
         log_print(LOG_WARNING, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
         return 0; // Zero bytes processed is failure.
     }
