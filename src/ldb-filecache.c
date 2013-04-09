@@ -172,17 +172,16 @@ static int new_cache_file(const char *cache_path, char *cache_file_path, fd_t *f
 }
 
 // adds an entry to the ldb cache
-static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, const struct ldb_filecache_pdata *pdata) {
+static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, struct ldb_filecache_pdata *pdata) {
     leveldb_writeoptions_t *options;
     char *errptr = NULL;
     char *key;
-    int ret = -1;
 
     BUMP(pdata_set);
 
     if (!pdata) {
         log_print(LOG_ERR, "ldb_filecache_pdata_set NULL pdata");
-        goto finish;
+        return -1;
     }
 
     log_print(LOG_DEBUG, "ldb_filecache_pdata_set: path=%s ; cachefile=%s", path, pdata->filename);
@@ -197,33 +196,27 @@ static int ldb_filecache_pdata_set(ldb_filecache_t *cache, const char *path, con
     if (errptr != NULL) {
         log_print(LOG_ERR, "leveldb_set error: %s", errptr);
         free(errptr);
-        goto finish;
+        free(pdata);
+        return -1;
     }
 
-    ret = 0;
-
-finish:
-
-    return ret;
+    return 0;
 }
 
 // Create a new file to write into and set values
 static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path,
         ldb_filecache_t *cache, const char *path) {
 
-    struct stat_cache_value value;
     struct ldb_filecache_pdata *pdata;
 
     BUMP(create_file);
 
     log_print(LOG_DEBUG, "create_file: on %s", path);
 
-    // Avoid valgrind warnings
-    memset(&value, 0, sizeof(struct stat_cache_value));
-
     pdata = calloc(1, sizeof(struct ldb_filecache_pdata));
     if (pdata == NULL) {
-        log_print(LOG_ERR, "create_file: malloc returns NULL for pdata");
+        // errno set on calloc
+        log_print(LOG_ERR, "create_file: calloc returns NULL for pdata");
         return -1;
     }
 
@@ -235,21 +228,6 @@ static int create_file(struct ldb_filecache_sdata *sdata, const char *cache_path
         free(pdata);
         return -1;
     }
-
-    // Prepopulate stat cache.
-    value.st.st_mode = 0660 | S_IFREG;
-    value.st.st_nlink = 1;
-    value.st.st_size = 0;
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = false;
-    stat_cache_value_set(cache, path, &value);
-    log_print(LOG_DEBUG, "create_file: Updated stat cache for %d : %s", sdata->fd, path);
 
     // The local copy currently trumps the server one, no matter how old.
     pdata->last_server_update = 0;
@@ -344,6 +322,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
                 log_print(LOG_NOTICE, "ldb_get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
             }
             else {
+                // errno set by open
                 log_print(LOG_ERR, "ldb_get_fresh_fd: open on file returns < 0 on \"%s\": errno: %d, %s", path, errno, strerror(errno));
             }
             return ret;
@@ -655,32 +634,29 @@ finish:
 // top-level read call
 ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, ne_off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
-    ssize_t ret = -1;
+    ssize_t bytes_read;
 
     BUMP(read);
 
     log_print(LOG_DEBUG, "ldb_filecache_read: fd=%d", sdata->fd);
 
-    ret = pread(sdata->fd, buf, size, offset);
-    if (ret < 0) {
-        ret = -1;
+    bytes_read = pread(sdata->fd, buf, size, offset);
+    if (bytes_read < 0) {
         // pread will have set errno
-        log_print(LOG_ERR, "ldb_filecache_read: error %d; %d %s %d %ld", ret, sdata->fd, buf, size, offset);
-        goto finish;
+        log_print(LOG_ERR, "ldb_filecache_read: error %d; %d %s %d %ld", bytes_read, sdata->fd, buf, size, offset);
+        return -1;
     }
 
-finish:
+    // ret is bytes read
+    log_print(LOG_DEBUG, "Done reading: %d from %d.", bytes_read, sdata->fd);
 
-    // ret is bytes read, or error
-    log_print(LOG_DEBUG, "Done reading: %d from %d.", ret, sdata->fd);
-
-    return ret;
+    return bytes_read;
 }
 
 // top-level write call
 ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset) {
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
-    ssize_t ret = -1;
+    ssize_t ret;
 
     BUMP(write);
 
@@ -875,14 +851,10 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
     struct ldb_filecache_sdata *sdata = (struct ldb_filecache_sdata *)info->fh;
     int ret = -1;
     struct ldb_filecache_pdata *pdata = NULL;
-    struct stat_cache_value value;
 
     BUMP(sync);
 
     assert(sdata);
-
-    // Avoid valgrind warnings
-    memset(&value, 0, sizeof(struct stat_cache_value));
 
     // We only do the sync if we have a path
     // If we are accessing a bare file descriptor (open/unlink/read|write),
@@ -963,20 +935,6 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
         log_print(LOG_NOTICE, "ldb_filecache_sync: Failed to insert entry into filecache: %s : %s", path, pdata->filename);
     }
 
-    // Update stat cache.
-    // @TODO: Use actual mode.
-    value.st.st_mode = 0660 | S_IFREG;
-    value.st.st_nlink = 1;
-    value.st.st_size = lseek(sdata->fd, 0, SEEK_END);
-    value.st.st_atime = time(NULL);
-    value.st.st_mtime = value.st.st_atime;
-    value.st.st_ctime = value.st.st_mtime;
-    value.st.st_blksize = 0;
-    value.st.st_blocks = 8;
-    value.st.st_uid = getuid();
-    value.st.st_gid = getgid();
-    value.prepopulated = false;
-    stat_cache_value_set(cache, path, &value);
     log_print(LOG_DEBUG, "ldb_filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
     ret = 0;
