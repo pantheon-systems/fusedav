@@ -1478,11 +1478,6 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    if (session_config_init(config.uri, config.ca_certificate, config.client_certificate) < 0) {
-        log_print(LOG_CRIT, "Failed to initialize sessions.");
-        goto finish;
-    }
-
     if (fail) {
         goto finish;
     }
@@ -1495,6 +1490,11 @@ int main(int argc, char *argv[]) {
 
     if (config.ignoreutimens)
         log_print(LOG_DEBUG, "Ignoring utimens requests.");
+
+    if (session_config_init(config.uri, config.ca_certificate, config.client_certificate) < 0) {
+        log_print(LOG_CRIT, "Failed to initialize session system.");
+        goto finish;
+    }
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
