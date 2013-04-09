@@ -556,7 +556,6 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     assert(!(flags & O_TRUNC));
 
     finish:
-        free(etag);
         return ret;
 }
 
