@@ -210,6 +210,8 @@ CURL *session_request_init(const char *path) {
     curl_easy_setopt(session, CURLOPT_FOLLOWLOCATION, 1);
     curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 100);
     curl_easy_setopt(session, CURLOPT_TIMEOUT, 600);
+    curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
     return session;
 }

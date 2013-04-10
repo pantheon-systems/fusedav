@@ -431,6 +431,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         unlink_old = true;
     }
     else {
+        // @TODO: Move back to 200 handler.
         // If there's no incoming pdata, we'll need one.
         *pdatap = malloc(sizeof(struct ldb_filecache_pdata));
         pdata = *pdatap;
@@ -447,6 +448,8 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     curl_easy_setopt(session, CURLOPT_WRITEHEADER, &etag);
 
     // Create a new temp file in case cURL needs to write to one.
+    // @TODO: Bug. Need to not overwrite filename and fs in all cases.
+    // Should create temp ones that get used on 200.
     if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
         log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
         // Should we delete path from cache and/or null-out pdata?
