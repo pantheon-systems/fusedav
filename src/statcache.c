@@ -709,7 +709,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     int passes = 1; // passes will grow as we detect larger depths
     int depth;
     int max_depth = 0;
-    const char *base_directory = get_base_url();
+    const char *base_directory = get_base_directory();
 
     // Statistics
     int visited_entries = 0;

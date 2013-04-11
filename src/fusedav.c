@@ -381,7 +381,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
 
         propfind_result = simple_propfind_with_redirect(update_path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
-        if (propfind_result < 0) {
+        if (propfind_result == 0) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
         }

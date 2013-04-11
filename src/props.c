@@ -102,9 +102,8 @@ static void endElement(void *userData, const XML_Char *name) {
             state->rstate.status_code = 410;
         }
     }
-    else if (strcmp(name, "resourcetype") == 0) {
-        if (state->estate.current_data != NULL && strstr(state->estate.current_data, "collection") != NULL)
-            state->rstate.st.st_mode |= S_IFDIR;
+    else if (strcmp(name, "collection") == 0) {
+        state->rstate.st.st_mode |= S_IFDIR;
     }
     else if (strcmp(name, "getcontentlength") == 0) {
         state->rstate.st.st_size = atol(state->estate.current_data);
@@ -225,6 +224,7 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
         goto finish;
     }
 
+    log_print(LOG_DEBUG, "PROPFIND succeeded on path %s", path);
     ret = 0;
 
 finish:
