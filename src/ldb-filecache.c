@@ -345,8 +345,9 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     CURLcode res;
     struct ldb_filecache_pdata *pdata;
     char etag[ETAG_MAX];
-    char old_filename[PATH_MAX];
-    bool unlink_old = false;
+    char response_filename[PATH_MAX];
+    int response_fd = -1;
+    bool close_response_fd = true;
 
     BUMP(fresh_fd);
 
@@ -429,34 +430,17 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         slist = curl_slist_append(slist, header);
         free(header);
         curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
-
-        // Back up the file name for cleanup later if it's a miss.
-        strncpy(old_filename, pdata->filename, PATH_MAX);
-        unlink_old = true;
-    }
-    else {
-        // @TODO: Move back to 200 handler.
-        // If there's no incoming pdata, we'll need one.
-        *pdatap = malloc(sizeof(struct ldb_filecache_pdata));
-        pdata = *pdatap;
-        if (pdata == NULL) {
-            log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
-            goto finish;
-        }
-        memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
     }
 
-    // Set a header capture path.
+    // Set an ETag header capture path.
     etag[0] = '\0';
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
     curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
     // Create a new temp file in case cURL needs to write to one.
-    // @TODO: Bug. Need to not overwrite filename and fs in all cases.
-    // Should create temp ones that get used on 200.
-    if (new_cache_file(cache_path, pdata->filename, &sdata->fd) < 0) {
+    if (new_cache_file(cache_path, response_filename, &response_fd) < 0) {
         log_print(LOG_ERR, "ldb_get_fresh_fd: new_cache_file returns < 0");
-        // Should we delete path from cache and/or null-out pdata?
+        // @TODO: Should we delete path from cache and/or null-out pdata?
         goto finish;
     }
 
@@ -516,21 +500,36 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
             }
         }
         else if (code == 200) {
-            // Fill in ETag.
-            if (etag != NULL) {
-                log_print(LOG_DEBUG, "Got ETag: %s", etag);
-                strncpy(pdata->etag, etag, ETAG_MAX);
-                pdata->etag[ETAG_MAX] = '\0'; // length of etag is ETAG_MAX + 1 to accomodate this null terminator
+            // Archive the old temp file path for unlinking after replacement.
+            char old_filename[PATH_MAX];
+            bool unlink_old = false;
+
+            if (pdata == NULL) {
+                *pdatap = malloc(sizeof(struct ldb_filecache_pdata));
+                pdata = *pdatap;
+                if (pdata == NULL) {
+                    log_print(LOG_ERR, "ldb_get_fresh_fd: malloc returns NULL for pdata");
+                    goto finish;
+                }
+                memset(pdata, 0, sizeof(struct ldb_filecache_pdata));
             }
             else {
-                log_print(LOG_DEBUG, "Got no ETag in response.");
-                pdata->etag[0] = '\0';
+                strncpy(old_filename, pdata->filename, PATH_MAX);
+                unlink_old = true;
             }
+
+            // Fill in ETag.
+            log_print(LOG_DEBUG, "Saving ETag: %s", etag);
+            strncpy(pdata->etag, etag, ETAG_MAX);
+            pdata->etag[ETAG_MAX] = '\0'; // length of etag is ETAG_MAX + 1 to accomodate this null terminator
 
             ret = 0;
 
             // Point the persistent cache to the new file content.
             pdata->last_server_update = time(NULL);
+            strncpy(pdata->filename, response_filename, PATH_MAX);
+            sdata->fd = response_fd;
+            close_response_fd = false;
 
             log_print(LOG_DEBUG, "ldb_get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
             ldb_filecache_pdata_set(cache, path, pdata);
@@ -563,6 +562,8 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     assert(!(flags & O_TRUNC));
 
     finish:
+        if (close_response_fd)
+            close(response_fd);
         return ret;
 }
 

@@ -265,7 +265,6 @@ static const char *path_cvt(const char *path) {
 
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
         free(r);
-        //curl_free(r);
 
     base_dir = get_base_directory();
 
@@ -1465,7 +1464,7 @@ int main(int argc, char *argv[]) {
     memset(&stats, 0, sizeof(struct statistics));
     memset(&config, 0, sizeof(config));
 
-    //signal(SIGSEGV, sigsegv_handler);
+    signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
 
     mask = umask(0);

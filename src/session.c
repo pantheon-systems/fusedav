@@ -158,7 +158,7 @@ void session_config_free(void) {
 
 static void session_destroy(void *s) {
     CURL *session = s;
-    log_print(LOG_NOTICE, "Destroying session.");
+    log_print(LOG_NOTICE, "Destroying cURL session.");
     assert(s);
     curl_easy_cleanup(session);
 }
@@ -176,9 +176,8 @@ CURL *session_get_handle(void) {
     if ((session = pthread_getspecific(session_tsd_key)))
         return session;
 
-    log_print(LOG_NOTICE, "Opening session.");
+    log_print(LOG_NOTICE, "Opening cURL session.");
     session = curl_easy_init();
-    log_print(LOG_NOTICE, "Session opened.");
     pthread_setspecific(session_tsd_key, session);
 
     return session;
