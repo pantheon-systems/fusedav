@@ -436,6 +436,8 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
     // initialize to 0
     memset(st, 0, sizeof(struct stat));
 
+    log_print(LOG_DEBUG, "fill_stat_generic: Enter");
+
     if (is_dir) {
         // Our default mode for directories is 0770, for files 0660; use them here if not specified
         if (mode != 0) st->st_mode = mode;
@@ -465,12 +467,14 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
 
     if (fd >= 0) {
         st->st_size = lseek(fd, 0, SEEK_END);
+        log_print(LOG_DEBUG, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", fd, st->st_size, errno, strerror(errno));
         // Silently overlook error
         if (st->st_size < 0) st->st_size = 0;
     }
 
     st->st_blocks = (st->st_size+511)/512;
 
+    log_print(LOG_DEBUG, "fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
     log_print(LOG_DEBUG, "Done with fill_stat_generic.");
 }
 
@@ -495,7 +499,7 @@ static void getdir_propfind_callback(__unused void *userdata, const ne_uri *u, c
 
     path = strdup(u->path);
 
-    // Avoid valgrind warnings
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
 
     //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
@@ -682,7 +686,7 @@ static void getattr_propfind_callback(void *userdata, const ne_uri *u, const ne_
 
     path = strdup(u->path);
 
-    // Avoid valgrind warnings
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
 
     strip_trailing_slash(path, &is_dir);
@@ -825,17 +829,24 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
             log_print(LOG_DEBUG, "dav_fgetattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
             return ret;
         }
+        // These are taken care of by fill_stat_generic below if path is NULL
         if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
             stbuf->st_mode = S_IFDIR | config->dir_mode;
+        if (S_ISREG(stbuf->st_mode) && config->file_mode)
+            stbuf->st_mode = S_IFREG | config->file_mode;
+        if (config->uid)
+            stbuf->st_uid = config->uid;
+        if (config->gid)
+            stbuf->st_gid = config->gid;
     }
     else {
         int fd;
         fd = ldb_filecache_fd(info);
-        log_print(LOG_INFO, "CALLBACK: dav_fgetattr(NULL path)");
+        log_print(LOG_INFO, "common_getattr(NULL path)");
         // Fill in generic values
+        // We can't be a directory if we have a null path
         // mode = 0 (unspecified), is_dir = false; fd to get size
         fill_stat_generic(stbuf, 0, false, fd);
-        ret = 0;
     }
 
     // Zero-out unused nanosecond fields.
@@ -843,14 +854,7 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
     stbuf->st_mtim.tv_nsec = 0;
     stbuf->st_ctim.tv_nsec = 0;
 
-    if (config->uid)
-        stbuf->st_uid = config->uid;
-    if (config->gid)
-        stbuf->st_gid = config->gid;
-    if (S_ISREG(stbuf->st_mode) && config->file_mode)
-        stbuf->st_mode = S_IFREG | config->file_mode;
-
-    return ret;
+    return 0;
 }
 
 static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
@@ -988,9 +992,6 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     path = path_cvt(path);
 
-    // Avoid valgrind warnings
-    memset(&value, 0, sizeof(struct stat_cache_value));
-
     log_print(LOG_INFO, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
     if (!(session = session_get(1))) {
@@ -1004,6 +1005,9 @@ static int dav_mkdir(const char *path, mode_t mode) {
         log_print(LOG_ERR, "MKCOL failed: %s", ne_get_error(session));
         return -ENOENT;
     }
+
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     // Populate stat cache.
     // is_dir = true; fd = -1 (not a regular file)
@@ -1114,15 +1118,26 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     BUMP(release);
 
     path = path_cvt(path);
+
     log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
     // path might be NULL if we are accessing a bare file descriptor. Since
     // pulling the file descriptor is the job of ldb_filecache, we'll have
     // to detect there.
-    ret = ldb_filecache_release(config->cache, path, info);
+    ret = ldb_filecache_sync(config->cache, path, info, true);
     if (ret < 0) {
-        log_print(LOG_ERR, "dav_release: error on ldb_filecache_release: %d::%s", ret, (path ? path : "null path"));
+        log_print(LOG_ERR, "dav_release: error on ldb_filecache_sync: %d::%s", ret, (path ? path : "null path"));
+    } else {
+        struct stat_cache_value value;
+        int fd = ldb_filecache_fd(info);
+        // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+        memset(&value, 0, sizeof(struct stat_cache_value));
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(&(value.st), 0, false, fd);
+        stat_cache_value_set(config->cache, path, &value);
     }
+
+    ldb_filecache_close(info);
 
     log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path ? path : "null path"));
 
@@ -1138,6 +1153,10 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     BUMP(fsync);
 
     path = path_cvt(path);
+
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_fsync(%s)", path ? path : "null path");
 
     // If path is NULL because we are accessing a bare file descriptor,
@@ -1146,7 +1165,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     ret = ldb_filecache_sync(config->cache, path, info, true);
     if (ret < 0) {
         log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
-        goto finish;
+        return ret;
     }
 
     fd = ldb_filecache_fd(info);
@@ -1154,18 +1173,22 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     fill_stat_generic(&(value.st), 0, false, fd);
     stat_cache_value_set(config->cache, path, &value);
 
-finish:
-
     return ret;
 }
 
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value value;
+    int fd;
     int ret = 0;
 
     BUMP(flush);
 
     path = path_cvt(path);
+
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_flush(%s)", path ? path : "null path");
 
     // If path is NULL because we are accessing a bare file descriptor,
@@ -1175,6 +1198,11 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     if (ret < 0) {
         log_print(LOG_ERR, "dav_flush: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
     }
+
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
 
     return ret;
 }
@@ -1187,7 +1215,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
     path = path_cvt(path);
 
-    // Avoid valgrind warnings
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
 
     log_print(LOG_INFO, "CALLBACK: dav_mknod(%s)", path);
@@ -1301,6 +1329,8 @@ static int dav_read(const char *path, char *buf, size_t size, ne_off_t offset, s
 static int dav_write(const char *path, const char *buf, size_t size, ne_off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     ssize_t bytes_written;
+    struct stat_cache_value value;
+    int fd;
 
     BUMP(write);
 
@@ -1308,12 +1338,13 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
     // (we have unlinked the path but kept the file descriptor open)
     // In this case we continue to do the write, but we skip the sync below
     path = path_cvt(path);
+
     log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path ? path : "null path", (unsigned long) offset, (unsigned long) size);
 
     bytes_written = ldb_filecache_write(info, buf, size, offset);
     if (bytes_written < 0) {
         log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
-        goto finish;
+        return bytes_written;
     }
 
     // Let sync handle potential null path
@@ -1322,37 +1353,49 @@ static int dav_write(const char *path, const char *buf, size_t size, ne_off_t of
         return -EIO;
     }
 
-finish:
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
 
    return bytes_written;
 }
 
 static int dav_ftruncate(const char *path, ne_off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret = 0;
+    struct stat_cache_value value;
+    int fd;
 
     BUMP(ftruncate);
 
     path = path_cvt(path);
+
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
     log_print(LOG_INFO, "CALLBACK: dav_ftruncate(%s, %lu)", path ? path : "null path", (unsigned long) size);
 
     if (ldb_filecache_truncate(info, size) < 0) {
-        ret = -errno;
-        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", ret, strerror(ret));
-        goto finish;
+        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", errno, strerror(errno));
+        return -errno;
     }
 
     // Let sync handle a NULL path
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
-        ret = -EIO;
-        goto finish;
+        return -EIO;
     }
 
-finish:
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
 
-    log_print(LOG_DEBUG, "dav_ftruncate: ret=%d", ret);
-    return ret;
+    log_print(LOG_DEBUG, "dav_ftruncate: returning");
+    return 0;
 }
 
 static int dav_utimens(const char *path, const struct timespec tv[2]) {
@@ -1846,7 +1889,9 @@ static int dav_chmod(const char *path, mode_t mode) {
 
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret = 0;
+    struct stat_cache_value value;
+    int fd;
+    int ret;
 
     BUMP(create);
 
@@ -1860,16 +1905,22 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     if (ret < 0)
         return ret;
 
-    ret = do_chmod(path, mode, config);
-
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
         return -EIO;
     }
 
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
+
+    fd = ldb_filecache_fd(info);
+    // mode = 0 (unspecified), is_dir = false; fd to get size
+    fill_stat_generic(&(value.st), 0, false, fd);
+    stat_cache_value_set(config->cache, path, &value);
+
     log_print(LOG_DEBUG, "Done: create()");
 
-    return ret;
+    return 0;
 }
 
 static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
