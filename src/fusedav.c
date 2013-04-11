@@ -317,7 +317,7 @@ char *strip_trailing_slash(char *fn, int *is_dir) {
     return fn;
 }
 
-static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st, bool exists) {
+static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st, unsigned long status_code) {
     char *local_path = NULL;
     //int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
@@ -329,18 +329,18 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
-    //log_print(LOG_DEBUG, "getdir_propfind_callback: %s", path);
+    log_print(LOG_INFO, "getdir_propfind_callback: %s (%lu)", path, status_code);
 
     // @TODO: Consider whether the is_dir check here is worth keeping
     // now that we check whether it's a collection.
     //strip_trailing_slash(local_path, &is_dir);
 
-    if (exists) {
-        stat_cache_value_set(config->cache, path, &value);
-    }
-    else {
+    if (status_code == 410) {
         log_print(LOG_DEBUG, "Removing path: %s", path);
         stat_cache_delete(config->cache, local_path);
+    }
+    else {
+        stat_cache_value_set(config->cache, path, &value);
     }
 
     free(local_path);
@@ -490,7 +490,7 @@ static int dav_readdir(
     return 0;
 }
 
-static void getattr_propfind_callback(__unused void *userdata, const char *path, struct stat st, bool exists) {
+static void getattr_propfind_callback(__unused void *userdata, const char *path, struct stat st, unsigned long status_code) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
 
@@ -498,7 +498,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
-    if (exists)
+    if (status_code == 410)
         stat_cache_value_set(config->cache, path, &value);
     // @TODO: Delete if non-existent.
 }

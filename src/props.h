@@ -26,7 +26,7 @@
 #define PROPFIND_DEPTH_ONE 1
 #define PROPFIND_DEPTH_INFINITY 2
 
-typedef void (*props_result_callback)(void *userdata, const char *href, struct stat st, bool exists);
+typedef void (*props_result_callback)(void *userdata, const char *href, struct stat st, unsigned long status_code);
 int simple_propfind(const char *path, size_t depth, props_result_callback results, void *userdata);
 
 #endif
