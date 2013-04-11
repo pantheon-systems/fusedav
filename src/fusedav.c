@@ -1905,8 +1905,6 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     if (ret < 0)
         return ret;
 
-    do_chmod(path, mode, config);
-
     if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
         log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
         return -EIO;
