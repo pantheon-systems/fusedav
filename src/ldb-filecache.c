@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/file.h>
 #include <stdlib.h>
+#include <ctype.h>
 
 #include "ldb-filecache.h"
 #include "statcache.h"
@@ -305,26 +306,29 @@ static struct ldb_filecache_pdata *ldb_filecache_pdata_get(ldb_filecache_t *cach
 static size_t capture_etag(void *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t real_size = size * nmemb;
     char *header = (char *) ptr;
-    char **etag = (char **) userdata; // Allocated to ETAG_MAX length.
-    char *colon_position;
+    char *etag = (char *) userdata; // Allocated to ETAG_MAX length.
+    char *value;
 
-    colon_position = (char *) memchr(header, ':', real_size);
+    value = strstr(header, ":");
 
-    if (colon_position == NULL)
-        return 0; // Indicates failure.
-
-    // If it's not four characters long, it's not an ETag.
-    if (colon_position - header != 4)
+    if (value == NULL)
         goto finish;
 
-    // If the ETag is too long, bail.
-    if (real_size - 4 > ETAG_MAX)
-        goto finish;
+    // Skip the colon and whitespace.
+    ++value;
+    while(isspace(value[0]))
+        ++value;
 
     // Is it an ETag? If so, store it.
     if (strncasecmp(header, "ETag", 4) == 0) {
-        memcpy(*etag, colon_position + 1, real_size - 5);
-        *etag[real_size - 5] = '\0';
+        size_t value_len = strlen(value);
+
+        // If the ETag is too long, bail.
+        if (value_len > ETAG_MAX)
+            goto finish;
+
+        strncpy(etag, value, value_len);
+        etag[value_len - 1] = '\0';
     }
 
 finish:
@@ -445,7 +449,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     // Set a header capture path.
     etag[0] = '\0';
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
-    curl_easy_setopt(session, CURLOPT_WRITEHEADER, &etag);
+    curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
     // Create a new temp file in case cURL needs to write to one.
     // @TODO: Bug. Need to not overwrite filename and fs in all cases.
@@ -824,19 +828,21 @@ static int put_return_etag(const char *path, int fd, char *etag) {
     // Set a header capture path.
     etag[0] = '\0';
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
-    curl_easy_setopt(session, CURLOPT_WRITEHEADER, &etag);
+    curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
     res = curl_easy_perform(session);
     if (res != CURLE_OK) {
         log_print(LOG_WARNING, "put_return_etag: curl_easy_perform returns error (%d:%s: fd=%d)", ret, curl_easy_strerror(res), fd);
     }
     else {
-        log_print(LOG_DEBUG, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
+        log_print(LOG_INFO, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
         ret = 0;
     }
 
     // Ensure that it's a 2xx response code.
     curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+
+    log_print(LOG_INFO, "put_return_etag: Request got HTTP status code %lu", response_code);
 
     if (response_code < 200 || response_code >= 300) {
         ret = -1;
@@ -845,6 +851,8 @@ static int put_return_etag(const char *path, int fd, char *etag) {
     if (ret == 0) {
         log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
     }
+
+    log_print(LOG_DEBUG, "put_return_etag: ret=%d", ret);
 
 finish:
 
