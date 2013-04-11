@@ -197,7 +197,7 @@ CURL *session_request_init(const char *path) {
     log_print(LOG_INFO, "Initializing request to URL: %s", full_url);
     free(full_url);
 
-    curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/PACKAGE_VERSION");
+    curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
     if (ca_certificate != NULL)
         curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
