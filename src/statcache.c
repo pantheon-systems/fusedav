@@ -392,6 +392,8 @@ int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cach
     char *key;
     int r = 0;
 
+    if (path == NULL) return 0;
+
     BUMP(value_set);
 
     assert(value);
