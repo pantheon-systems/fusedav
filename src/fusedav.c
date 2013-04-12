@@ -905,9 +905,11 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
+    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MOVE");
+
     // Add the destination header.
     // @TODO: Check that this is a URL.
-    asprintf(&header, "Destination: %s", to);
+    asprintf(&header, "Destination: %s%s", get_base_host(), to);
     slist = curl_slist_append(slist, header);
     free(header);
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
