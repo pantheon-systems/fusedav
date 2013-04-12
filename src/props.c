@@ -204,13 +204,14 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PROPFIND");
     asprintf(&header, "Depth: %lu", depth);
     slist = curl_slist_append(slist, header);
+    slist = curl_slist_append(slist, "Content-Type: application/xml");
     free(header);
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-    /* @TODO: Send the proper PROPFIND body:
-     * <?xml version="1.0" encoding="utf-8" ?>
-     * <D:propfind xmlns:D="DAV:"><D:allprop/></D:propfind>
-     */
+    // Send the PROPFIND body.
+    curl_easy_setopt(session, CURLOPT_POSTFIELDS,
+        "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
+        "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
     // Perform the request and parse the response.
     log_print(LOG_INFO, "About to perform PROPFIND.");

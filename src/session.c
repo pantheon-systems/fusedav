@@ -136,13 +136,14 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     if (ca_cert != NULL)
         ca_certificate = strdup(ca_cert);
 
-    if (client_cert != NULL)
+    if (client_cert != NULL) {
         client_certificate = strdup(client_cert);
 
-    // Repair p12 to point to pem for now.
-    if (strcmp(client_certificate + strlen(client_certificate) - 4, ".p12") == 0) {
-        log_print(LOG_WARNING, "Remapping deprecated certificate path: %s", client_certificate);
-        strncpy(client_certificate + strlen(client_certificate) - 4, ".pem", 4);
+        // Repair p12 to point to pem for now.
+        if (strcmp(client_certificate + strlen(client_certificate) - 4, ".p12") == 0) {
+            log_print(LOG_WARNING, "Remapping deprecated certificate path: %s", client_certificate);
+            strncpy(client_certificate + strlen(client_certificate) - 4, ".pem", 4);
+        }
     }
 
     log_print(LOG_INFO, "Using client certificate at path: %s", client_certificate);
