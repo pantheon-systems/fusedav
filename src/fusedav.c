@@ -58,18 +58,6 @@
 #include "props.h"
 #include "util.h"
 
-/*
-const ne_propname query_properties[] = {
-    { "DAV:", "resourcetype" },
-    { "http://apache.org/dav/props/", "executable" },
-    { "DAV:", "getcontentlength" },
-    { "DAV:", "getlastmodified" },
-    { "DAV:", "creationdate" },
-    { "DAV:", "event" }, // For optional progressive PROPFIND support.
-    { NULL, NULL }
-};
-*/
-
 mode_t mask = 0;
 int debug = 1;
 struct fuse* fuse = NULL;
@@ -924,7 +912,7 @@ static int dav_rename(const char *from, const char *to) {
     free(header);
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-    /* ne_move:
+    /* move:
      * succeeds: mv 'from' to 'to', delete 'from'
      * fails with 404: may be doing the move on an open file, so this may be ok
      *                 mv 'from' to 'to', delete 'from'
@@ -1091,30 +1079,6 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     memset(&value, 0, sizeof(struct stat_cache_value));
 
     log_print(LOG_INFO, "CALLBACK: dav_mknod(%s)", path);
-
-    /*
-    if (!(session = session_get(1)))
-        return -EIO;
-
-    if (!S_ISREG(mode))
-        return -ENOTSUP;
-
-    snprintf(tempfile, sizeof(tempfile), "%s/fusedav-empty-XXXXXX", "/tmp");
-    if ((fd = mkstemp(tempfile)) < 0)
-        return -errno;
-
-    unlink(tempfile);
-
-    if (ne_put(session, path, fd)) {
-        log_print(LOG_ERR, "mknod:PUT failed: %s", ne_get_error(session));
-        close(fd);
-        return -EACCES;
-    }
-
-    log_print(LOG_ERR, "mknod(%s):PUT complete", path); // change back to DEBUG
-
-    close(fd);
-    */
 
     // Prepopulate stat cache.
     // is_dir = false, fd = -1, can't set size
