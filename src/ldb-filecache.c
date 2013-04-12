@@ -314,6 +314,17 @@ finish:
     return real_size;
 }
 
+static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *userdata) {
+    size_t real_size = size * nmemb;
+    fd_t *fdp = (fd_t *) userdata;
+    fd_t myfd = *fdp;
+    ssize_t res;
+    res = write(myfd, ptr, size * nmemb);
+    if ((size_t) res != real_size)
+        return 0;
+    return real_size;
+}
+
 // Get a file descriptor pointing to the latest full copy of the file.
 static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         const char *cache_path, const char *path, struct ldb_filecache_sdata *sdata,
@@ -421,10 +432,9 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         goto finish;
     }
 
-    // Give cURL the FILE pointer for handling the response body.
-    // The fdopen() does not need any corresponding close action besides
-    // how we already close the file descriptor.
-    curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) fdopen(sdata->fd, "w"));
+    // Give cURL the fd and callback for handling the response body.
+    curl_easy_setopt(session, CURLOPT_WRITEDATA, &response_fd);
+    curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_response_to_fd);
 
     do {
         res = curl_easy_perform(session);
@@ -539,8 +549,10 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     assert(!(flags & O_TRUNC));
 
     finish:
-        if (close_response_fd)
+        if (close_response_fd) {
             close(response_fd);
+            unlink(response_filename);
+        }
         return ret;
 }
 
@@ -766,6 +778,7 @@ static int put_return_etag(const char *path, int fd, char *etag) {
     session = session_request_init(path);
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
+    curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fdopen(fd, "r"));
 
     // Set a header capture path.

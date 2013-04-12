@@ -127,6 +127,15 @@ static void endElement(void *userData, const XML_Char *name) {
             state->rstate.st.st_mode |= S_IFREG | 0660;
             state->rstate.st.st_nlink = 1;
         }
+        state->rstate.st.st_blksize = 4096;
+
+        // Default to the current time or mtime.
+        if (state->rstate.st.st_mtime == 0)
+            state->rstate.st.st_mtime = time(NULL);
+        if (state->rstate.st.st_atime == 0)
+            state->rstate.st.st_atime = state->rstate.st.st_mtime;
+        if (state->rstate.st.st_ctime == 0)
+            state->rstate.st.st_ctime = state->rstate.st.st_mtime;
 
         state->rstate.st.st_uid = getuid();
         state->rstate.st.st_gid = getgid();

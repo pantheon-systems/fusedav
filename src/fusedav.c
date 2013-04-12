@@ -814,7 +814,7 @@ static int dav_rmdir(const char *path) {
         return -ENOTEMPTY;
     }
 
-    if (!(session = session_request_init(path))) {
+    if (!(session = session_request_init(fn))) {
         log_print(LOG_WARNING, "dav_rmdir(%s): failed to get session", path);
         return -EIO;
     }
