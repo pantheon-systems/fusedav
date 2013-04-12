@@ -2,41 +2,44 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <errno.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <stdarg.h>
+#include <getopt.h>
 
 #define PATH_MAX 4096
 
-bool verbose = false;
+static bool verbose = false;
 
-static void v_printf() {
+static void usage() {
+    printf("One arg, -v for verbose\n");
+    exit(0);
+}
+
+static void v_printf(const char *fmt, ...) {
     if (verbose) {
-        printf();
+        va_list ap;
+        va_start(ap, fmt);
+        vfprintf(stdout, fmt, ap);
+        va_end(ap);
     }
 }
 
-static int readdirectory(char *dirname) {
+static int readdirectory(char *dirname, int *dirsread, int *filesread, int *errors) {
     struct dirent *diriter;
     char fn[PATH_MAX];
     DIR * dir;
     int fd;
 
-    for (int idx = 0; idx < 4096; idx++) {
-        wbuf[idx] = ch;
-        ++ch;
-        if (ch > 'z') ch = 'A';
-    }
-
-    printf("dirname %s\n", dirname);
-
     dir = opendir(dirname);
 
     if (dir == NULL) {
-        printf("dir is NULL %d %s\n", errno, strerror(errno));
+        printf("FAIL: dir is NULL %d %s\n", errno, strerror(errno));
         return -1;
     }
 
@@ -52,17 +55,20 @@ static int readdirectory(char *dirname) {
         snprintf(fn, PATH_MAX , "%s/%s", dirname, diriter->d_name) ;
         if (stat(fn, &stbuf) == -1) {
             v_printf("stat -1 on %s :: %d %s\n", fn, errno, strerror(errno));
+            ++*errors;
             diriter = readdir(dir);
             continue;
         }
 
         if (S_ISDIR(stbuf.st_mode)) {
             v_printf("directory: %s\n", fn);
-            readdirectory(fn);
+            ++*dirsread;
+            readdirectory(fn, dirsread, filesread, errors);
         }
         else {
             fd = open(fn, O_RDWR);
-            v_printf("file: %s :: %s :: %s\n", fn, cpfn, rnfn);
+            v_printf("file: %s\n", fn);
+            ++*filesread;
             close(fd);
         }
         diriter = readdir(dir);
@@ -72,50 +78,38 @@ static int readdirectory(char *dirname) {
 
 int main(int argc, char *argv[]) {
     char cwdbuf[PATH_MAX];
-
-    char *cvalue = NULL;
-    int index;
+    // char *cvalue = NULL;
     int opt;
+    int dirsread = 0;
+    int filesread = 0;
+    int errors = 0;
 
-    opterr = 0;
-
-    while ((opt = getopt (argc, argv, "abc:")) != -1) {
+    while ((opt = getopt (argc, argv, "vh")) != -1) {
         switch (opt)
         {
             case 'v':
-            verbose = 1;
-            break;
-            case 'b':
-            bflag = 1;
-            break;
-            case 'c':
-            cvalue = optarg;
-            break;
+                verbose = true;
+                break;
+            //case 'c':
+                //cvalue = optarg;
+                //break;
+            case 'h':
             case '?':
-            if (optopt == 'c')
-            fprintf (stderr, "Option -%c requires an argument.\n", optopt);
-            else if (isprint (optopt))
-            fprintf (stderr, "Unknown option `-%c'.\n", optopt);
-            else
-            fprintf (stderr,
-            "Unknown option character `\\x%x'.\n",
-            optopt);
-            return 1;
             default:
-            abort ();
+                usage ();
         }
     }
 
-    printf ("aflag = %d, bflag = %d, cvalue = %s\n",
-    aflag, bflag, cvalue);
-
-    for (index = optind; index < argc; index++)
-    printf ("Non-option argument %s\n", argv[index]);
-    return 0;
     getcwd(cwdbuf, PATH_MAX);
-    if (readdirectory(cwdbuf) < 0) {
-        printf("EXIT\n");
+    if (readdirectory(cwdbuf, &dirsread, &filesread, &errors) < 0) {
+        printf("FAIL: dirs read: %d files read:%d\n", dirsread, filesread);
         return(-1);
+    }
+    if (errors) {
+        printf("FAIL: dirs read: %d; files read: %d; errors: %d\n", dirsread, filesread, errors);
+    }
+    else {
+        printf("PASS: dirs read: %d files read:%d\n", dirsread, filesread);
     }
     return 0;
 }
