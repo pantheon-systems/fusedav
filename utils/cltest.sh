@@ -16,7 +16,7 @@ EOF
 
 iters=0
 verbose=0
-while getopts “hi:v” OPTION
+while getopts "hi:v" OPTION
 do
      case $OPTION in
          h)
@@ -127,9 +127,9 @@ if [ $verbose -eq 1 ]; then
 fi
 
 if [ $fail -ne 0 ]; then
-    echo "FAIL: fail $fail; pass $pass"
+    echo "FAIL: files failed $fail; files passed $pass"
 else
-    echo "PASS: pass $pass"
+    echo "PASS: files passed $pass"
 fi
 
 

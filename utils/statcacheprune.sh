@@ -20,7 +20,7 @@ EOF
 numfiles=0
 numdirs=0
 verbose=0
-while getopts “hf:d:v” OPTION
+while getopts "hf:d:v" OPTION
 do
      case $OPTION in
          h)
