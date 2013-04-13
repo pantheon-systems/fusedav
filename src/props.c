@@ -140,11 +140,7 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.st.st_uid = getuid();
         state->rstate.st.st_gid = getgid();
 
-        //log_print(LOG_DEBUG, "Path: %s", state->rstate.path);
-        //log_print(LOG_DEBUG, "    Status code: %lu", state->rstate.status_code);
-        //log_print(LOG_DEBUG, "    Size: %u", state->rstate.st.st_size);
-        //log_print(LOG_DEBUG, "    Modified: %u", state->rstate.st.st_mtime);
-        //log_print(LOG_DEBUG, "    Created: %u", state->rstate.st.st_ctime);
+        log_print(LOG_DEBUG, "Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
 
         // Invoke the callback.
         state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code);
