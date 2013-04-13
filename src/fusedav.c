@@ -238,10 +238,10 @@ static void path_cvt_tsd_key_init(void) {
 }
 
 static const char *path_cvt(const char *path) {
-    //CURL *session;
     char *r, *t;
     int l;
     const char *base_dir;
+    size_t base_dir_len;
 
     log_print(LOG_DEBUG, "path_cvt(%s)", path ? path : "null path");
 
@@ -258,9 +258,14 @@ static const char *path_cvt(const char *path) {
 
     log_print(LOG_DEBUG, "base_dir: %s", base_dir);
 
-    t = malloc((l = strlen(base_dir) + strlen(path)) + 1);
+    base_dir_len = strlen(base_dir);
+    t = malloc((l = base_dir_len + strlen(path)) + 1);
     assert(t);
-    sprintf(t, "%s%s", base_dir, path);
+    // Only include the base dir if it's more than "/"
+    if (base_dir[base_dir_len - 1] == '/')
+        sprintf(t, "%s", path);
+    else
+        sprintf(t, "%s%s", base_dir, path);
 
     if (l > 1 && t[l-1] == '/')
         t[l-1] = 0;
@@ -533,14 +538,44 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
-    if (status_code == 410)
+    if (status_code == 410) {
+        log_print(LOG_DEBUG, "getattr_propfind_callback: Deleting from stat cache: %s", path);
+        stat_cache_delete(config->cache, path);
+    }
+    else {
+        log_print(LOG_DEBUG, "getattr_propfind_callback: Adding to stat cache: %s", path);
         stat_cache_value_set(config->cache, path, &value);
-    // @TODO: Delete if non-existent.
+    }
+}
+
+static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore_freshness) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value *response;
+
+    response = stat_cache_value_get(config->cache, path, ignore_freshness);
+    if (response != NULL) {
+        log_print(LOG_DEBUG, "Got response from stat_cache_value_get for path %s.", path);
+        *stbuf = response->st;
+        free(response);
+        //print_stat(stbuf, "get_stat from cache");
+        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s, stbuf, %d): returns ENOENT", path, ignore_freshness);
+        else log_print(LOG_DEBUG, "get_stat(%s): 1. returns 0", path);
+        return stbuf->st_mode == 0 ? -ENOENT : 0;
+    }
+    log_print(LOG_DEBUG, "NULL response from stat_cache_value_get for path %s.", path);
+
+    if (ignore_freshness) {
+        log_print(LOG_DEBUG, "Ignoring freshness and sending -ENOENT for path %s.", path);
+        memset(stbuf, 0, sizeof(struct stat));
+        return -ENOENT;
+    }
+
+    log_print(LOG_DEBUG, "Treating key as absent of expired for path %s.", path);
+    return -EKEYEXPIRED;
 }
 
 static int get_stat(const char *path, struct stat *stbuf) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    struct stat_cache_value *response;
     char *parent_path;
     const char *base_directory;
     char *nepp;
@@ -570,31 +605,27 @@ static int get_stat(const char *path, struct stat *stbuf) {
     }
 
     // Check if we can directly hit this entry in the stat cache.
-    response = stat_cache_value_get(config->cache, path, false);
-    if (response != NULL) {
-        *stbuf = response->st;
-        free(response);
-        //print_stat(stbuf, "get_stat from cache");
-        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
-        else log_print(LOG_DEBUG, "get_stat(%s): 1. returns 0", path);
-        return stbuf->st_mode == 0 ? -ENOENT : 0;
-    }
+    ret = get_stat_from_cache(path, stbuf, false);
+    if (ret == 0 || ret == -ENOENT)
+        return ret;
 
     log_print(LOG_DEBUG, "STAT-CACHE-MISS");
 
-    // If it's the root directory, just do a single PROPFIND.
+    // If it's the root directory or refresh_dir_for_file_stat is false,
+    // just do a single, zero-depth PROPFIND.
     if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
-        log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
+        log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on path: %s", path);
         // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, getattr_propfind_callback, NULL) < 0) {
             stat_cache_delete(config->cache, path);
-            log_print(LOG_NOTICE, "PROPFIND failed");
+            log_print(LOG_NOTICE, "PROPFIND failed on path: %s", path);
             memset(stbuf, 0, sizeof(struct stat));
-            log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
+            log_print(LOG_DEBUG, "get_stat(%s): 1. returns -ENOENT", path);
             return -ENOENT;
         }
-        log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", base_directory);
-        return 0;
+        log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", path);
+
+        return get_stat_from_cache(path, stbuf, true);
     }
 
     // If we're here, refresh_dir_for_file_stat is set, so we're updating
@@ -634,21 +665,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     free(nepp);
 
     // Try again to hit the file in the stat cache.
-    if ((response = stat_cache_value_get(config->cache, path, true))) {
-        log_print(LOG_DEBUG, "Hit updated cache: %s", path);
-        *stbuf = response->st;
-        free(response);
-        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 2. returns ENOENT", path);
-        else log_print(LOG_DEBUG, "get_stat(%s): 2. returns 0", path);
-        return stbuf->st_mode == 0 ? -ENOENT : 0;
-    }
-
-    log_print(LOG_DEBUG, "Missed updated cache: %s", path);
-
-    // If it's still not found, return that it doesn't exist.
-    memset(stbuf, 0, sizeof(struct stat));
-    log_print(LOG_DEBUG, "get_stat(%s): 3. returns ENOENT", path);
-    return -ENOENT;
+    return get_stat_from_cache(path, stbuf, true);
 }
 
 static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
@@ -714,7 +731,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
 
     log_print(LOG_INFO, "CALLBACK: dav_getattr(%s)", path);
     ret = common_getattr(path, stbuf, NULL);
-    log_print(LOG_DEBUG, "Done: dav_getattr(%s)", path);
+    log_print(LOG_DEBUG, "Done: dav_getattr(%s): ret=%d", path, ret);
 
     return ret;
 }

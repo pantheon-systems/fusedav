@@ -32,6 +32,7 @@
 #include <curl/curl.h>
 
 #include "log.h"
+#include "util.h"
 #include "session.h"
 #include "fusedav.h"
 
@@ -78,10 +79,15 @@ static void set_bases(const char *url) {
         base_pos += addition;
         base[base_pos] = '/';
     }
+
+    // Keep the slash as the base directory if there's nothing else.
+    if (base_pos == 1)
+        base_pos = 1;
+
     base[base_pos] = '\0';
 
     // @TODO: Investigate. This seems to be necessary, but I don't think it should be.
-    if (base[base_pos - 1] == '/')
+    if (base[base_pos - 1] == '/' && base_pos > 1)
         base[base_pos - 1] = '\0';
 
     // Assemble the base host.
@@ -144,9 +150,9 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
             log_print(LOG_WARNING, "Remapping deprecated certificate path: %s", client_certificate);
             strncpy(client_certificate + strlen(client_certificate) - 4, ".pem", 4);
         }
-    }
 
-    log_print(LOG_INFO, "Using client certificate at path: %s", client_certificate);
+        log_print(LOG_INFO, "Using client certificate at path: %s", client_certificate);
+    }
 
     return 0;
 }
@@ -167,6 +173,21 @@ static void session_destroy(void *s) {
 static void session_tsd_key_init(void) {
     log_print(LOG_DEBUG, "session_tsd_key_init()");
     pthread_key_create(&session_tsd_key, session_destroy);
+}
+
+static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
+    if (type == CURLINFO_TEXT) {
+        char *msg = malloc(size + 1);
+        strncpy(msg, data, size);
+        msg[size] = '\0';
+        if (msg[size - 1] == '\n')
+            msg[size - 1] = '\0';
+        if (msg != NULL) {
+            log_print(LOG_DEBUG, "cURL: %s", msg);
+        }
+        free(msg);
+    }
+    return 0;
 }
 
 CURL *session_get_handle(void) {
@@ -191,13 +212,15 @@ CURL *session_request_init(const char *path) {
     session = session_get_handle();
 
     curl_easy_reset(session);
+    curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
+    curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
 
     asprintf(&full_url, "%s%s", get_base_host(), path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
     log_print(LOG_INFO, "Initializing request to URL: %s", full_url);
     free(full_url);
 
-    curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
+    //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
     if (ca_certificate != NULL)
         curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);

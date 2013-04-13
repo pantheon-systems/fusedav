@@ -788,20 +788,18 @@ static int put_return_etag(const char *path, int fd, char *etag) {
 
     res = curl_easy_perform(session);
     if (res != CURLE_OK) {
-        log_print(LOG_WARNING, "put_return_etag: curl_easy_perform returns error (%d:%s: fd=%d)", ret, curl_easy_strerror(res), fd);
+        log_print(LOG_WARNING, "put_return_etag: curl_easy_perform returns error (%d:%s: fd=%d)", res, curl_easy_strerror(res), fd);
     }
     else {
         log_print(LOG_INFO, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
-        ret = 0;
-    }
 
-    // Ensure that it's a 2xx response code.
-    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-
-    log_print(LOG_INFO, "put_return_etag: Request got HTTP status code %lu", response_code);
-
-    if (response_code < 200 || response_code >= 300) {
-        ret = -1;
+        // Ensure that it's a 2xx response code.
+        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+    
+        log_print(LOG_INFO, "put_return_etag: Request got HTTP status code %lu", response_code);    
+        if (response_code >= 200 && response_code < 300) {
+            ret = 0;
+        }
     }
 
     if (ret == 0) {
@@ -902,7 +900,7 @@ int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_fil
 
 finish:
 
-    if (pdata) free(pdata);
+    free(pdata);
 
     log_print(LOG_DEBUG, "ldb_filecache_sync: Done syncing file (%s, fd=%d).", path, sdata->fd);
 

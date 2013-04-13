@@ -204,7 +204,7 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PROPFIND");
     asprintf(&header, "Depth: %lu", depth);
     slist = curl_slist_append(slist, header);
-    slist = curl_slist_append(slist, "Content-Type: application/xml");
+    slist = curl_slist_append(slist, "Content-Type: text/xml");
     free(header);
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
@@ -217,24 +217,31 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     log_print(LOG_INFO, "About to perform PROPFIND.");
     res = curl_easy_perform(session);
 
-    // Finalize parsing.
-    if (XML_Parse(parser, NULL, 0, 1) == 0) {
-        int error_code = XML_GetErrorCode(parser);
-        log_print(LOG_WARNING, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
-    }
-
     if (res != CURLE_OK) {
         log_print(LOG_WARNING, "PROPFIND failed: %s", curl_easy_strerror(res));
         goto finish;
     }
 
     curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 207) {
+
+    if (response_code == 207) {
+        // Finalize parsing.
+        if (XML_Parse(parser, NULL, 0, 1) == 0) {
+            int error_code = XML_GetErrorCode(parser);
+            log_print(LOG_WARNING, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+        }
+    }
+    else if (response_code == 404) {
+        // Tell the callback that the item is gone.
+        memset(&state.rstate, 0, sizeof(struct response_state));
+        state.callback(state.userdata, path, state.rstate.st, 410);
+    }
+    else {
         log_print(LOG_WARNING, "PROPFIND failed with response code: %u", response_code);
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "PROPFIND succeeded on path %s", path);
+    log_print(LOG_DEBUG, "PROPFIND completed on path %s", path);
     ret = 0;
 
 finish:
