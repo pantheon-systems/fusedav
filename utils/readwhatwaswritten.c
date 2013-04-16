@@ -261,7 +261,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    if (writeread(dirname, results, do_unlink) < 0) { // dirname is, oddly enough, the name of the file
+    if (writeread(dirname, results, do_unlink, num_files) < 0) { // dirname is, oddly enough, the name of the file
         printf("Couldn't read directory.\n");
         fail = true;
     }

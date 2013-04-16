@@ -15,9 +15,9 @@ iozone = /opt/iozone/src/current/iozone
 # -g: start with files of this size (by default 64K)
 # -n: stop with files of this size (default: don't know, we never succeed past 128M)
 # For unit testing, just do the 4M size; it's generally small enough to finish quickly
-iozone-unit-flags = "-g4096 -n4096"
+iozone-unit-flags = -g4096 -n4096
 # iozone fails on large files; it sometimes succeeds at 128M, but set to 64M
-iozone-stress-flags = "-n65536"
+iozone-stress-flags = -n65536
 
 readrecursive = $(testdir)/readrecursive
 # So far, the only flag is -v for verbose, 'readrecursive-flags=-v'
@@ -36,7 +36,7 @@ run-unit-tests: run-cltest run-statcacheprune run-readrecursive run-iozone-unit 
 run-stress-tests: run-cltest run-statcacheprune run-iozone-stress run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress
 
 run-cltest:
-	$(cltest) $(cltest-iters) $(cltest-verbose)
+	$(cltest) $(cltest-flags)
 
 run-statcacheprune:
 	$(statcacheprune) $(statcacheprune-dirs) $(statcacheprune-files) $(statcacheprune-verbose)
