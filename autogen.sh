@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # This file is part of fusedav.
 #
@@ -16,44 +16,18 @@
 # along with fusedav; if not, write to the Free Software Foundation,
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 
-VERSION=1.11
+set -e
+autoreconf --force --install --symlink
 
-run_versioned() {
-    local P
-    local V
-
-    V=$(echo "$2" | sed -e 's,\.,,g')
-    
-    if [ -e "`which $1$V`" ] ; then
-        P="$1$V" 
-    else
-    if [ -e "`which $1-$2`" ] ; then
-        P="$1-$2" 
-    else
-        P="$1"
-    fi
-    fi
-
-    shift 2
-    "$P" "$@"
-}
-
-set -ex
-
-if [ "x$1" = "xam" ] ; then
-    run_versioned automake "$VERSION" -a -c --foreign
-    ./config.status
-else 
-    rm -rf autom4te.cache
-    rm -f config.cache
-
-    run_versioned aclocal "$VERSION"
-    run_versioned autoconf 2.68 -Wall
-    run_versioned autoheader 2.68
-    run_versioned automake "$VERSION" -a -c --foreign
-
-    if test "x$NOCONFIGURE" = "x"; then
-        CFLAGS="-g -O0" ./configure --sysconfdir=/etc "$@"
+if [ "x$1" = "xc" ]; then
+        ./configure CFLAGS='-g -O0' $args
         make clean
-    fi
+else
+        echo
+        echo "----------------------------------------------------------------"
+        echo "Initialized build system. For a common configuration please run:"
+        echo "----------------------------------------------------------------"
+        echo
+        echo "./configure CFLAGS='-g -O0' $args"
+        echo
 fi
