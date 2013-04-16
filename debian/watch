@@ -1,5 +1,0 @@
-version=3
-http://0pointer.de/lennart/projects/fusedav/ fusedav-(.*)\.tar\.gz
-
-version=2
-http://0pointer.de/lennart/projects/fusedav/fusedav-(.*)\.tar\.gz

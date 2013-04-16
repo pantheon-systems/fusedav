@@ -117,24 +117,5 @@ PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 PKG_CHECK_MODULES(ZLIB, [ zlib >= 1.2.5 ])
 
-# LYNX documentation generation
-AC_ARG_ENABLE(lynx,
-        AS_HELP_STRING(--disable-lynx,Turn off lynx usage for documentation generation),
-[case "${enableval}" in
-  yes) lynx=yes ;;
-  no)  lynx=no ;;
-  *) AC_MSG_ERROR(bad value ${enableval} for --disable-lynx) ;;
-esac],[lynx=yes])
-
-if test x$lynx = xyes ; then
-   AC_CHECK_PROG(have_lynx, lynx, yes, no)
-
-   if test x$have_lynx = xno ; then
-     AC_MSG_ERROR([*** Sorry, you have to install lynx or use --disable-lynx ***])
-   fi
-fi
-
-AM_CONDITIONAL([USE_LYNX], [test "x$lynx" = xyes])
-
 AC_CONFIG_FILES([src/Makefile Makefile doc/Makefile doc/README.html])
 AC_OUTPUT
