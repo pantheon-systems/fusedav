@@ -31,6 +31,11 @@
 #include <uriparser/Uri.h>
 #include <curl/curl.h>
 
+// Included to eventually use res_query() for lookups and failover.
+#include <netinet/in.h>
+#include <arpa/nameser.h>
+#include <resolv.h>
+
 #include "log.h"
 #include "util.h"
 #include "session.h"
@@ -183,7 +188,7 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
         if (msg[size - 1] == '\n')
             msg[size - 1] = '\0';
         if (msg != NULL) {
-            log_print(LOG_DEBUG, "cURL: %s", msg);
+            log_print(LOG_INFO, "cURL: %s", msg);
         }
         free(msg);
     }
