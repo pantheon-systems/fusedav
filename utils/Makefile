@@ -33,7 +33,7 @@ all: run-unit-tests run-stress-tests
 run-unit-tests: run-cltest run-statcacheprune run-readrecursive run-iozone-unit run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: run-cltest run-statcacheprune run-iozone-stress run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress
+run-stress-tests: run-cltest run-statcacheprune run-readrecursive run-iozone-stress run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress
 
 run-cltest:
 	$(cltest) $(cltest-flags)
