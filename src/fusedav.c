@@ -821,11 +821,11 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
 static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
+        int ret;
         ret = get_stat(path, stbuf);
         if (ret != 0) {
             log_print(LOG_DEBUG, "common_getattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
