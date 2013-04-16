@@ -30,10 +30,10 @@ readwhatwaswritten-flags =
 all: run-unit-tests run-stress-tests
 
 # restrict unit tests to low-resource tests
-run-unit-tests: run-cltest run-statcacheprune run-iozone-unit
+run-unit-tests: run-cltest run-statcacheprune run-readrecursive run-iozone-unit run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: run-cltest run-statcacheprune run-iozone-stress
+run-stress-tests: run-cltest run-statcacheprune run-iozone-stress run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress
 
 run-cltest:
 	$(cltest) $(cltest-iters) $(cltest-verbose)
@@ -53,8 +53,17 @@ run-readrecursive: $(readrecursive)
 $(readrecursive): $(testdir)/readrecursive.c
 	cc $< -std=c99 -g -o $@
 
-run-readwhatwaswritten: $(readwhatwaswritten)
-	$(readwhatwaswritten) $(readwhatwaswritten-flags)
+run-readwhatwaswritten-unit: $(readwhatwaswritten)
+	$(readwhatwaswritten) -f16 $(readwhatwaswritten-flags)
+
+run-readwhatwaswritten-unlink-unit: $(readwhatwaswritten)
+	$(readwhatwaswritten) -f16 $(readwhatwaswritten-flags) -u
+
+run-readwhatwaswritten-stress: $(readwhatwaswritten)
+	$(readwhatwaswritten) -f256 $(readwhatwaswritten-flags)
+
+run-readwhatwaswritten-unlink-stress: $(readwhatwaswritten)
+	$(readwhatwaswritten) -f256 $(readwhatwaswritten-flags) -u
 
 $(readwhatwaswritten): $(testdir)/readwhatwaswritten.c
 	cc $< -std=c99 -g -o $@

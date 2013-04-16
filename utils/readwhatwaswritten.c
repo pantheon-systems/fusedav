@@ -26,9 +26,10 @@ static const int FileReads = 7;
 static const int FilesizeErrors = 8;
 static const int StatErrors = 9;
 static const int OpenErrors = 10;
+static const int UnlinkErrors = 11;
 
 /* Update ResultSize after adding more entries above */
-static const int ResultSize = 11; // OpenErrors + 1;
+static const int ResultSize = 12; // UnlinkErrors + 1;
 
 static bool verbose = false;
 
@@ -54,8 +55,7 @@ static char randomchar() {
     return (char)randval;
 }
 
-static int writeread(char *basename, int results[]) {
-    const int num_files = 256;
+static int writeread(char *basename, int results[], bool do_unlink, const int num_files) {
     char wbuf[num_files][write_size];
     char rbuf[num_files][write_size];
     char filename[PATH_MAX];
@@ -75,9 +75,18 @@ static int writeread(char *basename, int results[]) {
         fd[idx] = open(filename, O_RDWR | O_CREAT, 0640);
         if (fd[idx] < 0) {
             ++results[OpenErrors];
+            v_printf("OPEN ERROR: open failed on %s : %d %s\n", filename, errno, strerror(errno));
         }
         else {
             v_printf(".");
+            /* Unlink and see if we still succeed with bare file descriptors */
+            if (do_unlink) {
+                v_printf("Unlinking %s\n", filename);
+                if (unlink(filename) < 0) {
+                    ++results[UnlinkErrors];
+                    v_printf("UNLINK ERROR: unlink failed on %s : %d %s\n", filename, errno, strerror(errno));
+                }
+            }
             bytes_written = write(fd[idx], wbuf[idx], write_size);
             if (bytes_written != write_size) {
                 ++results[WriteErrors];
@@ -90,6 +99,12 @@ static int writeread(char *basename, int results[]) {
             close(fd[idx]);
         }
     }
+
+    // If we've unlinked the file above, there's no file to open and read from here.
+    // This gives us a new, empty file to read from.
+    // So just return.
+    if (do_unlink) return 0;
+
     v_printf("\n\nread");
     for (int idx = 0; idx < num_files; idx++) {
         int bytes_read;
@@ -189,22 +204,27 @@ static int check_filesizes(char *dirname, bool rm, int results[]) {
 int main(int argc, char *argv[]) {
     char dirname[] = "readwhatwaswritten";
     int ret;
-    // char *cvalue = NULL;
+    bool do_unlink = false;
     int opt;
+    int num_files = 16; // default for unit test
     int dirsread = 0;
     int filesread = 0;
     int errors = 0;
     int results[ResultSize];
+    bool fail = false;
 
-    while ((opt = getopt (argc, argv, "vh")) != -1) {
+    while ((opt = getopt (argc, argv, "uvh")) != -1) {
         switch (opt)
         {
             case 'v':
                 verbose = true;
                 break;
-            //case 'c':
-                //cvalue = optarg;
-                //break;
+            case 'u':
+                do_unlink = true;
+                break;
+            case 'f':
+                num_files = strtol(optarg, NULL, 10);
+                break;
             case 'h':
             case '?':
             default:
@@ -241,21 +261,27 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    if (writeread(dirname, results) < 0) { // dirname is, oddly enough, the name of the file
-        printf("FAIL: Couldn't read directory.\n");
+    if (writeread(dirname, results, do_unlink) < 0) { // dirname is, oddly enough, the name of the file
+        printf("Couldn't read directory.\n");
+        fail = true;
     }
 
     if (check_filesizes(".", false, results) < 0) {
         v_printf("Failed to read directory.\n");
+        fail = true;
     }
 
     if (results[ReadErrors] > 0 || results[WriteErrors] > 0 || results[CompareErrors] > 0 ||
-        results[FilesizeErrors] > 0 || results[StatErrors] > 0) {
+        results[FilesizeErrors] > 0 || results[StatErrors] > 0 || results[UnlinkErrors] > 0) {
+        fail = true;
+    }
+    if (fail) {
         printf("FAIL: reads %d writes %d compares %d dir reads %d file reads %d "
-               "read errors %d write errors %d compare errors %d filesize errors %d stat errors %d open errors %d\n",
+               "read errors %d write errors %d compare errors %d filesize errors %d stat errors %d open errors %d "
+               "unlink errors %d\n",
                results[Reads], results[Writes], results[Compares], results[DirReads], results[FileReads],
                results[ReadErrors], results[WriteErrors], results[CompareErrors], results[FilesizeErrors],
-               results[StatErrors], results[OpenErrors]);
+               results[StatErrors], results[OpenErrors], results[UnlinkErrors]);
     }
     else {
         printf("PASS: reads %d writes %d compares %d dir reads %d file reads %d\n",
