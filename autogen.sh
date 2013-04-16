@@ -1,4 +1,4 @@
-# $Id$
+#!/bin/sh
 
 # This file is part of fusedav.
 #
@@ -16,20 +16,18 @@
 # along with fusedav; if not, write to the Free Software Foundation,
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 
-noinst_DATA = README.html README
-EXTRA_DIST = $(noinst_DATA) style.css README.html.in
+set -e
+autoreconf --force --install --symlink
 
-MAINTAINERCLEANFILES = README README.html
-CLEANFILES =
-
-if USE_LYNX
-README: README.html
-	lynx --dump $^ | sed 's,file://localhost/.*/doc/README.html,README,' > $@
-
-CLEANFILES += README
-endif
-
-tidy: README.html
-	tidy -e < README.html
-
-.PHONY: tidy
+if [ "x$1" = "xc" ]; then
+        ./configure CFLAGS='-g -O0' $args
+        make clean
+else
+        echo
+        echo "----------------------------------------------------------------"
+        echo "Initialized build system. For a common configuration please run:"
+        echo "----------------------------------------------------------------"
+        echo
+        echo "./configure CFLAGS='-g -O0' $args"
+        echo
+fi

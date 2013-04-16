@@ -36,7 +36,7 @@ int ldb_filecache_delete(ldb_filecache_t *cache, const char *path, bool unlink);
 int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info);
 ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, ne_off_t offset);
 ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, ne_off_t offset);
-int ldb_filecache_release(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info);
+int ldb_filecache_close(struct fuse_file_info *info);
 int ldb_filecache_sync(ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put);
 int ldb_filecache_truncate(struct fuse_file_info *info, ne_off_t s);
 int ldb_filecache_fd(struct fuse_file_info *info);
