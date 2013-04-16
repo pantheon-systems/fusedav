@@ -14,25 +14,12 @@
 # along with fusedav; if not, write to the Free Software Foundation,
 # Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA.
 
-EXTRA_DIST=bootstrap.sh README LICENSE
-SUBDIRS=src doc
+EXTRA_DIST=bootstrap.sh LICENSE
+SUBDIRS=src
 
-MAINTAINERCLEANFILES = README
-noinst_DATA = README LICENSE
-
-README:
-	rm -f README
-	$(MAKE) -C doc README
-	cd $(srcdir) && ln -s doc/README README
-
-homepage: all dist
-	test -d $$HOME/homepage/private
-	mkdir -p $$HOME/homepage/private/projects/fusedav
-	cp *.tar.gz $$HOME/homepage/private/projects/fusedav
-	cp doc/README.html doc/style.css $$HOME/homepage/private/projects/fusedav
-	ln -sf $$HOME/homepage/private/projects/fusedav/README.html $$HOME/homepage/private/projects/fusedav/index.html
+noinst_DATA = LICENSE
 
 distcleancheck:
 	@:
 
-.PHONY: homepage distcleancheck
+.PHONY: distcleancheck

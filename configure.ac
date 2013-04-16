@@ -117,5 +117,5 @@ PKG_CHECK_MODULES(NEON, [ neon >= 0.29 ])
 PKG_CHECK_MODULES(FUSE, [ fuse >= 2.8 ])
 PKG_CHECK_MODULES(ZLIB, [ zlib >= 1.2.5 ])
 
-AC_CONFIG_FILES([src/Makefile Makefile doc/Makefile doc/README.html])
+AC_CONFIG_FILES([src/Makefile Makefile])
 AC_OUTPUT
