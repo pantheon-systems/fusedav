@@ -280,15 +280,17 @@ static const char *path_cvt(const char *path) {
     char *r, *t;
     int l;
 
+    // Path might be null if file was unlinked but file descriptor remains open
+    // Detect here at top of function, otherwise pthread_getspecific returns bogus
+    // values
+    if (path == NULL) return NULL;
+
     pthread_once(&path_cvt_once, path_cvt_tsd_key_init);
 
     if ((r = pthread_getspecific(path_cvt_tsd_key)))
         free(r);
 
     log_print(LOG_DEBUG, "path_cvt(%s)", path ? path : "null path");
-
-    // Path might be null if file was unlinked but file descriptor remains open
-    if (path == NULL) return NULL;
 
     t = malloc((l = strlen(base_directory) + strlen(path)) + 1);
     assert(t);
@@ -819,14 +821,14 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
 static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
+        int ret;
         ret = get_stat(path, stbuf);
         if (ret != 0) {
-            log_print(LOG_DEBUG, "dav_fgetattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
+            log_print(LOG_DEBUG, "common_getattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
             return ret;
         }
         // These are taken care of by fill_stat_generic below if path is NULL
