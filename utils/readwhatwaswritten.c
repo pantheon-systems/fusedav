@@ -213,7 +213,7 @@ int main(int argc, char *argv[]) {
     int results[ResultSize];
     bool fail = false;
 
-    while ((opt = getopt (argc, argv, "uvh")) != -1) {
+    while ((opt = getopt (argc, argv, "uvhf:")) != -1) {
         switch (opt)
         {
             case 'v':
