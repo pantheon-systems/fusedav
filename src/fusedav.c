@@ -20,6 +20,8 @@
 #include <config.h>
 #endif
 
+#define LOG_DEBUGX LOG_INFO
+
 #include <signal.h>
 #include <pthread.h>
 #include <time.h>
@@ -552,6 +554,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     time_t timestamp;
     char *update_path = NULL;
     int ne_result;
+    static int jbdebug = 0;
 
     if (!(session = session_get(1))) {
         log_print(LOG_WARNING, "update_directory(%s): failed to get session", path);
@@ -564,12 +567,14 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         last_updated = stat_cache_read_updated_children(config->cache, path);
         asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
 
-        log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
+        log_print(LOG_DEBUGX, "Freshening directory data: %s", update_path);
 
         ne_result = simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result == NE_OK) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
+            log_print(LOG_DEBUGX, "JB Failed Freshen PROPFIND success on purpose");
+            needs_update = true;
         }
         else {
             log_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
@@ -588,32 +593,51 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         min_generation = stat_cache_get_local_generation();
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result != NE_OK) {
-            log_print(LOG_WARNING, "Complete PROPFIND failed on %s: %s", path, ne_get_error(session));
-            /* Here's the scenario:
-             * mkdir a/b/c/d/e/f/g
-             * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
-             * mkdir a/b/c/d/e/f/g
-             * ls a/b/c/d/e/f/g -> Operation not permitted
-             *
-             * /a/b/c/d gets made, because it didn't exist
-             * /a/b/c/d/e doesn't get made, because it's in the cache
-             * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
-             * returns a 404.
-             *
-             * Calling stat_cache_prune will fix this situation if the stat cache is in an
-             * inconsistent internal state (as in the above example). But if it is just a mismatch
-             * between cache and server, delete_parent should correct, and put the stat cache in a state
-             * where stat_cache_prune can reestablish consistency.
-             *
-             * We think we have made the fixes necessary to prevent this situation from happening.
-             * For now, don't bother making these calls. Leave this in for future reconsideration
-             * if we continue to see 404 on PROPFIND.
-             *
-             * stat_cache_delete_parent(config->cache, path);
-             * stat_cache_prune(config->cache);
-             */
-            return -ENOENT;
+            const char *errstr = ne_get_error(session);
+            log_print(LOG_WARNING, "Complete PROPFIND failed on %s: %s", path, errstr);
+            if (strstr(errstr, "404")) {
+                /* Here's the scenario:
+                 * mkdir a/b/c/d/e/f/g
+                 * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
+                 * mkdir a/b/c/d/e/f/g
+                 * ls a/b/c/d/e/f/g -> Operation not permitted
+                 *
+                 * /a/b/c/d gets made, because it didn't exist
+                 * /a/b/c/d/e doesn't get made, because it's in the cache
+                 * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
+                 * returns a 404.
+                 *
+                 * Calling stat_cache_prune will fix this situation if the stat cache is in an
+                 * inconsistent internal state (as in the above example). But if it is just a mismatch
+                 * between cache and server, delete_parent should correct, and put the stat cache in a state
+                 * where stat_cache_prune can reestablish consistency.
+                 *
+                 * We think we have made the fixes necessary to prevent this situation from happening.
+                 * For now, don't bother making these calls. Leave this in for future reconsideration
+                 * if we continue to see 404 on PROPFIND.
+                 *
+                 * stat_cache_delete_parent(config->cache, path);
+                 * stat_cache_prune(config->cache);
+                 */
+                return -ENOENT;
+            }
+            else {
+                return -EIO;
+            }
         }
+        // REMOVE THIS CODE!
+        else {
+            ++jbdebug;
+            if (jbdebug % 3 == 0) {
+                log_print(LOG_INFO, "Jerry introduced ENOENT on %s", path);
+                return -ENOENT;
+            }
+            else if (jbdebug % 7 == 0) {
+                log_print(LOG_INFO, "Jerry introduced EIO on %s", path);
+                return -EIO;
+            }
+        }
+
         stat_cache_delete_older(config->cache, path, min_generation);
     }
 
@@ -642,7 +666,7 @@ static int dav_readdir(
     // a scenario, we won't go out of our way to handle it. Exit with an error.
     if (path == NULL) {
         log_print(LOG_INFO, "CALLBACK: dav_readdir(NULL path)");
-        return -1;
+        return -ENOENT;
     }
 
     path = path_cvt(path);
@@ -658,15 +682,17 @@ static int dav_readdir(
     // First, attempt to hit the cache.
     ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, false);
     if (ret < 0) {
+        int udret;
         if (debug) {
             if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, "DIR-CACHE-TOO-OLD: %s", path);
             else log_print(LOG_DEBUG, "DIR-CACHE-MISS: %s", path);
         }
 
         log_print(LOG_DEBUG, "Updating directory: %s", path);
-        if (update_directory(path, (ret == -STAT_CACHE_OLD_DATA)) != 0) {
-            log_print(LOG_ERR, "Failed to update directory: %s", path);
-            return -1;
+        udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
+        if (udret < 0) {
+            log_print(LOG_ERR, "Failed to update directory: %s : %d %s", path, -udret, strerror(-udret));
+            return udret;
         }
 
         // Output the new data, skipping any cache freshness checks
@@ -715,7 +741,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     memset(stbuf, 0, sizeof(struct stat));
 
-    log_print(LOG_DEBUG, "get_stat(%s, stbuf)", path);
+    log_print(LOG_DEBUGX, "get_stat(%s, stbuf)", path);
 
     if (!(session = session_get(1))) {
         memset(stbuf, 0, sizeof(struct stat));
@@ -723,7 +749,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return -EIO;
     }
 
-    log_print(LOG_DEBUG, "Checking if path %s matches base directory: %s", path, base_directory);
+    log_print(LOG_DEBUGX, "Checking if path %s matches base directory: %s", path, base_directory);
     is_base_directory = (strcmp(path, base_directory) == 0);
 
     // If it's the root directory and all attributes are specified,
@@ -743,25 +769,25 @@ static int get_stat(const char *path, struct stat *stbuf) {
         *stbuf = response->st;
         free(response);
         //print_stat(stbuf, "get_stat from cache");
-        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
-        else log_print(LOG_DEBUG, "get_stat(%s): 1. returns 0", path);
+        if (stbuf->st_mode == 0) log_print(LOG_DEBUGX, "get_stat(%s): 1. returns ENOENT", path);
+        else log_print(LOG_DEBUGX, "get_stat(%s): 1. returns 0", path);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
-    log_print(LOG_DEBUG, "STAT-CACHE-MISS");
+    log_print(LOG_DEBUGX, "STAT-CACHE-MISS");
 
     // If it's the root directory, just do a single PROPFIND.
     if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
-        log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
+        log_print(LOG_DEBUGX, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
         // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
             stat_cache_delete(config->cache, path);
             log_print(LOG_NOTICE, "PROPFIND failed: %s", ne_get_error(session));
             memset(stbuf, 0, sizeof(struct stat));
-            log_print(LOG_DEBUG, "get_stat(%s): 1. returns ENOENT", path);
+            log_print(LOG_DEBUGX, "get_stat(%s): 1. returns ENOENT", path);
             return -ENOENT;
         }
-        log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", base_directory);
+        log_print(LOG_DEBUGX, "Zero-depth PROPFIND succeeded: %s", base_directory);
         return 0;
     }
 
@@ -772,50 +798,53 @@ static int get_stat(const char *path, struct stat *stbuf) {
     nepp = ne_path_parent(path);
     parent_path = strip_trailing_slash(nepp, &is_dir);
 
-    log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
+    log_print(LOG_DEBUGX, "Getting parent path entry: %s", parent_path);
     parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path);
-    log_print(LOG_DEBUG, "Parent was updated: %s %lu", parent_path, parent_children_update_ts);
+    log_print(LOG_DEBUGX, "Parent was updated: %s %lu", parent_path, parent_children_update_ts);
 
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
          ret = update_directory(parent_path, (parent_children_update_ts > 0));
+         if (ret < 0) {
 
-         // If the parent is not on the server, treat the child as not available,
-         // regardless of what might be in stat_cache. This likely will prevent
-         // the 404's we see when trying to open a file
-         if (ret == -ENOENT) {
-            log_print(LOG_NOTICE, "parent returns ENOENT: %s", parent_path);
+             // If the parent is not on the server, treat the child as not available,
+             // regardless of what might be in stat_cache. This likely will prevent
+             // the 404's we see when trying to open a file
+             if (ret == -ENOENT) {
+                // log_print(LOG_NOTICE, "parent returns ENOENT for child: %s", path);
+                log_print(LOG_INFO, "JB. parent returns ENOENT for child: %s", path);
 
-            stat_cache_delete(config->cache, path);
-            stat_cache_delete_parent(config->cache, path);
-            stat_cache_prune(config->cache);
+                // @TODO Don't delete the root "files" directory
+                stat_cache_delete(config->cache, path);
+                stat_cache_delete_parent(config->cache, path);
+                stat_cache_prune(config->cache);
+
+            }
 
             // Need some cleanup before returning ...
             free(nepp);
             memset(stbuf, 0, sizeof(struct stat));
-
             return ret;
         }
-        // REVIEW: If ret < 0 but not -ENOENT, what should we do?
     }
 
     free(nepp);
 
     // Try again to hit the file in the stat cache.
     if ((response = stat_cache_value_get(config->cache, path, true))) {
-        log_print(LOG_DEBUG, "Hit updated cache: %s", path);
+        log_print(LOG_DEBUGX, "Hit updated cache: %s", path);
         *stbuf = response->st;
         free(response);
-        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s): 2. returns ENOENT", path);
-        else log_print(LOG_DEBUG, "get_stat(%s): 2. returns 0", path);
+        if (stbuf->st_mode == 0) log_print(LOG_DEBUGX, "get_stat(%s): 2. returns ENOENT", path);
+        else log_print(LOG_DEBUGX, "get_stat(%s): 2. returns 0", path);
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
-    log_print(LOG_DEBUG, "Missed updated cache: %s", path);
+    log_print(LOG_DEBUGX, "Missed updated cache: %s", path);
 
     // If it's still not found, return that it doesn't exist.
     memset(stbuf, 0, sizeof(struct stat));
-    log_print(LOG_DEBUG, "get_stat(%s): 3. returns ENOENT", path);
+    log_print(LOG_DEBUGX, "get_stat(%s): 3. returns ENOENT", path);
     return -ENOENT;
 }
 
