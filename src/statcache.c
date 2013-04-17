@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -700,7 +700,6 @@ int stat_cache_prune(stat_cache_t *cache) {
     struct leveldb_iterator_t *iter;
     const char *iterkey;
     const char *key;
-    char *basepath = NULL;
     char path[PATH_MAX];
     char *slash;
     const struct stat_cache_value *itervalue;
@@ -880,6 +879,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     leveldb_iter_seek(iter, "updated_children:", strlen("updated_children:") + 1);
 
     while (leveldb_iter_valid(iter)) {
+        const char *basepath = NULL;
         iterkey = leveldb_iter_key(iter, &klen);
 
         // If we pass the last key which begins with updated_children:, we're done
