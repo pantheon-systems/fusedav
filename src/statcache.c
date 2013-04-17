@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -460,6 +460,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     if ((p = ne_path_parent(path))) {
         int l = strlen(p);
 
+        log_print(LOG_DEBUG, "stat_cache_delete_parent: deleting parent %s", p);
         if (strcmp(p, "/") && l) {
             if (p[l-1] == '/')
                 p[l-1] = 0;
@@ -470,6 +471,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
         free(p);
     }
     else {
+        log_print(LOG_DEBUG, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
         stat_cache_delete(cache, path);
         stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1);
     }
@@ -698,7 +700,6 @@ int stat_cache_prune(stat_cache_t *cache) {
     struct leveldb_iterator_t *iter;
     const char *iterkey;
     const char *key;
-    char *basepath = NULL;
     char path[PATH_MAX];
     char *slash;
     const struct stat_cache_value *itervalue;
@@ -878,6 +879,7 @@ int stat_cache_prune(stat_cache_t *cache) {
     leveldb_iter_seek(iter, "updated_children:", strlen("updated_children:") + 1);
 
     while (leveldb_iter_valid(iter)) {
+        const char *basepath = NULL;
         iterkey = leveldb_iter_key(iter, &klen);
 
         // If we pass the last key which begins with updated_children:, we're done

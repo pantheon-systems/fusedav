@@ -19,3 +19,6 @@ config.h.in
 *~
 *.pyc
 _trial_temp
+/utils/readrecursive
+/utils/readwhatwaswritten
+
