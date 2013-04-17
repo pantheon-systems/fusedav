@@ -460,6 +460,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     if ((p = ne_path_parent(path))) {
         int l = strlen(p);
 
+        log_print(LOG_DEBUG, "stat_cache_delete_parent: deleting parent %s", p);
         if (strcmp(p, "/") && l) {
             if (p[l-1] == '/')
                 p[l-1] = 0;
@@ -470,6 +471,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
         free(p);
     }
     else {
+        log_print(LOG_DEBUG, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
         stat_cache_delete(cache, path);
         stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1);
     }

@@ -588,32 +588,39 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         min_generation = stat_cache_get_local_generation();
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
         if (ne_result != NE_OK) {
-            log_print(LOG_WARNING, "Complete PROPFIND failed on %s: %s", path, ne_get_error(session));
-            /* Here's the scenario:
-             * mkdir a/b/c/d/e/f/g
-             * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
-             * mkdir a/b/c/d/e/f/g
-             * ls a/b/c/d/e/f/g -> Operation not permitted
-             *
-             * /a/b/c/d gets made, because it didn't exist
-             * /a/b/c/d/e doesn't get made, because it's in the cache
-             * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
-             * returns a 404.
-             *
-             * Calling stat_cache_prune will fix this situation if the stat cache is in an
-             * inconsistent internal state (as in the above example). But if it is just a mismatch
-             * between cache and server, delete_parent should correct, and put the stat cache in a state
-             * where stat_cache_prune can reestablish consistency.
-             *
-             * We think we have made the fixes necessary to prevent this situation from happening.
-             * For now, don't bother making these calls. Leave this in for future reconsideration
-             * if we continue to see 404 on PROPFIND.
-             *
-             * stat_cache_delete_parent(config->cache, path);
-             * stat_cache_prune(config->cache);
-             */
-            return -ENOENT;
+            const char *errstr = ne_get_error(session);
+            log_print(LOG_WARNING, "Complete PROPFIND failed on %s: %s", path, errstr);
+            if (strstr(errstr, "404")) {
+                /* Here's the scenario:
+                 * mkdir a/b/c/d/e/f/g
+                 * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
+                 * mkdir a/b/c/d/e/f/g
+                 * ls a/b/c/d/e/f/g -> Operation not permitted
+                 *
+                 * /a/b/c/d gets made, because it didn't exist
+                 * /a/b/c/d/e doesn't get made, because it's in the cache
+                 * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
+                 * returns a 404.
+                 *
+                 * Calling stat_cache_prune will fix this situation if the stat cache is in an
+                 * inconsistent internal state (as in the above example). But if it is just a mismatch
+                 * between cache and server, delete_parent should correct, and put the stat cache in a state
+                 * where stat_cache_prune can reestablish consistency.
+                 *
+                 * We think we have made the fixes necessary to prevent this situation from happening.
+                 * For now, don't bother making these calls. Leave this in for future reconsideration
+                 * if we continue to see 404 on PROPFIND.
+                 *
+                 * stat_cache_delete_parent(config->cache, path);
+                 * stat_cache_prune(config->cache);
+                 */
+                return -ENOENT;
+            }
+            else {
+                return -EIO;
+            }
         }
+
         stat_cache_delete_older(config->cache, path, min_generation);
     }
 
@@ -642,7 +649,7 @@ static int dav_readdir(
     // a scenario, we won't go out of our way to handle it. Exit with an error.
     if (path == NULL) {
         log_print(LOG_INFO, "CALLBACK: dav_readdir(NULL path)");
-        return -1;
+        return -ENOENT;
     }
 
     path = path_cvt(path);
@@ -658,15 +665,17 @@ static int dav_readdir(
     // First, attempt to hit the cache.
     ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, false);
     if (ret < 0) {
+        int udret;
         if (debug) {
             if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, "DIR-CACHE-TOO-OLD: %s", path);
             else log_print(LOG_DEBUG, "DIR-CACHE-MISS: %s", path);
         }
 
         log_print(LOG_DEBUG, "Updating directory: %s", path);
-        if (update_directory(path, (ret == -STAT_CACHE_OLD_DATA)) != 0) {
-            log_print(LOG_ERR, "Failed to update directory: %s", path);
-            return -1;
+        udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
+        if (udret < 0) {
+            log_print(LOG_ERR, "Failed to update directory: %s : %d %s", path, -udret, strerror(-udret));
+            return udret;
         }
 
         // Output the new data, skipping any cache freshness checks
@@ -779,24 +788,26 @@ static int get_stat(const char *path, struct stat *stbuf) {
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
          ret = update_directory(parent_path, (parent_children_update_ts > 0));
+         if (ret < 0) {
 
-         // If the parent is not on the server, treat the child as not available,
-         // regardless of what might be in stat_cache. This likely will prevent
-         // the 404's we see when trying to open a file
-         if (ret == -ENOENT) {
-            log_print(LOG_NOTICE, "parent returns ENOENT: %s", parent_path);
+             // If the parent is not on the server, treat the child as not available,
+             // regardless of what might be in stat_cache. This likely will prevent
+             // the 404's we see when trying to open a file
+             if (ret == -ENOENT) {
+                log_print(LOG_NOTICE, "Parent returns ENOENT for child: %s", path);
 
-            stat_cache_delete(config->cache, path);
-            stat_cache_delete_parent(config->cache, path);
-            stat_cache_prune(config->cache);
+                // @TODO Don't delete the root "files" directory
+                stat_cache_delete(config->cache, path);
+                stat_cache_delete_parent(config->cache, path);
+                stat_cache_prune(config->cache);
+
+            }
 
             // Need some cleanup before returning ...
             free(nepp);
             memset(stbuf, 0, sizeof(struct stat));
-
             return ret;
         }
-        // REVIEW: If ret < 0 but not -ENOENT, what should we do?
     }
 
     free(nepp);
