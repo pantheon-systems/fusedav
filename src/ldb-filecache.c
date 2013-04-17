@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -1076,10 +1076,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time) {
 void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool first) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
-    const struct ldb_filecache_pdata *pdata;
     size_t klen;
-    const char *iterkey;
-    const char *path;
     char fname[PATH_MAX];
     time_t starttime;
     int ret;
@@ -1102,6 +1099,9 @@ void ldb_filecache_cleanup(ldb_filecache_t *cache, const char *cache_path, bool 
     starttime = time(NULL);
 
     while (leveldb_iter_valid(iter)) {
+        const struct ldb_filecache_pdata *pdata;
+        const char *iterkey;
+        const char *path;
         // We need the key to get the path in case we need to remove the entry from the filecache
         iterkey = leveldb_iter_key(iter, &klen);
         path = key2path(iterkey);
