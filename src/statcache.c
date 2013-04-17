@@ -433,8 +433,7 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
 
     key = path2key(path, false);
 
-    //log_print(LOG_DEBUG, "stat_cache_delete: %s", key);
-    log_print(LOG_INFO, "stat_cache_delete: %s", key);
+    log_print(LOG_DEBUG, "stat_cache_delete: %s", key);
 
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
