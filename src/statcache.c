@@ -456,11 +456,11 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
 
     BUMP(del_parent);
 
-    log_print(LOG_INFO, "stat_cache_delete_parent: %s", path);
+    log_print(LOG_DEBUG, "stat_cache_delete_parent: %s", path);
     if ((p = ne_path_parent(path))) {
         int l = strlen(p);
 
-        log_print(LOG_INFO, "stat_cache_delete_parent: deleting parent %s", p);
+        log_print(LOG_DEBUG, "stat_cache_delete_parent: deleting parent %s", p);
         if (strcmp(p, "/") && l) {
             if (p[l-1] == '/')
                 p[l-1] = 0;
@@ -471,7 +471,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
         free(p);
     }
     else {
-        log_print(LOG_INFO, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
+        log_print(LOG_DEBUG, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
         stat_cache_delete(cache, path);
         stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1);
     }
@@ -844,8 +844,7 @@ int stat_cache_prune(stat_cache_t *cache) {
                 slash[0] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
-                    // log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter\'%s\'", path);
-                    log_print(LOG_INFO, "stat_cache_prune: exists in bloom filter\'%s\'", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter\'%s\'", path);
                     // If the parent is in the filter, and this child is a directory, add it to
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
@@ -864,8 +863,7 @@ int stat_cache_prune(stat_cache_t *cache) {
                     ++deleted_entries;
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
-                    // log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\'", path);
-                    log_print(LOG_INFO, "stat_cache_prune: deleting \'%s\'", path);
+                    log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path);
                 }
             }
