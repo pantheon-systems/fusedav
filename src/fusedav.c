@@ -794,7 +794,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
              // regardless of what might be in stat_cache. This likely will prevent
              // the 404's we see when trying to open a file
              if (ret == -ENOENT) {
-                log_print(LOG_NOTICE, "parent returns ENOENT for child: %s", path);
+                log_print(LOG_NOTICE, "Parent returns ENOENT for child: %s", path);
 
                 // @TODO Don't delete the root "files" directory
                 stat_cache_delete(config->cache, path);
