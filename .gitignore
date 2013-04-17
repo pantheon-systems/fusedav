@@ -17,3 +17,5 @@ config.h.in
 /src/Makefile
 /stamp-h1
 *~
+*.pyc
+_trial_temp
