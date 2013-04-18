@@ -572,7 +572,12 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
             needs_update = false;
         }
         else {
-            log_print(LOG_DEBUG, "Freshen PROPFIND failed: %s", ne_get_error(session));
+            const char *errstr = ne_get_error(session);
+            log_print(LOG_NOTICE, "Freshen PROPFIND failed on %s: %s", path, errstr);
+            // Only do a complete PROPFIND on a 412 Precondition Failed Timestamp too old
+            if (strstr(errstr, "412") == NULL) {
+                needs_update = false;
+            }
         }
 
         free(update_path);
@@ -583,7 +588,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     if (needs_update) {
         unsigned int min_generation;
 
-        log_print(LOG_DEBUG, "Replacing directory data: %s", path);
+        log_print(LOG_NOTICE, "Doing complete PROPFIND: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
         ne_result = simple_propfind_with_redirect(session, path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
