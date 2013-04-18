@@ -172,7 +172,7 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     struct curl_slist *slist = NULL;
     CURLcode res;
     char *header = NULL;
-    unsigned long response_code;
+    long response_code;
 
     // Local variables for Expat and parsing.
     XML_Parser parser;
