@@ -595,6 +595,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     if (needs_update) {
         unsigned int min_generation;
 
+        // Up log level to NOTICE temporarily to get reports in the logs
         log_print(LOG_NOTICE, "Doing complete PROPFIND: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
