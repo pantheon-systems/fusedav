@@ -426,12 +426,17 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
 
         propfind_result = simple_propfind_with_redirect(update_path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
+        free(update_path);
         if (propfind_result == 0) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
         }
-
-        free(update_path);
+        else if (propfind_result == -ESTALE) {
+            log_print(LOG_DEBUG, "Freshen PROPFIND failed because of staleness.");
+        }
+        else {
+            return -EIO;
+        }
     }
 
     // If we had *no data* or freshening failed, rebuild the cache
@@ -439,7 +444,8 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     if (needs_update) {
         unsigned int min_generation;
 
-        log_print(LOG_DEBUG, "Replacing directory data: %s", path);
+        // Up log level to NOTICE temporarily to get reports in the logs
+        log_print(LOG_NOTICE, "Doing complete PROPFIND: %s", path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);

@@ -25,6 +25,7 @@
 #include <curl/curl.h>
 #include <time.h>
 #include <unistd.h> // For getuid/getgid.
+#include <errno.h>
 
 #include "log.h"
 #include "props.h"
@@ -228,6 +229,10 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
         // Tell the callback that the item is gone.
         memset(&state.rstate, 0, sizeof(struct response_state));
         state.callback(state.userdata, path, state.rstate.st, 410);
+    }
+    else if (response_code == 412) {
+        ret = -ESTALE;
+        goto finish;
     }
     else {
         log_print(LOG_WARNING, "PROPFIND failed with response code: %u", response_code);
