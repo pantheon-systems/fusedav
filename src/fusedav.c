@@ -688,7 +688,7 @@ static int dav_readdir(
         log_print(LOG_DEBUG, "Updating directory: %s", path);
         udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
         if (udret < 0) {
-            log_print(LOG_WARNING, "Failed to update directory: %s : %d %s", path, -udret, strerror(-udret));
+            log_print(LOG_WARNING, "Failed to update directory: %s : %d %s (grace=%d)", path, -udret, strerror(-udret), config->grace);
             if (!config->grace)
                 return udret;
         }
@@ -824,6 +824,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
             }
 
             if (!config->grace) {
+                log_print(LOG_ERR, "No grace enabled. Failing.");
                 // Need some cleanup before returning ...
                 free(nepp);
                 memset(stbuf, 0, sizeof(struct stat));
@@ -2329,9 +2330,6 @@ int main(int argc, char *argv[]) {
     memset(&stats, 0, sizeof(struct statistics));
     memset(&config, 0, sizeof(config));
 
-    // @TODO: Make configurable.
-    config.grace = true;
-
     signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
 
@@ -2368,6 +2366,9 @@ int main(int argc, char *argv[]) {
     if (fail) {
         goto finish;
     }
+
+    // @TODO: Make configurable.
+    config.grace = true;
 
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);

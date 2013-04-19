@@ -578,9 +578,11 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
             }
         }
         else if (grace && ret == -EBADFD) {
+            log_print(LOG_WARNING, "ldb_filecache_open: Falling back with grace mode.");
             free(pdata);
             pdata = NULL;
             skip_validation = true;
+            ret = -EAGAIN;
         }
         else {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
