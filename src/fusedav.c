@@ -806,10 +806,10 @@ static int get_stat(const char *path, struct stat *stbuf) {
          ret = update_directory(parent_path, (parent_children_update_ts > 0));
          if (ret < 0) {
 
-             // If the parent is not on the server, treat the child as not available,
-             // regardless of what might be in stat_cache. This likely will prevent
-             // the 404's we see when trying to open a file
-             if (ret == -ENOENT) {
+            // If the parent is not on the server, treat the child as not available,
+            // regardless of what might be in stat_cache. This likely will prevent
+            // the 404's we see when trying to open a file
+            if (ret == -ENOENT) {
                 log_print(LOG_NOTICE, "Parent returns ENOENT for child: %s", path);
 
                 stat_cache_delete(config->cache, path);
@@ -823,8 +823,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
                 stat_cache_prune(config->cache);
             }
 
-            if (!config->grace) {
-                log_print(LOG_ERR, "No grace enabled. Failing.");
+            if (!config->grace || ret == -ENOENT) {
+                log_print(LOG_WARNING, "No grace enabled or -ENOENT. Returning with no data.");
                 // Need some cleanup before returning ...
                 free(nepp);
                 memset(stbuf, 0, sizeof(struct stat));
