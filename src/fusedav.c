@@ -573,6 +573,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         }
         else {
             const char *errstr = ne_get_error(session);
+            // Up log level to NOTICE temporarily to get reports in the logs
             log_print(LOG_NOTICE, "Freshen PROPFIND failed on %s: %s", path, errstr);
             // Only do a complete PROPFIND on a 412 Precondition Failed Timestamp too old
             if (strstr(errstr, "412")) {
