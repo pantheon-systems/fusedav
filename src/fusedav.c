@@ -567,6 +567,8 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
 
         ne_result = simple_propfind_with_redirect(session, update_path, NE_DEPTH_ONE, query_properties, getdir_propfind_callback, NULL);
+        free(update_path);
+
         if (ne_result == NE_OK) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
@@ -586,8 +588,6 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
                 return -EIO;
             }
         }
-
-        free(update_path);
     }
 
     // If we had *no data* or freshening failed, rebuild the cache
