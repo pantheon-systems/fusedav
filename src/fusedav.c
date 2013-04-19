@@ -154,6 +154,7 @@ struct fusedav_config {
     bool refresh_dir_for_file_stat;
     bool ignorexattr;
     bool singlethread;
+    bool grace;
 };
 
 enum {
@@ -687,12 +688,13 @@ static int dav_readdir(
         log_print(LOG_DEBUG, "Updating directory: %s", path);
         udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
         if (udret < 0) {
-            log_print(LOG_ERR, "Failed to update directory: %s : %d %s", path, -udret, strerror(-udret));
-            return udret;
+            log_print(LOG_WARNING, "Failed to update directory: %s : %d %s", path, -udret, strerror(-udret));
+            if (!config->grace)
+                return udret;
         }
 
         // Output the new data, skipping any cache freshness checks
-        // (which should pass, anyway).
+        // (which should pass, anyway, unless it's grace mode).
         stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
     }
 
@@ -773,7 +775,8 @@ static int get_stat(const char *path, struct stat *stbuf) {
     log_print(LOG_DEBUG, "STAT-CACHE-MISS");
 
     // If it's the root directory, just do a single PROPFIND.
-    if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
+    if (!config->refresh_dir_for_file_stat || is_base_directory) {
+        // @TODO: Support grace here, eventually. This is dead code for Pantheon, though.
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on base directory: %s", base_directory);
         // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(session, path, NE_DEPTH_ZERO, query_properties, getattr_propfind_callback, stbuf) != NE_OK) {
@@ -820,10 +823,13 @@ static int get_stat(const char *path, struct stat *stbuf) {
                 stat_cache_prune(config->cache);
             }
 
-            // Need some cleanup before returning ...
-            free(nepp);
-            memset(stbuf, 0, sizeof(struct stat));
-            return ret;
+            if (!config->grace) {
+                // Need some cleanup before returning ...
+                free(nepp);
+                memset(stbuf, 0, sizeof(struct stat));
+                return ret;
+            }
+            log_print(LOG_WARNING, "Updating data failed. Falling back.");
         }
     }
 
@@ -1292,7 +1298,7 @@ static int do_open(const char *path, struct fuse_file_info *info) {
 
     assert(info);
 
-    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info)) < 0) {
+    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, config->grace)) < 0) {
         log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
         return ret;
     }
@@ -2322,6 +2328,9 @@ int main(int argc, char *argv[]) {
     // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
     memset(&config, 0, sizeof(config));
+
+    // @TODO: Make configurable.
+    config.grace = true;
 
     signal(SIGSEGV, sigsegv_handler);
     signal(SIGUSR2, sigusr2_handler);
