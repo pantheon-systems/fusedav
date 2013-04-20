@@ -765,6 +765,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
+    bool skip_freshness_check = false;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -790,8 +791,11 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return 0;
     }
 
+    if (config->grace && use_saint_mode())
+        skip_freshness_check = true;
+
     // Check if we can directly hit this entry in the stat cache.
-    response = stat_cache_value_get(config->cache, path, false);
+    response = stat_cache_value_get(config->cache, path, skip_freshness_check);
     if (response != NULL) {
         *stbuf = response->st;
         free(response);
