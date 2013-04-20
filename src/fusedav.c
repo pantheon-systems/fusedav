@@ -128,6 +128,29 @@ static struct statistics stats;
 #define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
 
+#define SAINT_MODE_DURATION 10
+
+pthread_mutex_t last_failure_mutex = PTHREAD_MUTEX_INITIALIZER;
+static time_t last_failure = 0;
+
+static bool use_saint_mode(void) {
+    struct timespec now;
+    bool use_saint;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    pthread_mutex_lock(&last_failure_mutex);
+    use_saint = (now.tv_sec - SAINT_MODE_DURATION < last_failure);
+    pthread_mutex_unlock(&last_failure_mutex);
+    return use_saint;
+}
+
+static void set_saint_mode(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    pthread_mutex_lock(&last_failure_mutex);
+    last_failure = now.tv_sec;
+    pthread_mutex_unlock(&last_failure_mutex);
+}
+
 // Access with struct fusedav_config *config = fuse_get_context()->private_data;
 struct fusedav_config {
     char *uri;
@@ -654,6 +677,7 @@ static int dav_readdir(
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct fill_info f;
     int ret;
+    bool ignore_freshness = false;
 
     BUMP(readdir);
 
@@ -676,8 +700,11 @@ static int dav_readdir(
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
+    if (config->grace && use_saint_mode())
+        ignore_freshness = true;
+
     // First, attempt to hit the cache.
-    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, false);
+    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
     if (ret < 0) {
         int udret;
         if (debug) {
@@ -691,6 +718,7 @@ static int dav_readdir(
             log_print(LOG_WARNING, "Failed to update directory: %s : %d %s (grace=%d)", path, -udret, strerror(-udret), config->grace);
             if (!config->grace)
                 return udret;
+            set_saint_mode();
         }
 
         // Output the new data, skipping any cache freshness checks
@@ -831,6 +859,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
                 return ret;
             }
             log_print(LOG_WARNING, "Updating data failed. Falling back.");
+            set_saint_mode();
         }
     }
 
@@ -1296,13 +1325,24 @@ static int do_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *value;
     int ret = 0;
+    bool used_grace;
+    unsigned grace_level = 0;
 
     assert(info);
 
-    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, config->grace)) < 0) {
+    if (config->grace) {
+        if (use_saint_mode())
+            grace_level = 2;
+        else
+            grace_level = 1;
+    }
+    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, grace_level, &used_grace)) < 0) {
         log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
         return ret;
     }
+
+    if (used_grace)
+        set_saint_mode();
 
     /* If we create a new file, fill in a stat and put it in the stat cache.
      * If we aren't creating a new file, perhaps we should be updating some
