@@ -588,7 +588,8 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
             free(pdata);
             pdata = NULL;
             skip_validation = true;
-            ret = -EAGAIN;
+            if (retries < max_retries)
+                ret = -EAGAIN;
             if (used_grace != NULL)
                 *used_grace = true;
         }
