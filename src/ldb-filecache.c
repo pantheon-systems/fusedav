@@ -515,7 +515,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
 }
 
 // top-level open call
-int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, bool grace) {
+int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, unsigned grace_level, bool *used_grace) {
     struct ldb_filecache_pdata *pdata = NULL;
     struct ldb_filecache_sdata *sdata = NULL;
     int ret = -EBADF;
@@ -525,6 +525,12 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
     bool skip_validation = false;
 
     BUMP(open);
+
+    if (used_grace != NULL)
+        *used_grace = false;
+
+    if (grace_level >= 2)
+        skip_validation = true;
 
     log_print(LOG_DEBUG, "ldb_filecache_open: %s", path);
 
@@ -577,12 +583,14 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
                 pdata = NULL;
             }
         }
-        else if (grace && ret == -EBADFD) {
+        else if (grace_level >= 1 && ret == -EBADFD) {
             log_print(LOG_WARNING, "ldb_filecache_open: Falling back with grace mode.");
             free(pdata);
             pdata = NULL;
             skip_validation = true;
             ret = -EAGAIN;
+            if (used_grace != NULL)
+                *used_grace = true;
         }
         else {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);
