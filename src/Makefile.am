@@ -24,4 +24,4 @@ fusedav_SOURCES=fusedav.c fusedav.h \
 				bloom-filter.c bloom-filter.h
 
 fusedav_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS) $(FUSE_CFLAGS) $(YAML_CFLAGS) $(LEVELDB_CFLAGS) $(SYSTEMD_CFLAGS) $(ZLIB_CFLAGS) -DFUSE_USE_VERSION=26
-fusedav_LDADD = -lpthread -ljemalloc $(NEON_LIBS) $(FUSE_LIBS) $(YAML_LIBS) $(LEVELDB_LIBS) $(SYSTEMD_LIBS) $(ZLIB_LIBS)
+fusedav_LDADD = -lpthread -ljemalloc -lrt $(NEON_LIBS) $(FUSE_LIBS) $(YAML_LIBS) $(LEVELDB_LIBS) $(SYSTEMD_LIBS) $(ZLIB_LIBS)
