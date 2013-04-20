@@ -2413,7 +2413,7 @@ int main(int argc, char *argv[]) {
     }
 
     // @TODO: Make configurable.
-    config.grace = false;
+    config.grace = true;
 
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);
