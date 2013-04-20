@@ -328,7 +328,7 @@ static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *u
 // Get a file descriptor pointing to the latest full copy of the file.
 static int ldb_get_fresh_fd(ldb_filecache_t *cache,
         const char *cache_path, const char *path, struct ldb_filecache_sdata *sdata,
-        struct ldb_filecache_pdata **pdatap, int flags) {
+        struct ldb_filecache_pdata **pdatap, int flags, bool skip_validation) {
     CURL *session;
     int ret = -EBADFD;
     long code;
@@ -352,7 +352,7 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
     // For O_TRUNC, we just want to open a truncated cache file and not bother getting a copy from
     // the server.
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
-    if (pdata != NULL && ( (flags & O_TRUNC) || (pdata->last_server_update == 0 || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
+    if (pdata != NULL && ( (flags & O_TRUNC) || (pdata->last_server_update == 0 || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL || skip_validation))) {
         log_print(LOG_DEBUG, "ldb_get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
 
         // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
@@ -557,15 +557,22 @@ static int ldb_get_fresh_fd(ldb_filecache_t *cache,
 }
 
 // top-level open call
-int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info) {
+int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, unsigned grace_level, bool *used_grace) {
     struct ldb_filecache_pdata *pdata = NULL;
     struct ldb_filecache_sdata *sdata = NULL;
     int ret = -EBADF;
     int flags = info->flags;
     unsigned retries = 0;
     const unsigned max_retries = 2;
+    bool skip_validation = false;
 
     BUMP(open);
+
+    if (used_grace != NULL)
+        *used_grace = false;
+
+    if (grace_level >= 2)
+        skip_validation = true;
 
     log_print(LOG_DEBUG, "ldb_filecache_open: %s", path);
 
@@ -601,7 +608,7 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
         else {
             // Get a file descriptor pointing to a guaranteed-fresh file.
             log_print(LOG_DEBUG, "ldb_filecache_open: calling ldb_get_fresh_fd on %s", path);
-            ret = ldb_get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags);
+            ret = ldb_get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, skip_validation);
         }
         if (ret == 0) {
             log_print(LOG_DEBUG, "ldb_filecache_open: success on %s", path);
@@ -614,9 +621,19 @@ int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *pat
             }
             else {
                 // Now that we've gotten rid of cache entry, free pdata
-                if (pdata) free(pdata);
+                free(pdata);
                 pdata = NULL;
             }
+        }
+        else if (grace_level >= 1 && ret == -EBADFD) {
+            log_print(LOG_WARNING, "ldb_filecache_open: Falling back with grace mode.");
+            free(pdata);
+            pdata = NULL;
+            skip_validation = true;
+            if (retries < max_retries)
+                ret = -EAGAIN;
+            if (used_grace != NULL)
+                *used_grace = true;
         }
         else {
             log_print(LOG_ERR, "ldb_filecache_open: Failed on ldb_get_fresh_fd on %s", path);

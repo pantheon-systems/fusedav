@@ -100,6 +100,30 @@ static struct statistics stats;
 #define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
 
+#define SAINT_MODE_DURATION 10
+
+pthread_mutex_t last_failure_mutex = PTHREAD_MUTEX_INITIALIZER;
+static time_t last_failure = 0;
+
+static bool use_saint_mode(void) {
+    struct timespec now;
+    bool use_saint;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    pthread_mutex_lock(&last_failure_mutex);
+    use_saint = (last_failure + SAINT_MODE_DURATION >= now.tv_sec);
+    pthread_mutex_unlock(&last_failure_mutex);
+    return use_saint;
+}
+
+static void set_saint_mode(void) {
+    struct timespec now;
+    log_print(LOG_WARNING, "Using saint mode for %lu seconds.", SAINT_MODE_DURATION);
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    pthread_mutex_lock(&last_failure_mutex);
+    last_failure = now.tv_sec;
+    pthread_mutex_unlock(&last_failure_mutex);
+}
+
 // Access with struct fusedav_config *config = fuse_get_context()->private_data;
 struct fusedav_config {
     char *uri;
@@ -124,6 +148,7 @@ struct fusedav_config {
     bool refresh_dir_for_file_stat;
     bool ignorexattr;
     bool singlethread;
+    bool grace;
 };
 
 enum {
@@ -496,6 +521,7 @@ static int dav_readdir(
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct fill_info f;
     int ret;
+    bool ignore_freshness = false;
 
     log_print(LOG_INFO, "Initialized with base directory: %s", get_base_directory());
 
@@ -520,8 +546,11 @@ static int dav_readdir(
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
+    if (config->grace && use_saint_mode())
+        ignore_freshness = true;
+
     // First, attempt to hit the cache.
-    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, false);
+    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
     if (ret < 0) {
         int udret;
         if (debug) {
@@ -532,12 +561,14 @@ static int dav_readdir(
         log_print(LOG_DEBUG, "Updating directory: %s", path);
         udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
         if (udret < 0) {
-            log_print(LOG_ERR, "Failed to update directory: %s : %d %s", path, -udret, strerror(-udret));
-            return udret;
+            log_print(LOG_WARNING, "Failed to update directory: %s : %d %s (grace=%d)", path, -udret, strerror(-udret), config->grace);
+            if (!config->grace)
+                return udret;
+            set_saint_mode();
         }
 
         // Output the new data, skipping any cache freshness checks
-        // (which should pass, anyway).
+        // (which should pass, anyway, unless it's grace mode).
         stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
     }
 
@@ -597,6 +628,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
+    bool skip_freshness_check = false;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -618,8 +650,11 @@ static int get_stat(const char *path, struct stat *stbuf) {
         return 0;
     }
 
+    if (config->grace && use_saint_mode())
+        skip_freshness_check = true;
+
     // Check if we can directly hit this entry in the stat cache.
-    ret = get_stat_from_cache(path, stbuf, false);
+    ret = get_stat_from_cache(path, stbuf, skip_freshness_check);
     if (ret == 0 || ret == -ENOENT)
         return ret;
 
@@ -627,7 +662,7 @@ static int get_stat(const char *path, struct stat *stbuf) {
 
     // If it's the root directory or refresh_dir_for_file_stat is false,
     // just do a single, zero-depth PROPFIND.
-    if (!config->refresh_dir_for_file_stat || strcmp(path, base_directory) == 0) {
+    if (!config->refresh_dir_for_file_stat || is_base_directory) {
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on path: %s", path);
         // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, getattr_propfind_callback, NULL) < 0) {
@@ -658,10 +693,10 @@ static int get_stat(const char *path, struct stat *stbuf) {
          ret = update_directory(parent_path, (parent_children_update_ts > 0));
          if (ret < 0) {
 
-             // If the parent is not on the server, treat the child as not available,
-             // regardless of what might be in stat_cache. This likely will prevent
-             // the 404's we see when trying to open a file
-             if (ret == -ENOENT) {
+            // If the parent is not on the server, treat the child as not available,
+            // regardless of what might be in stat_cache. This likely will prevent
+            // the 404's we see when trying to open a file
+            if (ret == -ENOENT) {
                 log_print(LOG_NOTICE, "Parent returns ENOENT for child: %s", path);
 
                 stat_cache_delete(config->cache, path);
@@ -675,10 +710,15 @@ static int get_stat(const char *path, struct stat *stbuf) {
                 stat_cache_prune(config->cache);
             }
 
-            // Need some cleanup before returning ...
-            free(nepp);
-            memset(stbuf, 0, sizeof(struct stat));
-            return ret;
+            if (!config->grace || ret == -ENOENT) {
+                log_print(LOG_WARNING, "No grace enabled or -ENOENT. Returning with no data.");
+                // Need some cleanup before returning ...
+                free(nepp);
+                memset(stbuf, 0, sizeof(struct stat));
+                return ret;
+            }
+            log_print(LOG_WARNING, "Updating data failed. Falling back.");
+            set_saint_mode();
         }
     }
 
@@ -1134,13 +1174,24 @@ static int do_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *value;
     int ret = 0;
+    bool used_grace;
+    unsigned grace_level = 0;
 
     assert(info);
 
-    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info)) < 0) {
+    if (config->grace) {
+        if (use_saint_mode())
+            grace_level = 2;
+        else
+            grace_level = 1;
+    }
+    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, grace_level, &used_grace)) < 0) {
         log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
         return ret;
     }
+
+    if (used_grace)
+        set_saint_mode();
 
     /* If we create a new file, fill in a stat and put it in the stat cache.
      * If we aren't creating a new file, perhaps we should be updating some
@@ -1579,6 +1630,9 @@ int main(int argc, char *argv[]) {
     if (fail) {
         goto finish;
     }
+
+    // @TODO: Make configurable.
+    config.grace = true;
 
     // Apply debug mode.
     log_set_maximum_verbosity(config.verbosity);

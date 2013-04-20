@@ -32,7 +32,7 @@ typedef leveldb_t ldb_filecache_t;
 void filecache_print_stats(void);
 int ldb_filecache_init(char *cache_path);
 int ldb_filecache_delete(ldb_filecache_t *cache, const char *path, bool unlink);
-int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info);
+int ldb_filecache_open(char *cache_path, ldb_filecache_t *cache, const char *path, struct fuse_file_info *info, unsigned grace_level, bool *used_grace);
 ssize_t ldb_filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_t offset);
 ssize_t ldb_filecache_write(struct fuse_file_info *info, const char *buf, size_t size, off_t offset);
 int ldb_filecache_close(struct fuse_file_info *info);
