@@ -138,13 +138,14 @@ static bool use_saint_mode(void) {
     bool use_saint;
     clock_gettime(CLOCK_MONOTONIC, &now);
     pthread_mutex_lock(&last_failure_mutex);
-    use_saint = (now.tv_sec - SAINT_MODE_DURATION < last_failure);
+    use_saint = (last_failure + SAINT_MODE_DURATION >= now.tv_sec);
     pthread_mutex_unlock(&last_failure_mutex);
     return use_saint;
 }
 
 static void set_saint_mode(void) {
     struct timespec now;
+    log_print(LOG_WARNING, "Using saint mode for %lu seconds.", SAINT_MODE_DURATION);
     clock_gettime(CLOCK_MONOTONIC, &now);
     pthread_mutex_lock(&last_failure_mutex);
     last_failure = now.tv_sec;
