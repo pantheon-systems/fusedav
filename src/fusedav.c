@@ -562,7 +562,7 @@ static int dav_readdir(
         udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
         if (udret < 0) {
             log_print(LOG_WARNING, "Failed to update directory: %s : %d %s (grace=%d)", path, -udret, strerror(-udret), config->grace);
-            if (!config->grace || udret == -ENOENT)
+            if (!config->grace)
                 return udret;
             set_saint_mode();
         }
