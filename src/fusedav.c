@@ -162,6 +162,7 @@ struct fusedav_config {
     char *client_certificate_password;
     int  lock_timeout;
     bool lock_on_mount;
+    char *cache_uri;
     int  verbosity;
     bool nodaemon;
     bool ignoreutimens;
@@ -197,6 +198,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("lock_on_mount",                  lock_on_mount, true),
      FUSEDAV_OPT("lock_timeout=%i",                lock_timeout, 60),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
+     FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
@@ -2267,9 +2269,6 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o ca_certificate=PATH\n"
                 "        -o client_certificate=PATH\n"
                 "        -o client_certificate_password=STRING\n"
-                "    Locking:\n"
-                "        -o lock_timeout=NUM\n"
-                "        -o lock_on_mount\n"
                 "    File and directory attributes:\n"
                 "        -o uid=STRING (masks file owner)\n"
                 "        -o gid=STRING (masks file group)\n"
@@ -2281,6 +2280,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o progressive_propfind\n"
                 "        -o refresh_dir_for_file_stat\n"
                 "        -o singlethread\n"
+                "        -o cache_uri=STRING\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
