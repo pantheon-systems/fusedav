@@ -2447,6 +2447,9 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, "Set session URI and configuration.");
 
+    if (config.cache_uri)
+        log_print(LOG_INFO, "Using cache URI: %s", config.cache_uri);
+
     if (!(ch = fuse_mount(mountpoint, &args))) {
         log_print(LOG_CRIT, "Failed to mount FUSE file system.");
         goto finish;
