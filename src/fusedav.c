@@ -132,6 +132,7 @@ struct fusedav_config {
     char *ca_certificate;
     char *client_certificate;
     char *client_certificate_password;
+    char *cache_uri;
     int  verbosity;
     bool nodaemon;
     bool ignoreutimens;
@@ -164,6 +165,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
      FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
+     FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
@@ -1504,9 +1506,6 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o ca_certificate=PATH\n"
                 "        -o client_certificate=PATH\n"
                 "        -o client_certificate_password=STRING\n"
-                "    Locking:\n"
-                "        -o lock_timeout=NUM\n"
-                "        -o lock_on_mount\n"
                 "    File and directory attributes:\n"
                 "        -o uid=STRING (masks file owner)\n"
                 "        -o gid=STRING (masks file group)\n"
@@ -1517,6 +1516,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o progressive_propfind\n"
                 "        -o refresh_dir_for_file_stat\n"
                 "        -o singlethread\n"
+                "        -o cache_uri=STRING\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
@@ -1661,6 +1661,9 @@ int main(int argc, char *argv[]) {
         log_print(LOG_CRIT, "Missing the required URI argument.");
         goto finish;
     }
+
+    if (config.cache_uri)
+        log_print(LOG_INFO, "Using cache URI: %s", config.cache_uri);
 
     if (!(ch = fuse_mount(mountpoint, &args))) {
         log_print(LOG_CRIT, "Failed to mount FUSE file system.");
