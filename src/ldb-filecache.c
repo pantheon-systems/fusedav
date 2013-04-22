@@ -42,6 +42,7 @@
 #include <ne_uri.h>
 
 #define REFRESH_INTERVAL 3
+#define CACHE_FILE_ENTROPY 20
 
 // Remove filecache files older than 8 days
 #define AGE_OUT_THRESHOLD 691200
@@ -127,6 +128,8 @@ int ldb_filecache_init(char *cache_path) {
 
     BUMP(init);
 
+    srand((unsigned) time(NULL));
+
     snprintf(path, PATH_MAX, "%s/files", cache_path);
     if (mkdir(cache_path, 0770) == -1) {
         if (errno != EEXIST) {
@@ -155,10 +158,16 @@ static char *path2key(const char *path) {
 
 // creates a new cache file
 static int new_cache_file(const char *cache_path, char *cache_file_path, fd_t *fd) {
+    char entropy[CACHE_FILE_ENTROPY + 1];
 
     BUMP(cache_file);
 
-    snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-XXXXXX", cache_path);
+    for (size_t pos = 0; pos <= CACHE_FILE_ENTROPY; ++pos) {
+        entropy[pos] = 65 + rand() % 26;
+    }
+    entropy[CACHE_FILE_ENTROPY] = '\0';
+
+    snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-%s-XXXXXX", cache_path, entropy);
     log_print(LOG_DEBUG, "Using pattern %s", cache_file_path);
     if ((*fd = mkstemp(cache_file_path)) < 0) {
         log_print(LOG_ERR, "new_cache_file: Failed mkstemp: errno = %d %s", errno, strerror(errno));
