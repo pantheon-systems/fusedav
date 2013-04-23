@@ -52,7 +52,7 @@
 
 #include "log.h"
 #include "statcache.h"
-#include "ldb-filecache.h"
+#include "filecache.h"
 #include "session.h"
 #include "fusedav.h"
 #include "props.h"
@@ -189,7 +189,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSE_OPT_END
 };
 
-static int get_stat(const char *path, struct stat *stbuf);
+static int get_stat(const char *path, struct stat *stbuf, GError **gerr);
 
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
@@ -310,6 +310,11 @@ static const char *path_cvt(const char *path) {
     return r;
 }
 
+static int processed_gerror(const char *prefix, const GError *gerr) {
+    log_print(LOG_ERR, "%s %s -- %d:%s", prefix, gerr->message, gerr->code, g_strerror(gerr->code));
+    return -gerr->code;
+}
+
 static int simple_propfind_with_redirect(
         const char *path,
         int depth,
@@ -388,12 +393,10 @@ char *strip_trailing_slash(char *fn, int *is_dir) {
 }
 
 static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st, unsigned long status_code) {
-    char *local_path = NULL;
     //int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-
-    local_path = strdup(path);
+    GError *gerr;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -406,14 +409,24 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     //strip_trailing_slash(local_path, &is_dir);
 
     if (status_code == 410) {
+        // REVIEW: local_path is now obsolete?
+        char *local_path = NULL;
+        local_path = strdup(path);
         log_print(LOG_DEBUG, "Removing path: %s", path);
-        stat_cache_delete(config->cache, local_path);
+        stat_cache_delete(config->cache, local_path, &gerr);
+        free(local_path);
+        if (gerr) {
+            processed_gerror("getdir_propfind_callback: ", gerr);
+            return;
+        }
     }
     else {
-        stat_cache_value_set(config->cache, path, &value);
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+        if (gerr) {
+            processed_gerror("getdir_propfind_callback: ", gerr);
+            return;
+        }
     }
-
-    free(local_path);
 }
 
 static void getdir_cache_callback(const char *root, const char *fn, void *user) {
@@ -428,14 +441,15 @@ static void getdir_cache_callback(const char *root, const char *fn, void *user) 
 
     h = curl_easy_unescape(session, fn, strlen(fn), NULL);
 
-    //log_print(LOG_DEBUG, "getdir_cache_callback fn: %s", h);
+    log_print(LOG_DEBUG, "getdir_cache_callback fn: %s", h);
 
     f->filler(f->buf, h, NULL, 0);
     curl_free(h);
 }
 
-static int update_directory(const char *path, bool attempt_progessive_update) {
+static int update_directory(const char *path, bool attempt_progessive_update, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    GError *tmpgerr = NULL;
     bool needs_update = true;
     time_t last_updated;
     time_t timestamp;
@@ -445,7 +459,11 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
     // Attempt to freshen the cache.
     if (attempt_progessive_update && config->progressive_propfind) {
         timestamp = time(NULL);
-        last_updated = stat_cache_read_updated_children(config->cache, path);
+        last_updated = stat_cache_read_updated_children(config->cache, path, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            return processed_gerror("update_directory: ", *gerr);
+        }
         asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
 
         log_print(LOG_DEBUG, "Freshening directory data: %s", update_path);
@@ -475,30 +493,7 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
         if (propfind_result < 0) {
-            log_print(LOG_WARNING, "Complete PROPFIND failed on %s", path);
-            /* Here's the scenario:
-             * mkdir a/b/c/d/e/f/g
-             * rmdir a/b/c/d  (with the pre-fixed rmdir, orphans e f g)
-             * mkdir a/b/c/d/e/f/g
-             * ls a/b/c/d/e/f/g -> Operation not permitted
-             *
-             * /a/b/c/d gets made, because it didn't exist
-             * /a/b/c/d/e doesn't get made, because it's in the cache
-             * /a/b/c/d/e/f fails when it tries to update parent by accessing server, and server
-             * returns a 404.
-             *
-             * Calling stat_cache_prune will fix this situation if the stat cache is in an
-             * inconsistent internal state (as in the above example). But if it is just a mismatch
-             * between cache and server, delete_parent should correct, and put the stat cache in a state
-             * where stat_cache_prune can reestablish consistency.
-             *
-             * We think we have made the fixes necessary to prevent this situation from happening.
-             * For now, don't bother making these calls. Leave this in for future reconsideration
-             * if we continue to see 404 on PROPFIND.
-             *
-             * stat_cache_delete_parent(config->cache, path);
-             * stat_cache_prune(config->cache);
-             */
+            log_print(LOG_ERR, "update_directory: Complete PROPFIND failed on %s", path);
             return -EIO;
         }
 
@@ -507,7 +502,11 @@ static int update_directory(const char *path, bool attempt_progessive_update) {
 
     // Mark the directory contents as updated.
     log_print(LOG_DEBUG, "Marking directory %s as updated at timestamp %lu.", path, timestamp);
-    stat_cache_updated_children(config->cache, path, timestamp);
+    stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+        return processed_gerror("update_directory: ", *gerr);
+    }
     return 0;
 }
 
@@ -520,6 +519,7 @@ static int dav_readdir(
 
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct fill_info f;
+    GError *gerr = NULL;
     int ret;
     bool ignore_freshness = false;
 
@@ -551,6 +551,10 @@ static int dav_readdir(
 
     // First, attempt to hit the cache.
     ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
+    // REVIEW: why process an empty directory?
+    if (ret == -STAT_CACHE_NO_DATA) {
+        return 0;
+    }
     if (ret < 0) {
         int udret;
         if (debug) {
@@ -559,25 +563,33 @@ static int dav_readdir(
         }
 
         log_print(LOG_DEBUG, "Updating directory: %s", path);
-        udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA));
-        if (udret < 0) {
+        udret = update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
+        if (udret < 0 || gerr) {
+            // See what the gerr is all about, but fall through to process as for udret < 0
+            if (gerr) {
+                udret = processed_gerror("dav_readdir: ", gerr);
+            }
             log_print(LOG_WARNING, "Failed to update directory: %s : %d %s (grace=%d)", path, -udret, strerror(-udret), config->grace);
-            if (!config->grace)
+            if (!config->grace) {
                 return udret;
+            }
             set_saint_mode();
         }
 
         // Output the new data, skipping any cache freshness checks
         // (which should pass, anyway, unless it's grace mode).
+        // At this point, we can get a zero return, or an empty directory. Let both fall through and return 0
         stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
     }
 
     return 0;
 }
 
-static void getattr_propfind_callback(__unused void *userdata, const char *path, struct stat st, unsigned long status_code) {
+static void getattr_propfind_callback(__unused void *userdata, const char *path, struct stat st,
+        unsigned long status_code, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    GError *tmpgerr = NULL;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -585,30 +597,44 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
 
     if (status_code == 410) {
         log_print(LOG_DEBUG, "getattr_propfind_callback: Deleting from stat cache: %s", path);
-        stat_cache_delete(config->cache, path);
+        stat_cache_delete(config->cache, path, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
+            return;
+        }
     }
     else {
         log_print(LOG_DEBUG, "getattr_propfind_callback: Adding to stat cache: %s", path);
-        stat_cache_value_set(config->cache, path, &value);
+        stat_cache_value_set(config->cache, path, &value, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
+            return;
+        }
     }
 }
 
-static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore_freshness) {
+static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore_freshness, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *response;
+    GError *tmpgerr = NULL;
 
-    response = stat_cache_value_get(config->cache, path, ignore_freshness);
+    response = stat_cache_value_get(config->cache, path, ignore_freshness, &tmpgerr);
     if (response != NULL) {
         log_print(LOG_DEBUG, "Got response from stat_cache_value_get for path %s.", path);
         *stbuf = response->st;
         free(response);
-        //print_stat(stbuf, "get_stat from cache");
-        if (stbuf->st_mode == 0) log_print(LOG_DEBUG, "get_stat(%s, stbuf, %d): returns ENOENT", path, ignore_freshness);
-        else log_print(LOG_DEBUG, "get_stat(%s): 1. returns 0", path);
+        log_print(LOG_DEBUG, "get_stat(%s, stbuf, %d): returns %s", path, ignore_freshness, stbuf->st_mode ? "0" : "ENOENT");
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
+
     log_print(LOG_DEBUG, "NULL response from stat_cache_value_get for path %s.", path);
 
+    // tmpgerr from stat_cache_value_get is like a NULL without a freshness check, so treat it as such
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "get_stat_from_cache: ");
+        memset(stbuf, 0, sizeof(struct stat));
+        return processed_gerror("get_stat_from_cache: ", *gerr);
+    }
     if (ignore_freshness) {
         log_print(LOG_DEBUG, "Ignoring freshness and sending -ENOENT for path %s.", path);
         memset(stbuf, 0, sizeof(struct stat));
@@ -619,11 +645,12 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
     return -EKEYEXPIRED;
 }
 
-static int get_stat(const char *path, struct stat *stbuf) {
+static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char *parent_path;
     const char *base_directory;
     char *nepp;
+    GError *tmpgerr = NULL;
     int is_dir = 0;
     time_t parent_children_update_ts;
     bool is_base_directory;
@@ -654,19 +681,34 @@ static int get_stat(const char *path, struct stat *stbuf) {
         skip_freshness_check = true;
 
     // Check if we can directly hit this entry in the stat cache.
-    ret = get_stat_from_cache(path, stbuf, skip_freshness_check);
-    if (ret == 0 || ret == -ENOENT)
+    ret = get_stat_from_cache(path, stbuf, skip_freshness_check, &tmpgerr);
+
+    // Propagate the error but let the rest of the logic determine return value
+    // Unless we change the logic in get_stat_from_cache, it will return ENONENT
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "get _stat: ");
+        return processed_gerror("get_stat: ", *gerr);
+    }
+    if (ret == 0 || ret == -ENOENT) {
         return ret;
+    }
 
     log_print(LOG_DEBUG, "STAT-CACHE-MISS");
 
     // If it's the root directory or refresh_dir_for_file_stat is false,
     // just do a single, zero-depth PROPFIND.
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
+        // Not sure that tmpgerr above, if triggered, will exit, so get a new gerr variable
+        GError *subgerr = NULL;
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on path: %s", path);
         // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, getattr_propfind_callback, NULL) < 0) {
-            stat_cache_delete(config->cache, path);
+            stat_cache_delete(config->cache, path, &subgerr);
+            if (subgerr) {
+                memset(stbuf, 0, sizeof(struct stat));
+                g_propagate_error(gerr, subgerr);
+                return processed_gerror("get_stat: ", *gerr);
+            }
             log_print(LOG_NOTICE, "PROPFIND failed on path: %s", path);
             memset(stbuf, 0, sizeof(struct stat));
             log_print(LOG_DEBUG, "get_stat(%s): 1. returns -ENOENT", path);
@@ -674,7 +716,12 @@ static int get_stat(const char *path, struct stat *stbuf) {
         }
         log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", path);
 
-        return get_stat_from_cache(path, stbuf, true);
+        ret = get_stat_from_cache(path, stbuf, true, &subgerr);
+        if (subgerr) {
+            g_propagate_error(gerr, subgerr);
+            return processed_gerror("get_stat: ", *gerr);
+        }
+        return ret;
     }
 
     // If we're here, refresh_dir_for_file_stat is set, so we're updating
@@ -685,13 +732,25 @@ static int get_stat(const char *path, struct stat *stbuf) {
     parent_path = strip_trailing_slash(nepp, &is_dir);
 
     log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
-    parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path);
+    parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path, &tmpgerr);
+    // REVIEW: Check the goto fail logic
+    if (tmpgerr) {
+        g_propagate_error(gerr, tmpgerr);
+        ret = processed_gerror("get_stat: ", *gerr);
+        goto fail;
+    }
     log_print(LOG_DEBUG, "Parent was updated: %s %lu", parent_path, parent_children_update_ts);
 
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
-         ret = update_directory(parent_path, (parent_children_update_ts > 0));
-         if (ret < 0) {
+        GError *subgerr = NULL;
+        ret = update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
+        if (subgerr) {
+            g_propagate_error(gerr, subgerr);
+            ret = processed_gerror("get_stat: ", *gerr);
+            goto fail;
+        }
+        if (ret < 0) {
 
             // If the parent is not on the server, treat the child as not available,
             // regardless of what might be in stat_cache. This likely will prevent
@@ -699,7 +758,12 @@ static int get_stat(const char *path, struct stat *stbuf) {
             if (ret == -ENOENT) {
                 log_print(LOG_NOTICE, "Parent returns ENOENT for child: %s", path);
 
-                stat_cache_delete(config->cache, path);
+                stat_cache_delete(config->cache, path, &subgerr);
+                if (subgerr) {
+                    g_propagate_error(gerr, subgerr);
+                    ret = processed_gerror("get_stat: ", *gerr);
+                    goto fail;
+                }
                 // Don't delete the base directory (aka <site>/files) if it happens to be the parent
                 if (strcmp(parent_path, base_directory)) {
                     stat_cache_delete_parent(config->cache, path);
@@ -710,32 +774,42 @@ static int get_stat(const char *path, struct stat *stbuf) {
                 stat_cache_prune(config->cache);
             }
 
-            if (!config->grace || ret == -ENOENT) {
+            if (!config->grace || ret == -ENOENT || ret == E_SC_LDBERR) {
                 log_print(LOG_WARNING, "No grace enabled or -ENOENT. Returning with no data.");
                 // Need some cleanup before returning ...
                 free(nepp);
-                memset(stbuf, 0, sizeof(struct stat));
-                return ret;
+                goto fail;
             }
             log_print(LOG_WARNING, "Updating data failed. Falling back.");
             set_saint_mode();
         }
     }
 
-    free(nepp);
 
     // Try again to hit the file in the stat cache.
-    return get_stat_from_cache(path, stbuf, true);
+    ret = get_stat_from_cache(path, stbuf, true, &tmpgerr);
+    goto finish;
+
+fail:
+    memset(stbuf, 0, sizeof(struct stat));
+
+finish:
+    free(nepp);
+    return ret;
 }
 
 static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    GError *gerr = NULL;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
         int ret;
-        ret = get_stat(path, stbuf);
+        ret = get_stat(path, stbuf, &gerr);
+        if (gerr) {
+            return processed_gerror("common_getattr: ", gerr);
+        }
         if (ret != 0) {
             log_print(LOG_DEBUG, "common_getattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
             return ret;
@@ -752,7 +826,7 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
     }
     else {
         int fd;
-        fd = ldb_filecache_fd(info);
+        fd = filecache_fd(info);
         log_print(LOG_INFO, "common_getattr(NULL path)");
         // Fill in generic values
         // We can't be a directory if we have a null path
@@ -798,8 +872,9 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
 
 static int dav_unlink(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int r;
+    int ret;
     struct stat st;
+    GError *gerr = NULL;
     CURL *session;
     CURLcode res;
 
@@ -809,8 +884,13 @@ static int dav_unlink(const char *path) {
 
     log_print(LOG_INFO, "CALLBACK: dav_unlink(%s)", path);
 
-    if ((r = get_stat(path, &st)) < 0)
-        return r;
+    ret = get_stat(path, &st, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_unlink: ", gerr);
+    }
+    if (ret < 0) {
+        return ret;
+    }
 
     if (!S_ISREG(st.st_mode))
         return -EISDIR;
@@ -829,19 +909,24 @@ static int dav_unlink(const char *path) {
         return -EIO;
     }
 
-    log_print(LOG_DEBUG, "dav_unlink: calling ldb_filecache_delete on %s", path);
-    if (ldb_filecache_delete(config->cache, path, true)) {
-        log_print(LOG_WARNING, "dav_unlink: ldb_filecache_delete failed");
+    log_print(LOG_DEBUG, "dav_unlink: calling filecache_delete on %s", path);
+    filecache_delete(config->cache, path, true, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_unlink: ", gerr);
     }
 
     log_print(LOG_DEBUG, "dav_unlink: calling stat_cache_delete on %s", path);
-    stat_cache_delete(config->cache, path);
+    stat_cache_delete(config->cache, path, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_unlink: ", gerr);
+    }
 
     return 0;
 }
 
 static int dav_rmdir(const char *path) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    GError *gerr = NULL;
     char fn[PATH_MAX];
     int ret;
     bool has_child;
@@ -855,7 +940,11 @@ static int dav_rmdir(const char *path) {
 
     log_print(LOG_INFO, "CALLBACK: dav_rmdir(%s)", path);
 
-    ret = get_stat(path, &st);
+    ret = get_stat(path, &st, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_rmdir: ", gerr);
+    }
+
     if (ret < 0) {
         log_print(LOG_WARNING, "dav_rmdir(%s): failed on get_stat: %d %s", path, ret, strerror(-ret));
         return ret;
@@ -894,10 +983,16 @@ static int dav_rmdir(const char *path) {
 
     log_print(LOG_DEBUG, "dav_rmdir: removed(%s)", path);
 
-    stat_cache_delete(config->cache, path);
+    stat_cache_delete(config->cache, path, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_rmdir: ", gerr);
+    }
 
     // Delete Updated_children entry for path
-    stat_cache_updated_children(config->cache, path, 0);
+    stat_cache_updated_children(config->cache, path, 0, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_rmdir: ", gerr);
+    }
 
     return 0;
 }
@@ -908,6 +1003,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     char fn[PATH_MAX];
     CURL *session;
     CURLcode res;
+    GError *gerr = NULL;
 
     BUMP(mkdir);
 
@@ -936,10 +1032,10 @@ static int dav_mkdir(const char *path, mode_t mode) {
     // Populate stat cache.
     // is_dir = true; fd = -1 (not a regular file)
     fill_stat_generic(&(value.st), mode, true, -1);
-    stat_cache_value_set(config->cache, path, &value);
-
-    //stat_cache_delete(config->cache, path);
-    //stat_cache_delete_parent(config->cache, path);
+    stat_cache_value_set(config->cache, path, &value, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_mkdir: ", gerr);
+    }
 
     return 0;
 }
@@ -950,6 +1046,7 @@ static int dav_rename(const char *from, const char *to) {
     CURL *session;
     struct curl_slist *slist = NULL;
     CURLcode res;
+    GError *gerr = NULL;
     int server_ret = -EIO;
     int local_ret = -EIO;
     int ret;
@@ -966,7 +1063,12 @@ static int dav_rename(const char *from, const char *to) {
 
     log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
 
-    if ((ret = get_stat(from, &st)) < 0) {
+    ret = get_stat(from, &st, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_rmdir: ", gerr);
+    }
+
+    if (ret < 0) {
         log_print(LOG_ERR, "dav_rename: failed get_stat for %d:%s", fd, from);
         server_ret = ret;
         goto finish;
@@ -1019,19 +1121,35 @@ static int dav_rename(const char *from, const char *to) {
     }
 
     /* If the server_side failed, then both the stat_cache and filecache moves need to succeed */
-    entry = stat_cache_value_get(config->cache, from, true);
+    entry = stat_cache_value_get(config->cache, from, true, &gerr);
+    if (gerr) {
+        processed_gerror("dav_rename: ", gerr);
+        goto finish;
+    }
+
     log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
-    if (entry != NULL && stat_cache_value_set(config->cache, to, entry) < 0) {
+    stat_cache_value_set(config->cache, to, entry, &gerr);
+    if (entry != NULL && gerr) {
+        processed_gerror("dav_rename: ", gerr);
         log_print(LOG_NOTICE, "dav_rename: failed stat cache moving source entry to destination %d:%s", fd, to);
         // If the local stat_cache move fails, leave the filecache alone so we don't get mixed state
         goto finish;
     }
 
-    stat_cache_delete(config->cache, from);
+    stat_cache_delete(config->cache, from, &gerr);
+    if (gerr) {
+        processed_gerror("dav_rename: ", gerr);
+        goto finish;
+    }
 
-    if (ldb_filecache_pdata_move(config->cache, from, to) < 0) {
-        log_print(LOG_NOTICE, "dav_rename: No local file cache data to move (or move failed).");
-        ldb_filecache_delete(config->cache, to, true);
+    filecache_pdata_move(config->cache, from, to, &gerr);
+    if (gerr) {
+        GError *tmpgerr = NULL;
+        filecache_delete(config->cache, to, true, &tmpgerr);
+        if (tmpgerr) {
+            log_print(LOG_NOTICE, "dav_rename: filecache_delete failed %d:%s -- %s", fd, to, tmpgerr->message);
+        }
+        processed_gerror("dav_rename: ", gerr);
         goto finish;
     }
     local_ret = 0;
@@ -1052,7 +1170,8 @@ finish:
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    int ret = 0;
+    GError *gerr = NULL;
+    GError *gerr2 = NULL;
 
     BUMP(release);
 
@@ -1061,33 +1180,38 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
     // path might be NULL if we are accessing a bare file descriptor. Since
-    // pulling the file descriptor is the job of ldb_filecache, we'll have
+    // pulling the file descriptor is the job of filecache, we'll have
     // to detect there.
-    ret = ldb_filecache_sync(config->cache, path, info, true);
-    if (ret < 0) {
-        log_print(LOG_ERR, "dav_release: error on ldb_filecache_sync: %d::%s", ret, (path ? path : "null path"));
-    } else {
+    filecache_sync(config->cache, path, info, true, &gerr);
+    if (!gerr) {
         struct stat_cache_value value;
-        int fd = ldb_filecache_fd(info);
+        int fd = filecache_fd(info);
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
         memset(&value, 0, sizeof(struct stat_cache_value));
         // mode = 0 (unspecified), is_dir = false; fd to get size
         fill_stat_generic(&(value.st), 0, false, fd);
-        stat_cache_value_set(config->cache, path, &value);
+        stat_cache_value_set(config->cache, path, &value, &gerr);
     }
 
-    ldb_filecache_close(info);
+    filecache_close(info, &gerr2);
+    if (!gerr && gerr2) {
+        g_propagate_error(&gerr, gerr2);
+    }
+
+    if (gerr) {
+        return processed_gerror("dav_release: ", gerr);
+    }
 
     log_print(LOG_DEBUG, "END: dav_release: release(%s)", (path ? path : "null path"));
 
-    return ret;
+    return 0;
 }
 
 static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    GError *gerr = NULL;
     int fd;
-    int ret = 0;
 
     BUMP(fsync);
 
@@ -1099,27 +1223,29 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     log_print(LOG_INFO, "CALLBACK: dav_fsync(%s)", path ? path : "null path");
 
     // If path is NULL because we are accessing a bare file descriptor,
-    // let ldb_filecache_sync handle it since we need to get the file
+    // let filecache_sync handle it since we need to get the file
     // descriptor there
-    ret = ldb_filecache_sync(config->cache, path, info, true);
-    if (ret < 0) {
-        log_print(LOG_ERR, "dav_fsync: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
-        return ret;
+    filecache_sync(config->cache, path, info, true, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_fsync: ", gerr);
     }
 
-    fd = ldb_filecache_fd(info);
+    fd = filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
     fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value);
+    stat_cache_value_set(config->cache, path, &value, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_fsync: ", gerr);
+    }
 
-    return ret;
+    return 0;
 }
 
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    GError *gerr = NULL;
     int fd;
-    int ret = 0;
 
     BUMP(flush);
 
@@ -1131,24 +1257,28 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     log_print(LOG_INFO, "CALLBACK: dav_flush(%s)", path ? path : "null path");
 
     // If path is NULL because we are accessing a bare file descriptor,
-    // let ldb_filecache_sync handle it since we need to get the file
+    // let filecache_sync handle it since we need to get the file
     // descriptor there
-    ret = ldb_filecache_sync(config->cache, path, info, true);
-    if (ret < 0) {
-        log_print(LOG_ERR, "dav_flush: error on ldb_filecache_sync: %d::%s", ret, path ? path : "null path");
+    filecache_sync(config->cache, path, info, true, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_flush: ", gerr);
     }
 
-    fd = ldb_filecache_fd(info);
+    fd = filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
     fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value);
+    stat_cache_value_set(config->cache, path, &value, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_flush: ", gerr);
+    }
 
-    return ret;
+    return 0;
 }
 
 static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    GError *gerr = NULL;
 
     BUMP(mknod);
 
@@ -1162,18 +1292,18 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     // Prepopulate stat cache.
     // is_dir = false, fd = -1, can't set size
     fill_stat_generic(&(value.st), mode, false, -1);
-    stat_cache_value_set(config->cache, path, &value);
-
-    //stat_cache_delete(config->cache, path);
-    //stat_cache_delete_parent(config->cache, path);
+    stat_cache_value_set(config->cache, path, &value, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_mknod: ", gerr);
+    }
 
     return 0;
 }
 
-static int do_open(const char *path, struct fuse_file_info *info) {
+static void do_open(const char *path, struct fuse_file_info *info, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *value;
-    int ret = 0;
+    GError *tmpgerr = NULL;
     bool used_grace;
     unsigned grace_level = 0;
 
@@ -1185,9 +1315,10 @@ static int do_open(const char *path, struct fuse_file_info *info) {
         else
             grace_level = 1;
     }
-    if ((ret = ldb_filecache_open(config->cache_path, config->cache, path, info, grace_level, &used_grace)) < 0) {
-        log_print(LOG_ERR, "do_open: Failed ldb_filecache_open");
-        return ret;
+    filecache_open(config->cache_path, config->cache, path, info, grace_level, &used_grace, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "do_open: Failed filecache_open");
+        return;
     }
 
     if (used_grace)
@@ -1199,24 +1330,34 @@ static int do_open(const char *path, struct fuse_file_info *info) {
      * as a question for the future.
      */
     // @TODO: Before public release: Lock for concurrency.
-    value = stat_cache_value_get(config->cache, path, false);
+    value = stat_cache_value_get(config->cache, path, false, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "do_open: Failed filecache_open");
+        return;
+    }
+
     if (value == NULL) {
         // Use a stack variable since that's how we do it everywhere else
         struct stat_cache_value nvalue;
         // mode = 0 (unspecified), is_dir = false; fd = -1, no need to get size on new file
         fill_stat_generic(&(nvalue.st), 0, false, -1);
-        stat_cache_value_set(config->cache, path, &nvalue);
+        stat_cache_value_set(config->cache, path, &nvalue, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "do_open: Failed filecache_open");
+            return;
+        }
     } else {
         free(value);
     }
 
-    log_print(LOG_DEBUG, "do_open: after ldb_filecache_open");
+    log_print(LOG_DEBUG, "do_open: after filecache_open");
 
-    return ret;
+    return;
 }
 
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
+    GError *gerr = NULL;
     BUMP(open);
 
     path = path_cvt(path);
@@ -1230,11 +1371,16 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     }
 
     log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
-    return do_open(path, info);
+    do_open(path, info, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_open: ", gerr);
+    }
+    return 0;
 }
 
 static int dav_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
+    GError *gerr = NULL;
 
     BUMP(read);
 
@@ -1244,9 +1390,13 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
     path = path_cvt(path);
     log_print(LOG_INFO, "CALLBACK: dav_read(%s, %lu+%lu)", path ? path : "null path", (unsigned long) offset, (unsigned long) size);
 
-    bytes_read = ldb_filecache_read(info, buf, size, offset);
+    bytes_read = filecache_read(info, buf, size, offset, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_read: ", gerr);
+    }
+
     if (bytes_read < 0) {
-        log_print(LOG_ERR, "dav_read: ldb_filecache_read returns error");
+        log_print(LOG_ERR, "dav_read: filecache_read returns error");
     }
 
     return bytes_read;
@@ -1254,6 +1404,7 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
 
 static int dav_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    GError *gerr = NULL;
     ssize_t bytes_written;
     struct stat_cache_value value;
     int fd;
@@ -1267,25 +1418,32 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 
     log_print(LOG_INFO, "CALLBACK: dav_write(%s, %lu+%lu)", path ? path : "null path", (unsigned long) offset, (unsigned long) size);
 
-    bytes_written = ldb_filecache_write(info, buf, size, offset);
+    bytes_written = filecache_write(info, buf, size, offset, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_write: ", gerr);
+    }
+
     if (bytes_written < 0) {
-        log_print(LOG_ERR, "dav_write: ldb_filecache_write returns error");
+        log_print(LOG_ERR, "dav_write: filecache_write returns error");
         return bytes_written;
     }
 
     // Let sync handle potential null path
-    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
-        log_print(LOG_ERR, "dav_write: ldb_filecache_sync returns error");
-        return -EIO;
+    filecache_sync(config->cache, path, info, false, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_write: ", gerr);
     }
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
 
-    fd = ldb_filecache_fd(info);
+    fd = filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
     fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value);
+    stat_cache_value_set(config->cache, path, &value, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_write: ", gerr);
+    }
 
    return bytes_written;
 }
@@ -1293,6 +1451,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    GError *gerr = NULL;
     int fd;
 
     BUMP(ftruncate);
@@ -1304,21 +1463,24 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
 
     log_print(LOG_INFO, "CALLBACK: dav_ftruncate(%s, %lu)", path ? path : "null path", (unsigned long) size);
 
-    if (ldb_filecache_truncate(info, size) < 0) {
-        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_truncate returns error; %d %s", errno, strerror(errno));
-        return -errno;
+    filecache_truncate(info, size, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_ftruncate: ", gerr);
     }
 
     // Let sync handle a NULL path
-    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
-        log_print(LOG_ERR, "dav_ftruncate: ldb_filecache_sync returns error");
-        return -EIO;
+    filecache_sync(config->cache, path, info, false, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_ftruncate: ", gerr);
     }
 
-    fd = ldb_filecache_fd(info);
+    fd = filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
     fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value);
+    stat_cache_value_set(config->cache, path, &value, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_ftruncate: ", gerr);
+    }
 
     log_print(LOG_DEBUG, "dav_ftruncate: returning");
     return 0;
@@ -1339,8 +1501,8 @@ static int dav_chmod(__unused const char *path, __unused mode_t mode) {
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    GError *gerr = NULL;
     int fd;
-    int ret;
 
     BUMP(create);
 
@@ -1349,25 +1511,29 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     log_print(LOG_INFO, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
     info->flags |= O_CREAT | O_TRUNC;
-    ret = do_open(path, info);
+    do_open(path, info, &gerr);
 
-    if (ret < 0)
-        return ret;
+    if (gerr) {
+        return processed_gerror("dav_create: ", gerr);
+    }
 
     // @TODO: Perform a chmod here based on mode.
 
-    if (ldb_filecache_sync(config->cache, path, info, false) < 0) {
-        log_print(LOG_ERR, "dav_create: ldb_filecache_sync returns error");
-        return -EIO;
+    filecache_sync(config->cache, path, info, false, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_create: ", gerr);
     }
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
 
-    fd = ldb_filecache_fd(info);
+    fd = filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
     fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value);
+    stat_cache_value_set(config->cache, path, &value, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_create: ", gerr);
+    }
 
     log_print(LOG_DEBUG, "Done: create()");
 
@@ -1585,7 +1751,7 @@ static void *cache_cleanup(void *ptr) {
     while (true) {
         // We would like to do cleanup on startup, to resolve issues
         // from errant stat and file caches
-        ldb_filecache_cleanup(config->cache, config->cache_path, first);
+        filecache_cleanup(config->cache, config->cache_path, first);
         first = false;
         stat_cache_prune(config->cache);
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
@@ -1601,6 +1767,7 @@ int main(int argc, char *argv[]) {
     struct fusedav_config config;
     struct fuse_chan *ch = NULL;
     char *mountpoint = NULL;
+    GError *gerr = NULL;
     int ret = 1;
     pthread_t filecache_cleanup_thread;
     int fail = 0;
@@ -1692,15 +1859,17 @@ int main(int argc, char *argv[]) {
     }
 
     // Ensure directory exists for file content cache.
-    if (ldb_filecache_init(config.cache_path) < 0) {
-        log_print(LOG_CRIT, "Could not initialize file content cache directory.");
+    filecache_init(config.cache_path, &gerr);
+    if (gerr) {
+        log_print(LOG_CRIT, "Could not initialize file content cache directory:%s.", gerr->message);
         goto finish;
     }
     log_print(LOG_DEBUG, "Opened ldb file cache.");
 
     // Open the stat cache.
-    if (stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path) < 0) {
-        log_print(LOG_CRIT, "Failed to open the stat cache.");
+    stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path, &gerr);
+    if (gerr) {
+        log_print(LOG_CRIT, "Failed to open the stat cache -- %s.", gerr->message);
         config.cache = NULL;
         goto finish;
     }
@@ -1752,8 +1921,8 @@ finish:
     session_config_free();
     log_print(LOG_DEBUG, "Cleaned up session system.");
 
-    if (config.cache != NULL && stat_cache_close(config.cache, config.cache_supplemental) < 0)
-        log_print(LOG_ERR, "Failed to close the stat cache.");
+    // We don't capture any errors from stat_cache_close
+    stat_cache_close(config.cache, config.cache_supplemental);
 
     log_print(LOG_NOTICE, "Shutdown was successful. Exiting.");
 

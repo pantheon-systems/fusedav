@@ -8,12 +8,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -21,12 +21,16 @@
 
 #include <sys/stat.h>
 #include <leveldb/c.h>
+#include <glib.h>
 
 #define RGEN_LEN 128
 #define STAT_CACHE_OLD_DATA 2
 #define STAT_CACHE_NO_DATA 1
 
 #define STAT_CACHE_NEGATIVE_TTL 3
+
+#define E_SC_SUCCESS 0
+#define E_SC_LDBERR 1
 
 typedef leveldb_t stat_cache_t;
 
@@ -56,21 +60,21 @@ int print_stat(struct stat *stbuf, const char *title);
 
 unsigned long stat_cache_get_local_generation(void);
 
-int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path);
-int stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental);
+void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path, GError **gerr);
+void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental);
 
-struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path, bool skip_freshness_check);
-int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp);
-time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path);
-int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value);
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path, bool skip_freshness_check, GError **gerr);
+void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp, GError **gerr);
+time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, GError **gerr);
+void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr);
 void stat_cache_value_free(struct stat_cache_value *value);
 
-int stat_cache_delete(stat_cache_t *cache, const char* path);
-int stat_cache_delete_parent(stat_cache_t *cache, const char *path);
-int stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation);
+void stat_cache_delete(stat_cache_t *cache, const char* path, GError **gerr);
+void stat_cache_delete_parent(stat_cache_t *cache, const char *path);
+void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation);
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
-int stat_cache_prune(stat_cache_t *cache);
+void stat_cache_prune(stat_cache_t *cache);
 
 #endif

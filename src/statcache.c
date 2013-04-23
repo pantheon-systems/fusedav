@@ -99,6 +99,9 @@ void stat_cache_print_stats(void) {
     log_print(LOG_NOTICE, "  prune:       %u", FETCH(prune));
 }
 
+G_DEFINE_QUARK(LDB, leveldb)
+G_DEFINE_QUARK(BLOOM, bloomfilter)
+
 unsigned long stat_cache_get_local_generation(void) {
     static unsigned long counter = 0;
     unsigned long ret;
@@ -134,7 +137,7 @@ int print_stat(struct stat *stbuf, const char *title) {
         log_print(LOG_DEBUG, "  .st_mtime=%ld", stbuf->st_mtime);
         log_print(LOG_DEBUG, "  .st_ctime=%ld", stbuf->st_ctime);
     }
-    return 0;
+    return E_SC_SUCCESS;
 }
 
 void stat_cache_value_free(struct stat_cache_value *value) {
@@ -195,8 +198,8 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
-int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path) {
-    char *error = NULL;
+void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path, GError **gerr) {
+    char *errptr = NULL;
     char storage_path[PATH_MAX];
 
     BUMP(open);
@@ -204,8 +207,8 @@ int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supple
     // Check that a directory is set.
     if (!cache_path) {
         // @TODO: Before public release: Use a mkdtemp-based path.
-        log_print(LOG_WARNING, "No cache path specified.");
-        return -EINVAL;
+        g_set_error (gerr, leveldb_quark(), EINVAL, "stat_cache_open: no cache path specified.");
+        return;
     }
 
     snprintf(storage_path, PATH_MAX, "%s/leveldb", cache_path);
@@ -224,16 +227,17 @@ int stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supple
     // Use a fusedav logger.
     leveldb_options_set_info_log(supplemental->options, NULL);
 
-    *cache = leveldb_open(supplemental->options, storage_path, &error);
-    if (error) {
-        log_print(LOG_ERR, "ERROR opening db: %s", error);
-        return -1;
+    *cache = leveldb_open(supplemental->options, storage_path, &errptr);
+    if (errptr) {
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_open: Error opening db; %s.", errptr);
+        free(errptr);
+        return;
     }
 
-    return 0;
+    return;
 }
 
-int stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental) {
+void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental) {
 
     BUMP(close);
 
@@ -245,16 +249,15 @@ int stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplem
     }
     if (supplemental.lru != NULL)
         leveldb_cache_destroy(supplemental.lru);
-    return 0;
+    return;
 }
 
-struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path, bool skip_freshness_check) {
+struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path, bool skip_freshness_check, GError **gerr) {
     struct stat_cache_value *value = NULL;
     char *key;
     leveldb_readoptions_t *options;
     size_t vallen;
     char *errptr = NULL;
-    //void *f;
     time_t current_time;
 
     BUMP(value_get);
@@ -269,10 +272,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     leveldb_readoptions_destroy(options);
     free(key);
 
-    //log_print(LOG_DEBUG, "Mode: %04o", value->st.st_mode);
-
     if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "leveldb_get error: %s", errptr);
         free(errptr);
         free(value);
         return NULL;
@@ -284,7 +285,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (vallen != sizeof(struct stat_cache_value)) {
-        log_print(LOG_ERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        log_print(LOG_NOTICE, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
     if (!skip_freshness_check) {
@@ -312,23 +313,13 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         }
     }
 
-    /*
-    if ((f = file_cache_get(path))) {
-        value->st.st_size = file_cache_get_size(f);
-        file_cache_unref(cache, f);
-    }
-    */
-
-    //print_stat(&value->st, "CGET");
-
     return value;
 }
 
-int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp) {
+void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp, GError **gerr) {
     leveldb_writeoptions_t *options;
     char *key = NULL;
     char *errptr = NULL;
-    int r = 0;
 
     BUMP(updated_ch);
 
@@ -344,20 +335,20 @@ int stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t ti
     free(key);
 
     if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_updated_children: leveldb_set error: %s", errptr);
         free(errptr);
-        r = -1;
+        return;
     }
 
-    return r;
+    return;
 }
 
-time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
+time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, GError **gerr) {
     leveldb_readoptions_t *options;
     char *key = NULL;
     char *errptr = NULL;
     time_t *value = NULL;
-    time_t r;
+    time_t ret;
     size_t vallen;
 
     BUMP(read_updated);
@@ -369,28 +360,29 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path) {
     value = (time_t *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
     leveldb_readoptions_destroy(options);
 
-    if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_get error: %s", errptr);
-        free(errptr);
-    }
-
     free(key);
+
+    if (errptr != NULL) {
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_read_updated_children: leveldb_get error: %s", errptr);
+        free(errptr);
+        free(value);
+        return 0;
+    }
 
     if (value == NULL) return 0;
 
-    r = *value;
+    ret = *value;
 
-    //log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, r);
+    log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, ret);
 
     free(value);
-    return r;
+    return ret;
 }
 
-int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value) {
+void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr) {
     leveldb_writeoptions_t *options;
     char *errptr = NULL;
     char *key;
-    int r = 0;
 
     if (path == NULL) return 0;
 
@@ -403,29 +395,25 @@ int stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cach
 
     key = path2key(path, false);
     log_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
-    //print_stat(&value->st, "CSET");
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
     leveldb_writeoptions_destroy(options);
 
-    //log_print(LOG_DEBUG, "Setting key: %s", key);
-
     free(key);
 
     if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_set error: %s", errptr);
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_set: leveldb_set error: %s", errptr);
         free(errptr);
-        r = -1;
+        return;
     }
 
-    return r;
+    return;
 }
 
-int stat_cache_delete(stat_cache_t *cache, const char *path) {
+void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
     leveldb_writeoptions_t *options;
     char *key;
-    int r = 0;
     char *errptr = NULL;
 
     BUMP(delete);
@@ -440,17 +428,17 @@ int stat_cache_delete(stat_cache_t *cache, const char *path) {
     free(key);
 
     if (errptr != NULL) {
-        log_print(LOG_ERR, "leveldb_delete error: %s", errptr);
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_delete: leveldb_delete error: %s", errptr);
         free(errptr);
-        r = -1;
+        return;
     }
 
     log_print(LOG_DEBUG, "stat_cache_delete: exit %s", path);
 
-    return r;
+    return;
 }
 
-int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
+void stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
     char *p;
 
     BUMP(del_parent);
@@ -474,7 +462,7 @@ int stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
         stat_cache_delete(cache, path);
         stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1);
     }
-    return 0;
+    return;
 }
 
 static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
@@ -496,19 +484,11 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
     iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
-    //log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
+    log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
     iter->ldb_options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(iter->ldb_options, false);
     iter->ldb_iter = leveldb_create_iterator(cache, iter->ldb_options);
 
-    //log_print(LOG_DEBUG, "checking iterator validity");
-
-    //if (!leveldb_iter_valid(iter->ldb_iter)) {
-    //    log_print(LOG_ERR, "Initial LevelDB iterator is not valid.");
-    //    return NULL;
-    //}
-
-    //log_print(LOG_DEBUG, "seeking");
     leveldb_iter_seek(iter->ldb_iter, iter->key_prefix, iter->key_prefix_len);
 
     return iter;
@@ -524,19 +504,13 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
 
     assert(iter);
 
-    //log_print(LOG_DEBUG, "checking iterator validity");
-
     // If we've gone beyond the end of the dataset, quit.
     if (!leveldb_iter_valid(iter->ldb_iter)) {
         return NULL;
     }
 
-    //log_print(LOG_DEBUG, "fetching the key");
-
     key = leveldb_iter_key(iter->ldb_iter, &klen);
-    // log_print(LOG_DEBUG, "fetched key: %s", key);
-
-    //log_print(LOG_DEBUG, "fetched the key");
+    log_print(LOG_DEBUG, "fetched key: %s", key);
 
     // If we've gone beyond the end of the prefix range, quit.
     // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
@@ -545,14 +519,12 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
         return NULL;
     }
 
-    //log_print(LOG_DEBUG, "fetching the value");
-
     value = (const struct stat_cache_value *) leveldb_iter_value(iter->ldb_iter, &vlen);
 
     entry = malloc(sizeof(struct stat_cache_entry));
     entry->key = key;
     entry->value = value;
-    // log_print(LOG_DEBUG, "iter_current: key = %s; value = %s", key, value);
+    log_print(LOG_DEBUG, "iter_current: key = %s; value = %s", key, value);
     return entry;
 }
 
@@ -615,7 +587,8 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 
     //stat_cache_list_all(cache, path_prefix);
     if (!force) {
-        timestamp = stat_cache_read_updated_children(cache, path_prefix);
+        // Pass NULL for gerr; not tracking error, just zero return
+        timestamp = stat_cache_read_updated_children(cache, path_prefix, NULL);
 
         if (timestamp == 0) {
             return -STAT_CACHE_NO_DATA;
@@ -630,7 +603,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     }
 
     iter = stat_cache_iter_init(cache, path_prefix);
-    //log_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
+    log_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
 
     while ((entry = stat_cache_iter_current(iter))) {
         log_print(LOG_DEBUG, "key: %s", entry->key);
@@ -646,7 +619,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     if (found_entries == 0)
         return -STAT_CACHE_NO_DATA;
 
-    return 0;
+    return E_SC_SUCCESS;
 }
 
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
@@ -669,7 +642,7 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     return has_children;
 }
 
-int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation) {
+void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
 
@@ -689,10 +662,10 @@ int stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsign
     log_print(LOG_DEBUG, "stat_cache_delete_older: calling stat_cache_prune on %s", path_prefix);
     stat_cache_prune(cache);
 
-    return 0;
+    return;
 }
 
-int stat_cache_prune(stat_cache_t *cache) {
+vpod stat_cache_prune(stat_cache_t *cache) {
     // leveldb stuff
     leveldb_readoptions_t *roptions;
     leveldb_writeoptions_t *woptions;
@@ -729,16 +702,16 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     boptions = bloomfilter_init(0, NULL, 0, &errptr);
     if (boptions == NULL) {
-        log_print(LOG_ERR, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
-        if (errptr) free(errptr);
-        return -1;
+        g_set_error (gerr, bloomfilter_quark(), E_SC_BLOOMERR, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
+        free(errptr);
+        return;
     }
 
     // We need to make sure the base_directory is in the filter before continuing
     log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
     if (bloomfilter_add(boptions, base_directory, strlen(base_directory)) < 0) {
-        log_print(LOG_ERR, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
-        return -1;
+        g_set_error (gerr, bloomfilter_quark(), E_SC_BLOOMERR, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+        return;
     }
 
     log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", base_directory);
@@ -876,10 +849,6 @@ int stat_cache_prune(stat_cache_t *cache) {
         log_print(LOG_DEBUG, "stat_cache_prune: updating pass %d", pass);
     }
 
-    // REVIEW: Can I just continue on with the same iterator? Seems like this is no different
-    // than what we were doing above on the multiple passes. The previous implementation
-    // created a whole new iterator
-
     // Handle updated_children entries
     leveldb_iter_seek(iter, "updated_children:", strlen("updated_children:") + 1);
 
@@ -938,5 +907,5 @@ int stat_cache_prune(stat_cache_t *cache) {
 
     bloomfilter_destroy(boptions);
 
-    return 0;
+    return;
 }
