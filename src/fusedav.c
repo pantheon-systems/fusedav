@@ -1774,8 +1774,9 @@ static void *inject_error(void *ptr) {
     for (int idx = 0; idx < 512; idx++) {
         sleep(16);
         tdx = rand() % (fcerrors + scerrors);
+        log_print(LOG_NOTICE, "Uninjecting %d; injecting %d", fdx, tdx);
         filecache_inject_error(fcerrors, tdx, fdx);
-        stat_cache_inject_error(fcerrors, tdx, fdx);
+        statcache_inject_error(fcerrors, tdx, fdx);
         fdx = tdx;
     }
     return NULL;
