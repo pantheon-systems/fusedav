@@ -1198,10 +1198,10 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time, GError *
     return ret;
 }
 
-void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first) {
+void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
-    GError *gerr = NULL;
+    GError *tmpgerr = NULL;
 
     size_t klen;
     char fname[PATH_MAX];
@@ -1245,8 +1245,8 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first) {
             // If the cache file doesn't exist, delete the entry from the level_db cache
             ret = access(fname, F_OK);
             if (ret) {
-                filecache_delete(cache, path, true, &gerr);
-                if (gerr) {
+                filecache_delete(cache, path, true, &tmpgerr);
+                if (tmpgerr) {
                     g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: filecache_delete on failed access");
                     ++issues;
                     goto finish;
@@ -1258,8 +1258,8 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first) {
             else if ((first && pdata->last_server_update == 0) ||
                      ((pdata->last_server_update != 0) && (starttime - pdata->last_server_update > AGE_OUT_THRESHOLD))) {
                 log_print(LOG_DEBUG, "filecache_cleanup: Unlinking %s", fname);
-                filecache_delete(cache, path, true, &gerr);
-                if (gerr) {
+                filecache_delete(cache, path, true, &tmpgerr);
+                if (tmpgerr) {
                     g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: filecache_delete on aged out");
                     ++issues;
                     goto finish;
@@ -1289,9 +1289,9 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first) {
 
     // check filestamps on each file in directory. Set back a second to avoid unlikely but
     // possible race where we are updating a file inside the window where we are starting the cache cleanup
-    ret = cleanup_orphans(cache_path, (starttime - 1), &gerr);
-    if (gerr) {
-        g_set_error(&gerr, system_quark(), errno, "filecache_cleanup: errors cleaning orphans");
+    ret = cleanup_orphans(cache_path, (starttime - 1), &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: errors cleaning orphans");
     }
 
 finish:

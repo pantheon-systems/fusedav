@@ -70,8 +70,8 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
 void stat_cache_value_free(struct stat_cache_value *value);
 
 void stat_cache_delete(stat_cache_t *cache, const char* path, GError **gerr);
-void stat_cache_delete_parent(stat_cache_t *cache, const char *path);
-void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation);
+void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr);
+void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation, GError **gerr);
 
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);

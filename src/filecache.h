@@ -46,6 +46,6 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr);
 int filecache_fd(struct fuse_file_info *info);
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr);
-void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first);
+void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr);
 
 #endif

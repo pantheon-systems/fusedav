@@ -497,7 +497,11 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
             return -EIO;
         }
 
-        stat_cache_delete_older(config->cache, path, min_generation);
+        stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            return -1;
+        }
     }
 
     // Mark the directory contents as updated.
@@ -505,7 +509,7 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
     stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
-        return processed_gerror("update_directory: ", *gerr);
+        return -1;
     }
     return 0;
 }
@@ -586,7 +590,7 @@ static int dav_readdir(
 }
 
 static void getattr_propfind_callback(__unused void *userdata, const char *path, struct stat st,
-        unsigned long status_code, GError **gerr) {
+        unsigned long status_code) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     GError *tmpgerr = NULL;
@@ -599,7 +603,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         log_print(LOG_DEBUG, "getattr_propfind_callback: Deleting from stat cache: %s", path);
         stat_cache_delete(config->cache, path, &tmpgerr);
         if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
+            log_print(LOG_WARNING, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
             return;
         }
     }
@@ -607,7 +611,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         log_print(LOG_DEBUG, "getattr_propfind_callback: Adding to stat cache: %s", path);
         stat_cache_value_set(config->cache, path, &value, &tmpgerr);
         if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
+            log_print(LOG_WARNING, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
             return;
         }
     }
@@ -766,7 +770,12 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
                 }
                 // Don't delete the base directory (aka <site>/files) if it happens to be the parent
                 if (strcmp(parent_path, base_directory)) {
-                    stat_cache_delete_parent(config->cache, path);
+                    stat_cache_delete_parent(config->cache, path, &subgerr);
+                    if (subgerr) {
+                        g_propagate_error(gerr, subgerr);
+                        ret = processed_gerror("get_stat: ", *gerr);
+                        goto fail;
+                    }
                 }
                 else {
                     log_print(LOG_INFO, "Parent path is same as base directory; not deleting: %s", parent_path);
@@ -1744,6 +1753,7 @@ static int config_privileges(struct fusedav_config *config) {
 
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
+    GError *gerr = NULL;
     bool first = true;
 
     log_print(LOG_DEBUG, "enter cache_cleanup");
@@ -1751,9 +1761,16 @@ static void *cache_cleanup(void *ptr) {
     while (true) {
         // We would like to do cleanup on startup, to resolve issues
         // from errant stat and file caches
-        filecache_cleanup(config->cache, config->cache_path, first);
+        filecache_cleanup(config->cache, config->cache_path, first, &gerr);
+        if (gerr) {
+            processed_gerror("cache_cleanup: ", gerr);
+            g_clear_error(&gerr);
+        }
         first = false;
         stat_cache_prune(config->cache);
+        if (gerr) {
+            processed_gerror("cache_cleanup: ", gerr);
+        }
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;

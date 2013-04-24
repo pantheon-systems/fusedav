@@ -254,6 +254,7 @@ void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supple
 
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path, bool skip_freshness_check, GError **gerr) {
     struct stat_cache_value *value = NULL;
+    GError *tmpgerr = NULL;
     char *key;
     leveldb_readoptions_t *options;
     size_t vallen;
@@ -302,7 +303,11 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
             // If that's too old, check the last update of the directory.
             directory = strip_trailing_slash(path_parent(path), &is_dir);
-            directory_updated = stat_cache_read_updated_children(cache, directory);
+            directory_updated = stat_cache_read_updated_children(cache, directory, &tmpgerr);
+            if (tmpgerr) {
+                g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_value_get: ");
+                return NULL;
+            }
             //log_print(LOG_DEBUG, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
             free(directory);
             if (current_time - directory_updated > CACHE_TIMEOUT) {
@@ -384,7 +389,10 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     char *errptr = NULL;
     char *key;
 
-    if (path == NULL) return 0;
+    if (path == NULL) {
+        log_print(LOG_WARNING, "stat_cache_value_set: input path is null");
+        return;
+    }
 
     BUMP(value_set);
 
@@ -438,8 +446,9 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
     return;
 }
 
-void stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
+void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr) {
     char *p;
+    GError *tmpgerr = NULL;
 
     BUMP(del_parent);
 
@@ -453,14 +462,30 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path) {
                 p[l-1] = 0;
         }
 
-        stat_cache_delete(cache, p);
-        stat_cache_updated_children(cache, p, time(NULL) - CACHE_TIMEOUT - 1);
+        stat_cache_delete(cache, p, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
+        }
+        else {
+            stat_cache_updated_children(cache, p, time(NULL) - CACHE_TIMEOUT - 1, &tmpgerr);
+            if (tmpgerr) {
+                g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
+            }
+        }
         free(p);
     }
     else {
         log_print(LOG_DEBUG, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
-        stat_cache_delete(cache, path);
-        stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1);
+        stat_cache_delete(cache, path, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
+        }
+        else {
+            stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1, &tmpgerr);
+            if (tmpgerr) {
+                g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
+            }
+        }
     }
     return;
 }
@@ -642,9 +667,10 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     return has_children;
 }
 
-void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation) {
+void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation, GError **gerr) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
+    GError *tmpgerr = NULL;
 
     BUMP(delete_older);
 
@@ -652,7 +678,12 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
-            stat_cache_delete(cache, key2path(entry->key));
+            stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
+            if (tmpgerr) {
+                g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
+                free(entry);
+                return;
+            }
         }
         free(entry);
         stat_cache_iter_next(iter);
@@ -665,7 +696,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     return;
 }
 
-vpod stat_cache_prune(stat_cache_t *cache) {
+void stat_cache_prune(stat_cache_t *cache) {
     // leveldb stuff
     leveldb_readoptions_t *roptions;
     leveldb_writeoptions_t *woptions;
@@ -702,7 +733,7 @@ vpod stat_cache_prune(stat_cache_t *cache) {
 
     boptions = bloomfilter_init(0, NULL, 0, &errptr);
     if (boptions == NULL) {
-        g_set_error (gerr, bloomfilter_quark(), E_SC_BLOOMERR, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
+        log_print(LOG_NOTICE, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
         free(errptr);
         return;
     }
@@ -710,7 +741,7 @@ vpod stat_cache_prune(stat_cache_t *cache) {
     // We need to make sure the base_directory is in the filter before continuing
     log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
     if (bloomfilter_add(boptions, base_directory, strlen(base_directory)) < 0) {
-        g_set_error (gerr, bloomfilter_quark(), E_SC_BLOOMERR, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+        log_print(LOG_NOTICE, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
         return;
     }
 
@@ -841,7 +872,8 @@ vpod stat_cache_prune(stat_cache_t *cache) {
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
                     log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\'", path);
-                    stat_cache_delete(cache, path);
+                    // REVIEW: Can we ignore gerrors here?
+                    stat_cache_delete(cache, path, NULL);
                 }
             }
         }
