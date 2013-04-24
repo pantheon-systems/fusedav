@@ -396,7 +396,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     //int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    GError *gerr;
+    GError *gerr = NULL;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
