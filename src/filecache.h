@@ -28,9 +28,16 @@
 #include "session.h"
 #include "fuse.h"
 
-#define E_FC_PDATANULL 1
-#define E_FC_LDBERR 2
-#define E_FC_CURLERR 3
+/* Ultimately, it will be a dav_* function returning the value, so set it up for appropriate
+ * values here, i.e. errno-like values. If curl errors occur, they are quite reasonably
+ * reported as unspecified IO error, so EIO fits. For leveldb, EIO is not a perfect fit,
+ * but since it might get propagated to all kinds of dav_* function, EIO seems the closest
+ * match. The closest approximation to PDATANULL is ENOENT; it means whenever we're trying
+ * to do an operation, we don't have the file in the cache, so we can't update, etc.
+ */
+#define E_FC_PDATANULL ENOENT
+#define E_FC_LDBERR EIO
+#define E_FC_CURLERR EIO
 
 typedef leveldb_t filecache_t;
 
@@ -47,5 +54,9 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr);
 int filecache_fd(struct fuse_file_info *info);
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr);
 void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr);
+
+// error injection mechanism; should only run during development when injecting errors
+int filecache_errors(void);
+void filecache_inject_error(int fcerrors, bool tdx, bool fdx);
 
 #endif

@@ -28,7 +28,6 @@
 #include <malloc.h>
 #include <pthread.h>
 #include <assert.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <sys/stat.h>
 #include <limits.h>
@@ -99,8 +98,22 @@ void stat_cache_print_stats(void) {
     log_print(LOG_NOTICE, "  prune:       %u", FETCH(prune));
 }
 
+// GError mechanism. The only gerrors we return from statcache are leveldb errors
 G_DEFINE_QUARK(LDB, leveldb)
-G_DEFINE_QUARK(BLOOM, bloomfilter)
+
+// error injection routines
+#define STATCACHE_ERRORS 7
+// counting on global being automatically initialized to all 0
+static bool inject_error[STATCACHE_ERRORS] = {false};
+
+int statcache_errors(void) {
+    return STATCACHE_ERRORS;
+}
+
+void statcache_inject_error(int fcerrors, bool tdx, bool fdx) {
+    if (fdx >= fcerrors) inject_error[fdx - fcerrors] = false;
+    if (tdx < fcerrors) inject_error[tdx - fcerrors] = true;
+}
 
 unsigned long stat_cache_get_local_generation(void) {
     static unsigned long counter = 0;
@@ -205,7 +218,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     BUMP(open);
 
     // Check that a directory is set.
-    if (!cache_path) {
+    if (!cache_path || inject_error[0]) {
         // @TODO: Before public release: Use a mkdtemp-based path.
         g_set_error (gerr, leveldb_quark(), EINVAL, "stat_cache_open: no cache path specified.");
         return;
@@ -228,7 +241,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     leveldb_options_set_info_log(supplemental->options, NULL);
 
     *cache = leveldb_open(supplemental->options, storage_path, &errptr);
-    if (errptr) {
+    if (errptr || inject_error[1]) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_open: Error opening db; %s.", errptr);
         free(errptr);
         return;
@@ -273,7 +286,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     leveldb_readoptions_destroy(options);
     free(key);
 
-    if (errptr != NULL) {
+    if (errptr != NULL || inject_error[2]) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "leveldb_get error: %s", errptr);
         free(errptr);
         free(value);
@@ -339,7 +352,7 @@ void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t t
 
     free(key);
 
-    if (errptr != NULL) {
+    if (errptr != NULL || inject_error[3]) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_updated_children: leveldb_set error: %s", errptr);
         free(errptr);
         return;
@@ -367,7 +380,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
 
     free(key);
 
-    if (errptr != NULL) {
+    if (errptr != NULL || inject_error[4]) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_read_updated_children: leveldb_get error: %s", errptr);
         free(errptr);
         free(value);
@@ -390,7 +403,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     char *key;
 
     if (path == NULL) {
-        log_print(LOG_WARNING, "stat_cache_value_set: input path is null");
+        log_print(LOG_NOTICE, "stat_cache_value_set: input path is null");
         return;
     }
 
@@ -410,7 +423,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
 
     free(key);
 
-    if (errptr != NULL) {
+    if (errptr != NULL || inject_error[5]) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_set: leveldb_set error: %s", errptr);
         free(errptr);
         return;
@@ -435,7 +448,7 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
     leveldb_writeoptions_destroy(options);
     free(key);
 
-    if (errptr != NULL) {
+    if (errptr != NULL || inject_error[6]) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_delete: leveldb_delete error: %s", errptr);
         free(errptr);
         return;

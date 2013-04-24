@@ -396,7 +396,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     //int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    GError *gerr = NULL;
+    GError *gerr = NULL ;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -1188,18 +1188,19 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
-    // path might be NULL if we are accessing a bare file descriptor. Since
-    // pulling the file descriptor is the job of filecache, we'll have
-    // to detect there.
-    filecache_sync(config->cache, path, info, true, &gerr);
-    if (!gerr) {
-        struct stat_cache_value value;
-        int fd = filecache_fd(info);
-        // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
-        memset(&value, 0, sizeof(struct stat_cache_value));
-        // mode = 0 (unspecified), is_dir = false; fd to get size
-        fill_stat_generic(&(value.st), 0, false, fd);
-        stat_cache_value_set(config->cache, path, &value, &gerr);
+    // path might be NULL if we are accessing a bare file descriptor.
+    // REVIEW: added check for null path
+    if (path != NULL) {
+        filecache_sync(config->cache, path, info, true, &gerr);
+        if (!gerr) {
+            struct stat_cache_value value;
+            int fd = filecache_fd(info);
+            // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+            memset(&value, 0, sizeof(struct stat_cache_value));
+            // mode = 0 (unspecified), is_dir = false; fd to get size
+            fill_stat_generic(&(value.st), 0, false, fd);
+            stat_cache_value_set(config->cache, path, &value, &gerr);
+        }
     }
 
     filecache_close(info, &gerr2);
@@ -1252,7 +1253,6 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
 
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    struct stat_cache_value value;
     GError *gerr = NULL;
     int fd;
 
@@ -1260,25 +1260,27 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
 
     path = path_cvt(path);
 
-    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
-    memset(&value, 0, sizeof(struct stat_cache_value));
-
     log_print(LOG_INFO, "CALLBACK: dav_flush(%s)", path ? path : "null path");
 
-    // If path is NULL because we are accessing a bare file descriptor,
-    // let filecache_sync handle it since we need to get the file
-    // descriptor there
-    filecache_sync(config->cache, path, info, true, &gerr);
-    if (gerr) {
-        return processed_gerror("dav_flush: ", gerr);
-    }
+    // path might be NULL because we are accessing a bare file descriptor,
+    // REVIEW: added check for NULL path
+    if (path != NULL) {
+        // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+        struct stat_cache_value value;
+        memset(&value, 0, sizeof(struct stat_cache_value));
 
-    fd = filecache_fd(info);
-    // mode = 0 (unspecified), is_dir = false; fd to get size
-    fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value, &gerr);
-    if (gerr) {
-        return processed_gerror("dav_flush: ", gerr);
+        filecache_sync(config->cache, path, info, true, &gerr);
+        if (gerr) {
+            return processed_gerror("dav_flush: ", gerr);
+        }
+
+        fd = filecache_fd(info);
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(&(value.st), 0, false, fd);
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+        if (gerr) {
+            return processed_gerror("dav_flush: ", gerr);
+        }
     }
 
     return 0;
@@ -1348,6 +1350,7 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
     if (value == NULL) {
         // Use a stack variable since that's how we do it everywhere else
         struct stat_cache_value nvalue;
+        memset(&nvalue, 0, sizeof(struct stat_cache_value));
         // mode = 0 (unspecified), is_dir = false; fd = -1, no need to get size on new file
         fill_stat_generic(&(nvalue.st), 0, false, -1);
         stat_cache_value_set(config->cache, path, &nvalue, &tmpgerr);
@@ -1437,21 +1440,23 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
         return bytes_written;
     }
 
-    // Let sync handle potential null path
-    filecache_sync(config->cache, path, info, false, &gerr);
-    if (gerr) {
-        return processed_gerror("dav_write: ", gerr);
-    }
+    // REVIEW: added check for NULL path
+    if (path != NULL) {
+        filecache_sync(config->cache, path, info, false, &gerr);
+        if (gerr) {
+            return processed_gerror("dav_write: ", gerr);
+        }
 
-    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
-    memset(&value, 0, sizeof(struct stat_cache_value));
+        // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+        memset(&value, 0, sizeof(struct stat_cache_value));
 
-    fd = filecache_fd(info);
-    // mode = 0 (unspecified), is_dir = false; fd to get size
-    fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value, &gerr);
-    if (gerr) {
-        return processed_gerror("dav_write: ", gerr);
+        fd = filecache_fd(info);
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(&(value.st), 0, false, fd);
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+        if (gerr) {
+            return processed_gerror("dav_write: ", gerr);
+        }
     }
 
    return bytes_written;
@@ -1751,6 +1756,31 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
+// Set to true to inject errors; Make sure it is false for production
+static bool injecting_errors = false;
+static void *inject_error(void *ptr) {
+    int tdx = 0;
+    int fdx = 0;
+    int fcerrors; // number of error locations in filecache
+    int scerrors; // number of error locations in statcache
+    if(!injecting_errors) return NULL;
+
+    log_print(LOG_NOTICE, "INJECTING ERRORS!");
+
+    srand(time(NULL));
+    fcerrors = filecache_errors();
+    fcerrors = statcache_errors();
+
+    for (int idx = 0; idx < 512; idx++) {
+        sleep(16);
+        tdx = rand() % (fcerrors + scerrors);
+        filecache_inject_error(fcerrors, tdx, fdx);
+        stat_cache_inject_error(fcerrors, tdx, fdx);
+        fdx = tdx;
+    }
+    return NULL;
+}
+
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
     GError *gerr = NULL;
@@ -1767,9 +1797,11 @@ static void *cache_cleanup(void *ptr) {
             g_clear_error(&gerr);
         }
         first = false;
+        // REVIEW: JB FIX ME add back gerror
         stat_cache_prune(config->cache);
         if (gerr) {
             processed_gerror("cache_cleanup: ", gerr);
+            g_clear_error(&gerr);
         }
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
@@ -1786,7 +1818,8 @@ int main(int argc, char *argv[]) {
     char *mountpoint = NULL;
     GError *gerr = NULL;
     int ret = 1;
-    pthread_t filecache_cleanup_thread;
+    pthread_t cache_cleanup_thread;
+    pthread_t error_injection_thread;
     int fail = 0;
 
     // Initialize the statistics and configuration.
@@ -1875,6 +1908,14 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
+    // Error injection mechanism. Should only be run during development.
+    if (injecting_errors) {
+        if (pthread_create(&error_injection_thread, NULL, inject_error, NULL)) {
+            log_print(LOG_INFO, "Failed to create error injection thread.");
+            goto finish;
+        }
+    }
+
     // Ensure directory exists for file content cache.
     filecache_init(config.cache_path, &gerr);
     if (gerr) {
@@ -1885,6 +1926,7 @@ int main(int argc, char *argv[]) {
 
     // Open the stat cache.
     stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path, &gerr);
+    // REVIEW: JB FIX ME use gerror return mechanism
     if (gerr) {
         log_print(LOG_CRIT, "Failed to open the stat cache -- %s.", gerr->message);
         config.cache = NULL;
@@ -1892,7 +1934,7 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, "Opened stat cache.");
 
-    if (pthread_create(&filecache_cleanup_thread, NULL, cache_cleanup, &config)) {
+    if (pthread_create(&cache_cleanup_thread, NULL, cache_cleanup, &config)) {
         log_print(LOG_CRIT, "Failed to create cache cleanup thread.");
         goto finish;
     }

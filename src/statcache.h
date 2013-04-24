@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <leveldb/c.h>
 #include <glib.h>
+#include <errno.h>
 
 #define RGEN_LEN 128
 #define STAT_CACHE_OLD_DATA 2
@@ -29,8 +30,12 @@
 
 #define STAT_CACHE_NEGATIVE_TTL 3
 
+/* Since ultimately we return errno-like values, assign them here to our errors.
+ * The only one is a leveldb error. Use EIO, since it indicates something unusual
+ * has happened. This is probably the best approximation.
+ */
 #define E_SC_SUCCESS 0
-#define E_SC_LDBERR 1
+#define E_SC_LDBERR EIO
 
 typedef leveldb_t stat_cache_t;
 
@@ -77,4 +82,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) 
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 void stat_cache_prune(stat_cache_t *cache);
 
+// error injection mechanism; should only run during development when injecting errors
+int statcache_errors(void);
+void stat_cache_inject_error(int fcerrors, bool tdx, bool fdx);
 #endif
