@@ -1769,7 +1769,7 @@ static void *inject_error(void *ptr) {
 
     srand(time(NULL));
     fcerrors = filecache_errors();
-    fcerrors = statcache_errors();
+    scerrors = statcache_errors();
 
     for (int idx = 0; idx < 512; idx++) {
         sleep(16);
