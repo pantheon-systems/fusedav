@@ -132,6 +132,7 @@ struct fusedav_config {
     char *ca_certificate;
     char *client_certificate;
     char *client_certificate_password;
+    char *cache_uri;
     int  verbosity;
     bool nodaemon;
     bool ignoreutimens;
@@ -164,6 +165,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
      FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
+     FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
@@ -1684,9 +1686,6 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o ca_certificate=PATH\n"
                 "        -o client_certificate=PATH\n"
                 "        -o client_certificate_password=STRING\n"
-                "    Locking:\n"
-                "        -o lock_timeout=NUM\n"
-                "        -o lock_on_mount\n"
                 "    File and directory attributes:\n"
                 "        -o uid=STRING (masks file owner)\n"
                 "        -o gid=STRING (masks file group)\n"
@@ -1697,6 +1696,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o progressive_propfind\n"
                 "        -o refresh_dir_for_file_stat\n"
                 "        -o singlethread\n"
+                "        -o cache_uri=STRING\n"
                 "    Daemon, logging, and process privilege:\n"
                 "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
@@ -1757,7 +1757,7 @@ static int config_privileges(struct fusedav_config *config) {
 }
 
 // Set to true to inject errors; Make sure it is false for production
-bool injecting_errors = true;
+bool injecting_errors = false;
 static void *inject_error(void *ptr) {
     int tdx = 0;
     int fdx = 0;
@@ -1773,7 +1773,7 @@ static void *inject_error(void *ptr) {
     scerrors = statcache_errors();
 
     for (int idx = 0; idx < 512; idx++) {
-        sleep(16);
+        sleep(4);
         tdx = rand() % (fcerrors + scerrors);
         log_print(LOG_INFO, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
         filecache_inject_error(fcerrors, tdx, fdx);
@@ -1799,12 +1799,7 @@ static void *cache_cleanup(void *ptr) {
             g_clear_error(&gerr);
         }
         first = false;
-        // REVIEW: JB FIX ME add back gerror
         stat_cache_prune(config->cache);
-        if (gerr) {
-            processed_gerror("cache_cleanup: ", config->cache_path, gerr);
-            g_clear_error(&gerr);
-        }
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
@@ -1881,6 +1876,9 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
+    if (config.cache_uri)
+        log_print(LOG_INFO, "Using cache URI: %s", config.cache_uri);
+
     if (!(ch = fuse_mount(mountpoint, &args))) {
         log_print(LOG_CRIT, "Failed to mount FUSE file system.");
         goto finish;
@@ -1928,9 +1926,8 @@ int main(int argc, char *argv[]) {
 
     // Open the stat cache.
     stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path, &gerr);
-    // REVIEW: JB FIX ME use gerror return mechanism
     if (gerr) {
-        log_print(LOG_CRIT, "Failed to open the stat cache -- %s.", gerr->message);
+        processed_gerror("main: ", config.cache_path, gerr);
         config.cache = NULL;
         goto finish;
     }

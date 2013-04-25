@@ -108,8 +108,13 @@ static bool inject_error_list[STATCACHE_ERRORS] = {false};
 extern bool injecting_errors;
 
 static bool inject_error(int edx) {
+    bool ret;
     if (!injecting_errors) return false;
-    return inject_error_list[edx];
+    ret = inject_error_list[edx];
+    if (ret) log_print(LOG_NOTICE, "inject_error: %d %d", edx, ret);
+    // Turn the error off
+    inject_error_list[edx] = false;
+    return ret;
 }
 
 int statcache_errors(void) {
@@ -296,7 +301,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     free(key);
 
     if (errptr != NULL || inject_error(2)) {
-        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "leveldb_get error: %s", errptr);
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_get: leveldb_get error: %s", errptr);
         free(errptr);
         free(value);
         return NULL;
@@ -755,7 +760,7 @@ void stat_cache_prune(stat_cache_t *cache) {
 
     boptions = bloomfilter_init(0, NULL, 0, &errptr);
     if (boptions == NULL) {
-        log_print(LOG_NOTICE, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
+        log_print(LOG_WARNING, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
         free(errptr);
         return;
     }
@@ -763,7 +768,7 @@ void stat_cache_prune(stat_cache_t *cache) {
     // We need to make sure the base_directory is in the filter before continuing
     log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
     if (bloomfilter_add(boptions, base_directory, strlen(base_directory)) < 0) {
-        log_print(LOG_NOTICE, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+        log_print(LOG_WARNING, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
         return;
     }
 

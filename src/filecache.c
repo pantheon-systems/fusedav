@@ -42,6 +42,7 @@
 #include "log.h"
 
 #define REFRESH_INTERVAL 3
+#define CACHE_FILE_ENTROPY 20
 
 // Remove filecache files older than 8 days
 #define AGE_OUT_THRESHOLD 691200
@@ -136,8 +137,13 @@ static bool inject_error_list[FILECACHE_ERRORS] = {false};
 extern bool injecting_errors;
 
 static bool inject_error(int edx) {
+    bool ret;
     if (!injecting_errors) return false;
-    return inject_error_list[edx];
+    ret = inject_error_list[edx];
+    if (ret) log_print(LOG_NOTICE, "inject_error: %d %d", edx, ret);
+    // Turn the error off
+    inject_error_list[edx] = false;
+    return ret;
 }
 
 int filecache_errors(void) {
@@ -185,10 +191,11 @@ static char *path2key(const char *path) {
 
 // creates a new cache file
 static void new_cache_file(const char *cache_path, char *cache_file_path, fd_t *fd, GError **gerr) {
+    char entropy[CACHE_FILE_ENTROPY + 1];
 
     BUMP(cache_file);
 
-    snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-XXXXXX", cache_path);
+    snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-%s-XXXXXX", cache_path, entropy);
     log_print(LOG_DEBUG, "new_cache_file: Using pattern %s", cache_file_path);
     if ((*fd = mkstemp(cache_file_path)) < 0 || inject_error(2)) {
         g_set_error (gerr, system_quark(), errno, "new_cache_file: Failed mkstemp");
