@@ -196,6 +196,10 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr);
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
 
+// GError mechanisms
+G_DEFINE_QUARK(FUSEDAV, fusedav)
+static bool inject_error(int edx);
+
 static void sigsegv_handler(int signum) {
     assert(signum == 11);
     log_print(LOG_CRIT, "Segmentation fault.");
@@ -472,15 +476,17 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
 
         propfind_result = simple_propfind_with_redirect(update_path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
         free(update_path);
-        if (propfind_result == 0) {
+        // REVIEW: double check this logic
+        if (propfind_result == 0 && !inject_error(0)) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
         }
-        else if (propfind_result == -ESTALE) {
+        else if (propfind_result == -ESTALE && !inject_error(0)) {
             log_print(LOG_DEBUG, "Freshen PROPFIND failed because of staleness.");
         }
         else {
-            return -EIO;
+            g_set_error(gerr, fusedav_quark(), EIO, "update_directory: propfind failed: ");
+            return -1;
         }
     }
 
@@ -494,11 +500,13 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
-        if (propfind_result < 0) {
-            log_print(LOG_ERR, "update_directory: Complete PROPFIND failed on %s", path);
-            return -EIO;
+        if (propfind_result < 0 || inject_error(1)) {
+            g_set_error(gerr, fusedav_quark(), EIO, "update_directory: Complete PROPFIND failed on %s", path);
+            return -1;
         }
 
+        // REVIEW: We will now return error on failed stat_cache_delete_older rather than just falling through
+        // and returning 0
         stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -506,6 +514,8 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
         }
     }
 
+    // REVIEW: We will now return error on failed stat_cache_updated_children rather than just falling through
+    // and returning 0
     // Mark the directory contents as updated.
     log_print(LOG_DEBUG, "Marking directory %s as updated at timestamp %lu.", path, timestamp);
     stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
@@ -756,6 +766,10 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             ret = processed_gerror("get_stat: ", path, *gerr);
             goto fail;
         }
+        // REVIEW: I don't think the following can ever execute.
+        // update_directory returns -1 and gerr on any failure, which will be captured above
+        // This is because of the change in simple_propfind and how it handles 404's.
+        // How do we want to manage grace and saints?
         if (ret < 0) {
 
             // If the parent is not on the server, treat the child as not available,
@@ -1758,11 +1772,40 @@ static int config_privileges(struct fusedav_config *config) {
 
 // Set to true to inject errors; Make sure it is false for production
 bool injecting_errors = false;
-static void *inject_error(void *ptr) {
+
+// error injection routines
+#define FUSEDAV_ERRORS 2
+// counting on global being automatically initialized to all 0
+static bool inject_error_list[FUSEDAV_ERRORS] = {false};
+
+static bool inject_error(int edx) {
+    bool ret;
+    if (!injecting_errors) return false;
+    ret = inject_error_list[edx];
+    if (ret) log_print(LOG_NOTICE, "inject_error: %d %d", edx, ret);
+    // Turn the error off
+    inject_error_list[edx] = false;
+    return ret;
+}
+
+static int fusedav_errors(void) {
+    return FUSEDAV_ERRORS;
+}
+
+static void fusedav_inject_error(int start, int tdx, int fdx) {
+    if (fdx >= start && fdx < fusedav_errors()) inject_error_list[fdx] = false;
+    if (tdx >= start && tdx < fusedav_errors()) inject_error_list[tdx] = true;
+    log_print(LOG_INFO, "filecache_inject_error: %d -- %d:%d %d:%d",
+        start, fdx, (fdx >= start && fdx < fusedav_errors()) ? inject_error_list[fdx] : 0,
+        tdx, (tdx >= start && tdx < fusedav_errors()) ? inject_error_list[tdx] : 0);
+}
+
+static void *inject_error_mechanism(void *ptr) {
     int tdx = 0;
     int fdx = 0;
     int fcerrors; // number of error locations in filecache
     int scerrors; // number of error locations in statcache
+    int fderrors; // number of error locations in statcache
     if(!injecting_errors) return NULL;
 
     // ptr stuff just to get rid of warning message about unused parameter
@@ -1771,14 +1814,16 @@ static void *inject_error(void *ptr) {
     srand(time(NULL));
     fcerrors = filecache_errors();
     scerrors = statcache_errors();
+    fderrors = fusedav_errors();
 
     // Limits the extent of the storm. Some protection against accidental setting.
     for (int idx = 0; idx < 512; idx++) {
         sleep(4);
         tdx = rand() % (fcerrors + scerrors);
         log_print(LOG_INFO, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
-        filecache_inject_error(fcerrors, tdx, fdx);
-        statcache_inject_error(fcerrors, tdx, fdx);
+        fusedav_inject_error(0, tdx, fdx);
+        filecache_inject_error(fderrors, tdx, fdx);
+        statcache_inject_error(fderrors + fcerrors, tdx, fdx);
         fdx = tdx;
     }
     return NULL;
@@ -1911,7 +1956,7 @@ int main(int argc, char *argv[]) {
 
     // Error injection mechanism. Should only be run during development.
     if (injecting_errors) {
-        if (pthread_create(&error_injection_thread, NULL, inject_error, NULL)) {
+        if (pthread_create(&error_injection_thread, NULL, inject_error_mechanism, NULL)) {
             log_print(LOG_INFO, "Failed to create error injection thread.");
             goto finish;
         }

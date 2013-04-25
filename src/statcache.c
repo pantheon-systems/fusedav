@@ -121,12 +121,12 @@ int statcache_errors(void) {
     return STATCACHE_ERRORS;
 }
 
-void statcache_inject_error(int fcerrors, int tdx, int fdx) {
-    if (fdx >= fcerrors) inject_error_list[fdx - fcerrors] = false;
-    if (tdx >= fcerrors) inject_error_list[tdx - fcerrors] = true;
-    log_print(LOG_INFO, "statcache_inject_error: %d -- %d:%d %d:%d",
-        fcerrors, fdx, fdx >= fcerrors ? inject_error_list[fdx - fcerrors] : 0, tdx,
-        tdx >= fcerrors ? inject_error_list[tdx - fcerrors] : 0);
+void statcache_inject_error(int start, int tdx, int fdx) {
+    if (fdx >= start && fdx < (statcache_errors() + start)) inject_error_list[fdx] = false;
+    if (tdx >= start && tdx < (statcache_errors() + start)) inject_error_list[tdx] = true;
+    log_print(LOG_INFO, "filecache_inject_error: %d -- %d:%d %d:%d",
+        start, fdx, (fdx >= start && fdx < (statcache_errors() + start)) ? inject_error_list[fdx] : 0,
+        tdx, (tdx >= start && tdx < (statcache_errors() + start)) ? inject_error_list[tdx] : 0);
 }
 
 unsigned long stat_cache_get_local_generation(void) {

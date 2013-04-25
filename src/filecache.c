@@ -150,12 +150,12 @@ int filecache_errors(void) {
     return FILECACHE_ERRORS;
 }
 
-void filecache_inject_error(int fcerrors, int tdx, int fdx) {
-    if (fdx < fcerrors) inject_error_list[fdx] = false;
-    if (tdx < fcerrors) inject_error_list[tdx] = true;
+void filecache_inject_error(int start, int tdx, int fdx) {
+    if (fdx >= start && fdx < (filecache_errors() + start)) inject_error_list[fdx] = false;
+    if (tdx >= start && tdx < (filecache_errors() + start)) inject_error_list[tdx] = true;
     log_print(LOG_INFO, "filecache_inject_error: %d -- %d:%d %d:%d",
-        fcerrors, fdx, fdx < fcerrors ? inject_error_list[fdx] : 0,
-        tdx, tdx < fcerrors ? inject_error_list[tdx] : 0);
+        start, fdx, (fdx >= start && fdx < (filecache_errors() + start)) ? inject_error_list[fdx] : 0,
+        tdx, (tdx >= start && tdx < (filecache_errors() + start)) ? inject_error_list[tdx] : 0);
 }
 
 void filecache_init(char *cache_path, GError **gerr) {
