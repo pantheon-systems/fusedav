@@ -1772,6 +1772,7 @@ static void *inject_error(void *ptr) {
     fcerrors = filecache_errors();
     scerrors = statcache_errors();
 
+    // Limits the extent of the storm. Some protection against accidental setting.
     for (int idx = 0; idx < 512; idx++) {
         sleep(4);
         tdx = rand() % (fcerrors + scerrors);
@@ -1848,19 +1849,19 @@ int main(int argc, char *argv[]) {
     // @TODO: Make configurable.
     config.grace = true;
 
-    // Apply debug mode.
-    log_set_maximum_verbosity(config.verbosity);
-    debug = (config.verbosity >= 7);
-    log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
-    log_print(LOG_DEBUG, "Parsed options.");
-
-    if (config.ignoreutimens)
-        log_print(LOG_DEBUG, "Ignoring utimens requests.");
-
     if (session_config_init(config.uri, config.ca_certificate, config.client_certificate) < 0) {
         log_print(LOG_CRIT, "Failed to initialize session system.");
         goto finish;
     }
+
+    // REVIEW: changed the order here. Are there negative consequences?
+    // Apply debug mode.
+    log_init(config.verbosity, get_base_directory());
+    debug = (config.verbosity >= 7);
+    log_print(LOG_DEBUG, "Log verbosity: %d.", config.verbosity);
+
+    if (config.ignoreutimens)
+        log_print(LOG_DEBUG, "Ignoring utimens requests.");
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
