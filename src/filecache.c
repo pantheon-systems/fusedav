@@ -129,17 +129,27 @@ G_DEFINE_QUARK(LDB, leveldb)
 G_DEFINE_QUARK(CURL, curl)
 
 // error injection routines
-#define FILECACHE_ERRORS 34
+#define FILECACHE_ERRORS 37
 // counting on global being automatically initialized to all 0
-static bool inject_error[FILECACHE_ERRORS] = {false};
+static bool inject_error_list[FILECACHE_ERRORS] = {false};
+
+extern bool injecting_errors;
+
+static bool inject_error(int edx) {
+    if (!injecting_errors) return false;
+    return inject_error_list[edx];
+}
 
 int filecache_errors(void) {
     return FILECACHE_ERRORS;
 }
 
-void filecache_inject_error(int fcerrors, bool tdx, bool fdx) {
-    if (fdx < fcerrors) inject_error[fdx] = false;
-    if (tdx < fcerrors) inject_error[tdx] = true;
+void filecache_inject_error(int fcerrors, int tdx, int fdx) {
+    if (fdx < fcerrors) inject_error_list[fdx] = false;
+    if (tdx < fcerrors) inject_error_list[tdx] = true;
+    log_print(LOG_INFO, "filecache_inject_error: %d -- %d:%d %d:%d",
+        fcerrors, fdx, fdx < fcerrors ? inject_error_list[fdx] : 0,
+        tdx, tdx < fcerrors ? inject_error_list[tdx] : 0);
 }
 
 void filecache_init(char *cache_path, GError **gerr) {
@@ -149,14 +159,14 @@ void filecache_init(char *cache_path, GError **gerr) {
 
     snprintf(path, PATH_MAX, "%s/files", cache_path);
     if (mkdir(cache_path, 0770) == -1) {
-        if (errno != EEXIST || inject_error[0]) {
-            g_set_error (gerr, system_quark(), errno, "filecache_init: Cache Path %s could not be created; %s.", cache_path, g_strerror(errno));
+        if (errno != EEXIST || inject_error(0)) {
+            g_set_error (gerr, system_quark(), errno, "filecache_init: Cache Path %s could not be created.", cache_path);
             return;
         }
     }
     if (mkdir(path, 0770) == -1) {
-        if (errno != EEXIST || inject_error[1]) {
-            g_set_error (gerr, system_quark(), errno, "filecache_init: Path %s could not be created; %s.", path, g_strerror(errno));
+        if (errno != EEXIST || inject_error(1)) {
+            g_set_error (gerr, system_quark(), errno, "filecache_init: Path %s could not be created.", path);
             return;
         }
     }
@@ -180,8 +190,8 @@ static void new_cache_file(const char *cache_path, char *cache_file_path, fd_t *
 
     snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-XXXXXX", cache_path);
     log_print(LOG_DEBUG, "new_cache_file: Using pattern %s", cache_file_path);
-    if ((*fd = mkstemp(cache_file_path)) < 0 || inject_error[2]) {
-        g_set_error (gerr, system_quark(), errno, "new_cache_file: Failed mkstemp: errno = %s", g_strerror(errno));
+    if ((*fd = mkstemp(cache_file_path)) < 0 || inject_error(2)) {
+        g_set_error (gerr, system_quark(), errno, "new_cache_file: Failed mkstemp");
         return;
     }
 
@@ -198,8 +208,8 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     BUMP(pdata_set);
 
-    if (!pdata || inject_error[3]) {
-        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_pdata_set NULL pdata on %s", path);
+    if (!pdata || inject_error(3)) {
+        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_pdata_set NULL pdata");
         return;
     }
 
@@ -212,10 +222,10 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     free(key);
 
-    if (ldberr != NULL || inject_error[4]) {
+    if (ldberr != NULL || inject_error(4)) {
         log_print(LOG_ERR, "leveldb_set error: %s", ldberr);
         free(ldberr);
-        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s on %s", ldberr, path);
+        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s", ldberr);
         return;
     }
 
@@ -234,8 +244,8 @@ static void create_file(struct filecache_sdata *sdata, const char *cache_path,
     log_print(LOG_DEBUG, "create_file: on %s", path);
 
     pdata = calloc(1, sizeof(struct filecache_pdata));
-    if (pdata == NULL || inject_error[5]) {
-        g_set_error(gerr, system_quark(), errno, "create_file: calloc returns NULL for pdata on %s", path);
+    if (pdata == NULL || inject_error(5)) {
+        g_set_error(gerr, system_quark(), errno, "create_file: calloc returns NULL for pdata");
         return;
     }
 
@@ -284,8 +294,8 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
     leveldb_readoptions_destroy(options);
     free(key);
 
-    if (ldberr != NULL || inject_error[6]) {
-        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_get: leveldb_get error %s on %s", ldberr, path);
+    if (ldberr != NULL || inject_error(6)) {
+        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_get: leveldb_get error %s", ldberr);
         free(ldberr);
         free(pdata);
         return NULL;
@@ -385,7 +395,7 @@ static int get_fresh_fd(filecache_t *cache,
 
         // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
         sdata->fd = open(pdata->filename, flags & ~O_TRUNC);
-        if (sdata->fd < 0 || inject_error[7]) {
+        if (sdata->fd < 0 || inject_error(7)) {
             log_print(LOG_INFO, "get_fresh_fd: < 0, %s with flags %x returns < 0: errno: %d, %s : ENOENT %d", path, flags, errno, strerror(errno), ENOENT);
             // If the cachefile named in pdata->filename does not exist ...
             if (errno == ENOENT) {
@@ -394,7 +404,7 @@ static int get_fresh_fd(filecache_t *cache,
                 log_print(LOG_NOTICE, "get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
             }
             else {
-                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open on file returns < 0 on \"%s\": %s", path, strerror(errno));
+                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open failed");
                 // ret defaults to EBADFD
             }
             return ret;
@@ -404,26 +414,24 @@ static int get_fresh_fd(filecache_t *cache,
             log_print(LOG_DEBUG, "get_fresh_fd: truncating fd %d:%s::%s", sdata->fd, path, pdata->filename);
 
             log_print(LOG_DEBUG, "get_fresh_fd: acquiring shared file lock on fd %d", sdata->fd);
-            if (flock(sdata->fd, LOCK_SH) || inject_error[8]) {
-                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: error acquiring shared file lock: %s",
-                    g_strerror(errno));
+            if (flock(sdata->fd, LOCK_SH) || inject_error(8)) {
+                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: error acquiring shared file lock");
                 goto finish;
             }
             log_print(LOG_DEBUG, "get_fresh_fd: acquired shared file lock on fd %d", sdata->fd);
 
-            if (ftruncate(sdata->fd, 0) || inject_error[9]) {
-                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: ftruncate failed; %d:%s:%s :: %s",
-                    sdata->fd, path, pdata->filename, g_strerror(errno));
+            if (ftruncate(sdata->fd, 0) || inject_error(9)) {
+                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: ftruncate failed");
+                log_print(LOG_INFO, "get_fresh_fd: ftruncate failed; %d:%s:%s :: %s", sdata->fd, path, pdata->filename, g_strerror(errno));
                 // Fall through to release the lock
             }
 
             log_print(LOG_DEBUG, "get_fresh_fd: releasing shared file lock on fd %d", sdata->fd);
-            if (flock(sdata->fd, LOCK_UN) || inject_error[10]) {
+            if (flock(sdata->fd, LOCK_UN) || inject_error(10)) {
                 // If we didn't get an error from ftruncate, then set gerr here from flock on error;
                 // If ftruncate did get an error, it will take precedence and we will ignore this error
                 if (!gerr) {
-                    g_set_error(gerr, system_quark(), errno, "get_fresh_fd: error releasing shared file lock :: %s",
-                        g_strerror(errno));
+                    g_set_error(gerr, system_quark(), errno, "get_fresh_fd: error releasing shared file lock");
                 }
                 else {
                     // If we got an error from ftruncate so don't set one for flock, still report
@@ -450,8 +458,8 @@ static int get_fresh_fd(filecache_t *cache,
     }
 
     session = session_request_init(path);
-    if (!session || inject_error[11]) {
-        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET on %s", path);
+    if (!session || inject_error(11)) {
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET");
         goto finish;
     }
 
@@ -485,7 +493,7 @@ static int get_fresh_fd(filecache_t *cache,
 
     do {
         res = curl_easy_perform(session);
-        if (res != CURLE_OK || inject_error[12]) {
+        if (res != CURLE_OK || inject_error(12)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: curl_easy_perform is not CURLE_OK: %s",
                 curl_easy_strerror(res));
             goto finish;
@@ -508,20 +516,20 @@ static int get_fresh_fd(filecache_t *cache,
             log_print(LOG_DEBUG, "get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd: on 304");
+                g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 304: ");
                 goto finish;
             }
 
             sdata->fd = open(pdata->filename, flags);
 
-            if (sdata->fd < 0 || inject_error[13]) {
+            if (sdata->fd < 0 || inject_error(13)) {
                 // If the cachefile named in pdata->filename does not exist ...
                 if (errno == ENOENT) {
                     // delete pdata from cache, we can't trust its values.
                     // We see one site continually failing on the same non-existent cache file.
                     filecache_delete(cache, path, true, &tmpgerr);
                     if (tmpgerr) {
-                        g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd: ENOENT on 304: ");
+                        g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd ENOENT on 304: ");
                         goto finish;
                     }
                     else {
@@ -531,7 +539,8 @@ static int get_fresh_fd(filecache_t *cache,
                     }
                 }
                 else {
-                    g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
+                    g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open for 304 failed");
+                    log_print(LOG_INFO, "get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
                     goto finish;
                 }
             }
@@ -548,8 +557,8 @@ static int get_fresh_fd(filecache_t *cache,
             if (pdata == NULL) {
                 *pdatap = calloc(1, sizeof(struct filecache_pdata));
                 pdata = *pdatap;
-                if (pdata == NULL || inject_error[14]) {
-                    g_set_error(gerr, system_quark(), errno, "get_fresh_fd: %s", g_strerror(errno));
+                if (pdata == NULL || inject_error(14)) {
+                    g_set_error(gerr, system_quark(), errno, "get_fresh_fd: ");
                     goto finish;
                 }
             }
@@ -574,7 +583,7 @@ static int get_fresh_fd(filecache_t *cache,
             log_print(LOG_DEBUG, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd: on 200");
+                g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 200: ");
                 // REVIEW: @TODO We just set ret = 0 above; do we want success here?
                 goto finish;
             }
@@ -587,7 +596,7 @@ static int get_fresh_fd(filecache_t *cache,
                 log_print(LOG_DEBUG, "get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
         }
-        else if (code == 404 || inject_error[15]) {
+        else if (code == 404 || inject_error(15)) {
             g_set_error(gerr, filecache_quark(), ENOENT, "get_fresh_fd: File expected to exist returns 404.");
             /* we get a 404 because the stat_cache returned that the file existed, but it
              * was not on the server. Deleting it from the stat_cache makes the stat_cache
@@ -599,7 +608,7 @@ static int get_fresh_fd(filecache_t *cache,
                 stat_cache_delete(cache, path, &tmpgerr);
 
                 /* We do not propagate this error, it is just informational */
-                if (tmpgerr || inject_error[16]) {
+                if (tmpgerr || inject_error(16)) {
                     log_print(LOG_NOTICE, "get_fresh_fd: on 404 stat_cache_delete failed on %s", path);
                 }
             }
@@ -647,8 +656,8 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
 
     // Allocate and zero-out a session data structure.
     sdata = calloc(1, sizeof(struct filecache_sdata));
-    if (sdata == NULL || inject_error[17]) {
-        g_set_error(gerr, system_quark(), errno, "filecache_open: Failed to malloc sdata on %s", path);
+    if (sdata == NULL || inject_error(17)) {
+        g_set_error(gerr, system_quark(), errno, "filecache_open: Failed to calloc sdata");
         goto fail;
     }
 
@@ -696,8 +705,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
             log_print(LOG_NOTICE, "filecache_open: Got EAGAIN on %s; trying again", path);
             filecache_delete(cache, path, true, &tmpgerr);
             if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr,
-                    "filecache_open: EAGAIN");
+                g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: EAGAIN: ");
                 goto fail;
             }
             else {
@@ -735,7 +743,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
     }
 
 fail:
-    log_print(LOG_ERR, "filecache_open: No valid fd set for path %s. Setting fh structure to NULL.", path);
+    log_print(LOG_DEBUG, "filecache_open: No valid fd set for path %s. Setting fh structure to NULL.", path);
     info->fh = (uint64_t) NULL;
 
     if (sdata != NULL)
@@ -758,9 +766,9 @@ ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_
     log_print(LOG_DEBUG, "filecache_read: fd=%d", sdata->fd);
 
     bytes_read = pread(sdata->fd, buf, size, offset);
-    if (bytes_read < 0 || inject_error[18]) {
-        g_set_error(gerr, system_quark(), errno, "filecache_read: %ld %d %s %lu %ld::%s",
-            bytes_read, sdata->fd, buf, size, offset, g_strerror(errno));
+    if (bytes_read < 0 || inject_error(18)) {
+        g_set_error(gerr, system_quark(), errno, "filecache_read: pread failed: ");
+        log_print(LOG_INFO, "filecache_read: %ld %d %s %lu %ld::%s", bytes_read, sdata->fd, buf, size, offset, g_strerror(errno));
         return 0;
     }
 
@@ -778,30 +786,29 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
 
     log_print(LOG_DEBUG, "filecache_write: fd=%d", sdata->fd);
 
-    if (!sdata->writable || inject_error[19]) {
+    if (!sdata->writable || inject_error(19)) {
         g_set_error(gerr, system_quark(), EBADF, "filecache_write: not writable");
         return -1;
     }
 
     // Don't write to a file while it is being PUT
     log_print(LOG_DEBUG, "filecache_write: acquiring shared file lock on fd %d", sdata->fd);
-    if (flock(sdata->fd, LOCK_SH) || inject_error[20]) {
+    if (flock(sdata->fd, LOCK_SH) || inject_error(20)) {
         g_set_error(gerr, system_quark(), errno, "filecache_write: error acquiring shared file lock");
         return -1;
     }
     log_print(LOG_DEBUG, "filecache_write: acquired shared file lock on fd %d", sdata->fd);
 
     bytes_written = pwrite(sdata->fd, buf, size, offset);
-    if (bytes_written < 0 || inject_error[21]) {
-        bytes_written = -1;
-        g_set_error(gerr, system_quark(), errno, "filecache_write: %ld::%d %lu %ld :: %s",
-            bytes_written, sdata->fd, size, offset, g_strerror(errno));
+    if (bytes_written < 0 || inject_error(21)) {
+        g_set_error(gerr, system_quark(), errno, "filecache_write: pwrite failed");
+        log_print(LOG_INFO, "filecache_write: %ld::%d %lu %ld :: %s", bytes_written, sdata->fd, size, offset, strerror(errno));
     } else {
         sdata->modified = true;
     }
 
     log_print(LOG_DEBUG, "filecache_write: releasing shared file lock on fd %d", sdata->fd);
-    if (flock(sdata->fd, LOCK_UN) || inject_error[22]) {
+    if (flock(sdata->fd, LOCK_UN) || inject_error(22)) {
         g_set_error(gerr, system_quark(), errno, "filecache_write: error releasing shared file lock");
         // Since we've already written (or not), just fall through and return bytes_written
     }
@@ -818,12 +825,12 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 
     log_print(LOG_DEBUG, "filecache_close: fd (%d :: %d).", sdata->fd, sdata->fd);
 
-    if (sdata->fd < 0 || inject_error[23])  {
-        g_set_error(gerr, system_quark(), errno, "filecache_close: bad file descriptor.");
+    if (sdata->fd < 0 || inject_error(23))  {
+        g_set_error(gerr, system_quark(), EBADF, "filecache_close got bad file descriptor");
     }
     else {
-        if (close(sdata->fd) < 0 || inject_error[24]) {
-            g_set_error(gerr, system_quark(), errno, "filecache_close: failed on %s", g_strerror(errno));
+        if (close(sdata->fd) < 0 || inject_error(24)) {
+            g_set_error(gerr, system_quark(), errno, "filecache_close: close failed");
         }
         else {
             log_print(LOG_DEBUG, "filecache_close: closed fd (%d).", sdata->fd);
@@ -837,11 +844,10 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 
 /* PUT's from fd to URI */
 /* Our modification to include etag support on put */
-static int put_return_etag(const char *path, int fd, char *etag) {
+static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     CURL *session;
     CURLcode res;
     struct stat st;
-    int ret = -1;
     long response_code;
 
     BUMP(return_etag);
@@ -850,14 +856,15 @@ static int put_return_etag(const char *path, int fd, char *etag) {
 
     log_print(LOG_DEBUG, "put_return_etag: acquiring exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_EX)) {
-        log_print(LOG_ERR, "put_return_etag: error acquiring exclusive file lock");
+        g_set_error(gerr, system_quark(), errno, "put_return_etag: error acquiring exclusive file lock");
+        return;
     }
     log_print(LOG_DEBUG, "put_return_etag: acquired exclusive file lock on fd %d", fd);
 
     assert(etag);
 
-    if (fstat(fd, &st)) {
-        log_print(LOG_ERR, "put_return_etag: failed getting file size");
+    if (fstat(fd, &st) || inject_error(24)) {
+        g_set_error(gerr, system_quark(), errno, "put_return_etag: fstat failed");
         goto finish;
     }
 
@@ -874,9 +881,12 @@ static int put_return_etag(const char *path, int fd, char *etag) {
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
     curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
+    // REVIEW: 1. Using E_FC_CURLERR even though on return in sync, it set ENOENT
+    // 2. What if the response code is not 200 -> 300? Is it an error? Do we have an etag?
     res = curl_easy_perform(session);
-    if (res != CURLE_OK) {
-        log_print(LOG_WARNING, "put_return_etag: curl_easy_perform returns error (%d:%s: fd=%d)", res, curl_easy_strerror(res), fd);
+    if (res != CURLE_OK || inject_error(25)) {
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: curl_easy_perform is not CURLE_OK: %s", curl_easy_strerror(res));
+        goto finish;
     }
     else {
         log_print(LOG_INFO, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
@@ -885,28 +895,28 @@ static int put_return_etag(const char *path, int fd, char *etag) {
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
 
         log_print(LOG_INFO, "put_return_etag: Request got HTTP status code %lu", response_code);
-        if (response_code >= 200 && response_code < 300) {
-            ret = 0;
+        if (!(response_code >= 200 && response_code < 300) || inject_error(26)) {
+            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: curl_easy_perform error response %ld: %s: ",
+                response_code, curl_easy_strerror(res));
+            goto finish;
         }
     }
 
-    if (ret == 0) {
-        log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
-    }
-
-    log_print(LOG_DEBUG, "put_return_etag: ret=%d", ret);
+    log_print(LOG_DEBUG, "PUT returns etag: %s", etag);
 
 finish:
 
     log_print(LOG_DEBUG, "put_return_etag: releasing exclusive file lock on fd %d", fd);
-    if (flock(fd, LOCK_UN)) {
-        log_print(LOG_ERR, "put_return_etag: error releasing exclusive file lock");
+    if (flock(fd, LOCK_UN) || inject_error(27)) {
+        g_set_error(gerr, system_quark(), errno, "put_return_etag: error releasing exclusive file lock");
     }
-    log_print(LOG_DEBUG, "put_return_etag: released exclusive file lock on fd %d", fd);
+    else {
+        log_print(LOG_DEBUG, "put_return_etag: released exclusive file lock on fd %d", fd);
+    }
 
     log_print(LOG_DEBUG, "exit: put_return_etag");
 
-    return ret;
+    return;
 }
 
 // top-level sync call
@@ -944,8 +954,8 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
         goto finish;
     }
     // REVIEW: is it fatal to have a null pdata? We could do the sync and not update the cache entry.
-    if (pdata == NULL || inject_error[25]) {
-        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_sync(%s, fd=%d): pdata is NULL", path, sdata->fd);
+    if (pdata == NULL || inject_error(28)) {
+        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_sync: pdata is NULL");
         goto finish;
     }
     log_print(LOG_DEBUG, "filecache_sync(%s, fd=%d): cachefile=%s", path, sdata->fd, pdata->filename);
@@ -953,17 +963,16 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     if (sdata->modified) {
         if (do_put) {
             log_print(LOG_DEBUG, "filecache_sync: Seeking fd=%d", sdata->fd);
-            if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error[26]) {
-                g_set_error(gerr, system_quark(), errno, "filecache_sync: failed lseek on fd %d", sdata->fd);
+            if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error(29)) {
+                g_set_error(gerr, system_quark(), errno, "filecache_sync: failed lseek");
                 goto finish;
             }
 
             log_print(LOG_DEBUG, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
-            // JB @TODO Fix for gerr
-            if (put_return_etag(path, sdata->fd, pdata->etag) || inject_error[27]) {
-                log_print(LOG_ERR, "filecache_sync: put_return_etag PUT failed for fd=%d", sdata->fd);
-                errno = ENOENT;
+            put_return_etag(path, sdata->fd, pdata->etag, &tmpgerr);
+            if (tmpgerr || inject_error(30)) {
+                g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: put_return_etag PUT failed: ");
                 goto finish;
             }
 
@@ -1009,19 +1018,19 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
     log_print(LOG_DEBUG, "filecache_truncate(%d)", sdata->fd);
 
     log_print(LOG_DEBUG, "filecache_truncate: acquiring shared file lock on fd %d", sdata->fd);
-    if (flock(sdata->fd, LOCK_SH) || inject_error[28]) {
+    if (flock(sdata->fd, LOCK_SH) || inject_error(31)) {
         g_set_error(gerr, system_quark(), errno, "filecache_truncate: error acquiring shared file lock");
         return;
     }
     log_print(LOG_DEBUG, "filecache_truncate: acquired shared file lock on fd %d", sdata->fd);
 
-    if ((ftruncate(sdata->fd, s) < 0) || inject_error[29]) {
-        g_set_error(gerr, system_quark(), errno, "filecache_truncate: error on ftruncate %s", g_strerror(errno));
+    if ((ftruncate(sdata->fd, s) < 0) || inject_error(32)) {
+        g_set_error(gerr, system_quark(), errno, "filecache_truncate: ftruncate failed");
         // fall through to release lock ...
     }
 
     log_print(LOG_DEBUG, "filecache_truncate: releasing shared file lock on fd %d", sdata->fd);
-    if (flock(sdata->fd, LOCK_UN) || inject_error[30]) {
+    if (flock(sdata->fd, LOCK_UN) || inject_error(33)) {
         if (!gerr) {
             g_set_error(gerr, system_quark(), errno, "filecache_truncate: error releasing shared file lock");
         }
@@ -1085,7 +1094,7 @@ void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefil
         }
     }
 
-    if (ldberr != NULL || inject_error[31]) {
+    if (ldberr != NULL || inject_error(34)) {
         g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_delete: leveldb_delete: %s", ldberr);
         free(ldberr);
     }
@@ -1107,8 +1116,8 @@ void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *
         return;
     }
 
-    if (pdata == NULL || inject_error[32]) {
-        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_pdata_move: Path %s does not exist.", old_path);
+    if (pdata == NULL || inject_error(35)) {
+        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_pdata_move: Old path %s does not exist.", old_path);
         return;
     }
 
@@ -1116,7 +1125,7 @@ void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *
 
     filecache_pdata_set(cache, new_path, pdata, &tmpgerr);
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_pdata_move: Moving entry from path %s to %s failed.", old_path, new_path);
+        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_pdata_move: Moving entry from path %s to %s failed: ", old_path, new_path);
         goto finish;
     }
 
@@ -1167,7 +1176,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time, GError *
     // JB @TODO bug here, looks for path /tmp/...
     snprintf(filecache_path, PATH_MAX, "%s/files", cache_path);
     dir = opendir(filecache_path);
-    if (dir == NULL || inject_error[33]) {
+    if (dir == NULL || inject_error(36)) {
         g_set_error(gerr, system_quark(), errno, "cleanup_orphans: Can't open filecache directory %s", filecache_path);
         return -1;
     }
@@ -1267,7 +1276,7 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
             if (ret) {
                 filecache_delete(cache, path, true, &tmpgerr);
                 if (tmpgerr) {
-                    g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: filecache_delete on failed access");
+                    g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup on failed call to access: ");
                     ++issues;
                     goto finish;
                 }
@@ -1280,7 +1289,7 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 log_print(LOG_DEBUG, "filecache_cleanup: Unlinking %s", fname);
                 filecache_delete(cache, path, true, &tmpgerr);
                 if (tmpgerr) {
-                    g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: filecache_delete on aged out");
+                    g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup on aged out: ");
                     ++issues;
                     goto finish;
                 }
@@ -1311,7 +1320,7 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     // possible race where we are updating a file inside the window where we are starting the cache cleanup
     ret = cleanup_orphans(cache_path, (starttime - 1), &tmpgerr);
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: errors cleaning orphans");
+        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: ");
     }
 
 finish:

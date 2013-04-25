@@ -103,16 +103,25 @@ G_DEFINE_QUARK(LDB, leveldb)
 
 // error injection routines
 #define STATCACHE_ERRORS 7
-// counting on global being automatically initialized to all 0
-static bool inject_error[STATCACHE_ERRORS] = {false};
+static bool inject_error_list[STATCACHE_ERRORS] = {false};
+
+extern bool injecting_errors;
+
+static bool inject_error(int edx) {
+    if (!injecting_errors) return false;
+    return inject_error_list[edx];
+}
 
 int statcache_errors(void) {
     return STATCACHE_ERRORS;
 }
 
-void statcache_inject_error(int fcerrors, bool tdx, bool fdx) {
-    if (fdx >= fcerrors) inject_error[fdx - fcerrors] = false;
-    if (tdx < fcerrors) inject_error[tdx - fcerrors] = true;
+void statcache_inject_error(int fcerrors, int tdx, int fdx) {
+    if (fdx >= fcerrors) inject_error_list[fdx - fcerrors] = false;
+    if (tdx >= fcerrors) inject_error_list[tdx - fcerrors] = true;
+    log_print(LOG_INFO, "statcache_inject_error: %d -- %d:%d %d:%d",
+        fcerrors, fdx, fdx >= fcerrors ? inject_error_list[fdx - fcerrors] : 0, tdx,
+        tdx >= fcerrors ? inject_error_list[tdx - fcerrors] : 0);
 }
 
 unsigned long stat_cache_get_local_generation(void) {
@@ -218,7 +227,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     BUMP(open);
 
     // Check that a directory is set.
-    if (!cache_path || inject_error[0]) {
+    if (!cache_path || inject_error(0)) {
         // @TODO: Before public release: Use a mkdtemp-based path.
         g_set_error (gerr, leveldb_quark(), EINVAL, "stat_cache_open: no cache path specified.");
         return;
@@ -241,7 +250,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     leveldb_options_set_info_log(supplemental->options, NULL);
 
     *cache = leveldb_open(supplemental->options, storage_path, &errptr);
-    if (errptr || inject_error[1]) {
+    if (errptr || inject_error(1)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_open: Error opening db; %s.", errptr);
         free(errptr);
         return;
@@ -286,7 +295,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     leveldb_readoptions_destroy(options);
     free(key);
 
-    if (errptr != NULL || inject_error[2]) {
+    if (errptr != NULL || inject_error(2)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "leveldb_get error: %s", errptr);
         free(errptr);
         free(value);
@@ -352,7 +361,7 @@ void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t t
 
     free(key);
 
-    if (errptr != NULL || inject_error[3]) {
+    if (errptr != NULL || inject_error(3)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_updated_children: leveldb_set error: %s", errptr);
         free(errptr);
         return;
@@ -380,7 +389,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
 
     free(key);
 
-    if (errptr != NULL || inject_error[4]) {
+    if (errptr != NULL || inject_error(4)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_read_updated_children: leveldb_get error: %s", errptr);
         free(errptr);
         free(value);
@@ -423,7 +432,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
 
     free(key);
 
-    if (errptr != NULL || inject_error[5]) {
+    if (errptr != NULL || inject_error(5)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_set: leveldb_set error: %s", errptr);
         free(errptr);
         return;
@@ -448,7 +457,7 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
     leveldb_writeoptions_destroy(options);
     free(key);
 
-    if (errptr != NULL || inject_error[6]) {
+    if (errptr != NULL || inject_error(6)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_delete: leveldb_delete error: %s", errptr);
         free(errptr);
         return;

@@ -57,6 +57,6 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
 // error injection mechanism; should only run during development when injecting errors
 int filecache_errors(void);
-void filecache_inject_error(int fcerrors, bool tdx, bool fdx);
+void filecache_inject_error(int fcerrors, int tdx, int fdx);
 
 #endif

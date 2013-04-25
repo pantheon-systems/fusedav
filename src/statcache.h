@@ -84,5 +84,5 @@ void stat_cache_prune(stat_cache_t *cache);
 
 // error injection mechanism; should only run during development when injecting errors
 int statcache_errors(void);
-void stat_cache_inject_error(int fcerrors, bool tdx, bool fdx);
+void statcache_inject_error(int fcerrors, int tdx, int fdx);
 #endif
