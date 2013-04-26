@@ -191,8 +191,6 @@ static struct fuse_opt fusedav_opts[] = {
      FUSE_OPT_END
 };
 
-static int get_stat(const char *path, struct stat *stbuf, GError **gerr);
-
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
 static pthread_key_t path_cvt_tsd_key;
 
@@ -316,9 +314,12 @@ static const char *path_cvt(const char *path) {
     return r;
 }
 
-static int processed_gerror(const char *prefix, const char *path, const GError *gerr) {
+static int processed_gerror(const char *prefix, const char *path, GError *gerr) {
+    int ret;
     log_print(LOG_ERR, "%s on %s: %s -- %d: %s", prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
-    return -gerr->code;
+    ret = -gerr->code;
+    g_clear_error(&gerr);
+    return ret;
 }
 
 static int simple_propfind_with_redirect(
@@ -410,21 +411,16 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
 
     log_print(LOG_INFO, "getdir_propfind_callback: %s (%lu)", path, status_code);
 
-    // @TODO: Consider whether the is_dir check here is worth keeping
-    // now that we check whether it's a collection.
-    //strip_trailing_slash(local_path, &is_dir);
-
     if (status_code == 410) {
-        // REVIEW: local_path is now obsolete?
-        char *local_path = NULL;
-        local_path = strdup(path);
         log_print(LOG_DEBUG, "Removing path: %s", path);
-        stat_cache_delete(config->cache, local_path, &gerr);
-        free(local_path);
+        stat_cache_delete(config->cache, path, &gerr);
+        // @TODO call processed_gerror here because gerr begins here, and is not passed back.
+        // But this is not really the right place to call processed_gerror
         if (gerr) {
             processed_gerror("getdir_propfind_callback: ", path, gerr);
             return;
         }
+        stat_cache_prune(config->cache);
     }
     else {
         stat_cache_value_set(config->cache, path, &value, &gerr);
@@ -468,7 +464,7 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
         last_updated = stat_cache_read_updated_children(config->cache, path, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
-            return processed_gerror("update_directory: ", path, *gerr);
+            return -1;
         }
         asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
 
@@ -476,7 +472,6 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
 
         propfind_result = simple_propfind_with_redirect(update_path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
         free(update_path);
-        // REVIEW: double check this logic
         if (propfind_result == 0 && !inject_error(0)) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
@@ -505,8 +500,6 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
             return -1;
         }
 
-        // REVIEW: We will now return error on failed stat_cache_delete_older rather than just falling through
-        // and returning 0
         stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -514,8 +507,6 @@ static int update_directory(const char *path, bool attempt_progessive_update, GE
         }
     }
 
-    // REVIEW: We will now return error on failed stat_cache_updated_children rather than just falling through
-    // and returning 0
     // Mark the directory contents as updated.
     log_print(LOG_DEBUG, "Marking directory %s as updated at timestamp %lu.", path, timestamp);
     stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
@@ -567,10 +558,6 @@ static int dav_readdir(
 
     // First, attempt to hit the cache.
     ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
-    // REVIEW: why process an empty directory?
-    if (ret == -STAT_CACHE_NO_DATA) {
-        return 0;
-    }
     if (ret < 0) {
         int udret;
         if (debug) {
@@ -639,7 +626,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         log_print(LOG_DEBUG, "Got response from stat_cache_value_get for path %s.", path);
         *stbuf = response->st;
         free(response);
-        log_print(LOG_DEBUG, "get_stat(%s, stbuf, %d): returns %s", path, ignore_freshness, stbuf->st_mode ? "0" : "ENOENT");
+        log_print(LOG_DEBUG, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, ignore_freshness, stbuf->st_mode ? "0" : "ENOENT");
         return stbuf->st_mode == 0 ? -ENOENT : 0;
     }
 
@@ -649,7 +636,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat_from_cache: ");
         memset(stbuf, 0, sizeof(struct stat));
-        return processed_gerror("get_stat_from_cache: ", path, *gerr);
+        return -1;
     }
     if (ignore_freshness) {
         log_print(LOG_DEBUG, "Ignoring freshness and sending -ENOENT for path %s.", path);
@@ -703,7 +690,7 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // Unless we change the logic in get_stat_from_cache, it will return ENONENT
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get _stat: ");
-        return processed_gerror("get_stat: ", path, *gerr);
+        return -1;
     }
     if (ret == 0 || ret == -ENOENT) {
         return ret;
@@ -722,8 +709,8 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
                 memset(stbuf, 0, sizeof(struct stat));
-                g_propagate_error(gerr, subgerr);
-                return processed_gerror("get_stat: ", path, *gerr);
+                g_propagate_prefixed_error(gerr, tmpgerr, "get _stat: ");
+                return -1;
             }
             log_print(LOG_NOTICE, "PROPFIND failed on path: %s", path);
             memset(stbuf, 0, sizeof(struct stat));
@@ -734,8 +721,8 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
 
         ret = get_stat_from_cache(path, stbuf, true, &subgerr);
         if (subgerr) {
-            g_propagate_error(gerr, subgerr);
-            return processed_gerror("get_stat: ", path, *gerr);
+            g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
+            return -1;
         }
         return ret;
     }
@@ -749,10 +736,9 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
 
     log_print(LOG_DEBUG, "Getting parent path entry: %s", parent_path);
     parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path, &tmpgerr);
-    // REVIEW: Check the goto fail logic
     if (tmpgerr) {
-        g_propagate_error(gerr, tmpgerr);
-        ret = processed_gerror("get_stat: ", path, *gerr);
+        g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
+        ret = -1;
         goto fail;
     }
     log_print(LOG_DEBUG, "Parent was updated: %s %lu", parent_path, parent_children_update_ts);
@@ -762,57 +748,22 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         GError *subgerr = NULL;
         ret = update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
         if (subgerr) {
-            g_propagate_error(gerr, subgerr);
-            ret = processed_gerror("get_stat: ", path, *gerr);
+            g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
+            ret = -1;
+            if ((*gerr)->code == EIO) {
+                if (config->grace) set_saint_mode();
+            }
             goto fail;
-        }
-        // REVIEW: I don't think the following can ever execute.
-        // update_directory returns -1 and gerr on any failure, which will be captured above
-        // This is because of the change in simple_propfind and how it handles 404's.
-        // How do we want to manage grace and saints?
-        if (ret < 0) {
-
-            // If the parent is not on the server, treat the child as not available,
-            // regardless of what might be in stat_cache. This likely will prevent
-            // the 404's we see when trying to open a file
-            if (ret == -ENOENT) {
-                log_print(LOG_NOTICE, "Parent returns ENOENT for child: %s", path);
-
-                stat_cache_delete(config->cache, path, &subgerr);
-                if (subgerr) {
-                    g_propagate_error(gerr, subgerr);
-                    ret = processed_gerror("get_stat: ", path, *gerr);
-                    goto fail;
-                }
-                // Don't delete the base directory (aka <site>/files) if it happens to be the parent
-                if (strcmp(parent_path, base_directory)) {
-                    stat_cache_delete_parent(config->cache, path, &subgerr);
-                    if (subgerr) {
-                        g_propagate_error(gerr, subgerr);
-                        ret = processed_gerror("get_stat: ", path, *gerr);
-                        goto fail;
-                    }
-                }
-                else {
-                    log_print(LOG_INFO, "Parent path is same as base directory; not deleting: %s", parent_path);
-                }
-                stat_cache_prune(config->cache);
-            }
-
-            if (!config->grace || ret == -ENOENT || ret == E_SC_LDBERR) {
-                log_print(LOG_WARNING, "No grace enabled or -ENOENT. Returning with no data.");
-                // Need some cleanup before returning ...
-                free(nepp);
-                goto fail;
-            }
-            log_print(LOG_WARNING, "Updating data failed. Falling back.");
-            set_saint_mode();
         }
     }
 
-
     // Try again to hit the file in the stat cache.
     ret = get_stat_from_cache(path, stbuf, true, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
+        ret = -1;
+        goto fail;
+    }
     goto finish;
 
 fail:
@@ -823,17 +774,18 @@ finish:
     return ret;
 }
 
-static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
+static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    GError *gerr = NULL;
+    GError *tmpgerr = NULL;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
         int ret;
-        ret = get_stat(path, stbuf, &gerr);
-        if (gerr) {
-            return processed_gerror("common_getattr: ", path, gerr);
+        ret = get_stat(path, stbuf, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "common_getattr: ");
+            return -1;
         }
         if (ret != 0) {
             log_print(LOG_DEBUG, "common_getattr(%s) failed on get_stat; %d %s", path, -ret, strerror(-ret));
@@ -868,6 +820,7 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
 }
 
 static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
+    GError *gerr = NULL;
     int ret;
 
     BUMP(fgetattr);
@@ -875,13 +828,17 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
-    ret = common_getattr(path, stbuf, info);
+    ret = common_getattr(path, stbuf, info, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_fgetattr: ", path, gerr);
+    }
     log_print(LOG_DEBUG, "Done: dav_fgetattr(%s)", path?path:"null path");
 
     return ret;
 }
 
 static int dav_getattr(const char *path, struct stat *stbuf) {
+    GError *gerr = NULL;
     int ret;
 
     BUMP(getattr);
@@ -889,7 +846,10 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     path = path_cvt(path);
 
     log_print(LOG_INFO, "CALLBACK: dav_getattr(%s)", path);
-    ret = common_getattr(path, stbuf, NULL);
+    ret = common_getattr(path, stbuf, NULL, &gerr);
+    if (gerr) {
+        return processed_gerror("dav_getattr: ", path, gerr);
+    }
     log_print(LOG_DEBUG, "Done: dav_getattr(%s): ret=%d", path, ret);
 
     return ret;
@@ -1205,7 +1165,6 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     log_print(LOG_INFO, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
     // path might be NULL if we are accessing a bare file descriptor.
-    // REVIEW: added check for null path
     if (path != NULL) {
         filecache_sync(config->cache, path, info, true, &gerr);
         if (!gerr) {
@@ -1270,7 +1229,6 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
-    int fd;
 
     BUMP(flush);
 
@@ -1279,8 +1237,8 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     log_print(LOG_INFO, "CALLBACK: dav_flush(%s)", path ? path : "null path");
 
     // path might be NULL because we are accessing a bare file descriptor,
-    // REVIEW: added check for NULL path
     if (path != NULL) {
+        int fd;
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
         struct stat_cache_value value;
         memset(&value, 0, sizeof(struct stat_cache_value));
@@ -1435,7 +1393,6 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     GError *gerr = NULL;
     ssize_t bytes_written;
     struct stat_cache_value value;
-    int fd;
 
     BUMP(write);
 
@@ -1456,8 +1413,8 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
         return bytes_written;
     }
 
-    // REVIEW: added check for NULL path
     if (path != NULL) {
+        int fd;
         filecache_sync(config->cache, path, info, false, &gerr);
         if (gerr) {
             return processed_gerror("dav_write: ", path, gerr);
@@ -1771,7 +1728,7 @@ static int config_privileges(struct fusedav_config *config) {
 }
 
 // Set to true to inject errors; Make sure it is false for production
-bool injecting_errors = false;
+bool injecting_errors = true;
 
 // error injection routines
 #define FUSEDAV_ERRORS 2
@@ -1795,14 +1752,12 @@ static int fusedav_errors(void) {
 static void fusedav_inject_error(int start, int tdx, int fdx) {
     if (fdx >= start && fdx < fusedav_errors()) inject_error_list[fdx] = false;
     if (tdx >= start && tdx < fusedav_errors()) inject_error_list[tdx] = true;
-    log_print(LOG_INFO, "filecache_inject_error: %d -- %d:%d %d:%d",
+    log_print(LOG_DEBUG, "fusedav_inject_error: %d -- %d:%d %d:%d",
         start, fdx, (fdx >= start && fdx < fusedav_errors()) ? inject_error_list[fdx] : 0,
         tdx, (tdx >= start && tdx < fusedav_errors()) ? inject_error_list[tdx] : 0);
 }
 
 static void *inject_error_mechanism(void *ptr) {
-    int tdx = 0;
-    int fdx = 0;
     int fcerrors; // number of error locations in filecache
     int scerrors; // number of error locations in statcache
     int fderrors; // number of error locations in statcache
@@ -1818,9 +1773,11 @@ static void *inject_error_mechanism(void *ptr) {
 
     // Limits the extent of the storm. Some protection against accidental setting.
     for (int idx = 0; idx < 512; idx++) {
+        int tdx = 0;
+        int fdx = 0;
         sleep(4);
         tdx = rand() % (fcerrors + scerrors);
-        log_print(LOG_INFO, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
+        log_print(LOG_DEBUG, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
         fusedav_inject_error(0, tdx, fdx);
         filecache_inject_error(fderrors, tdx, fdx);
         statcache_inject_error(fderrors + fcerrors, tdx, fdx);
@@ -1842,7 +1799,6 @@ static void *cache_cleanup(void *ptr) {
         filecache_cleanup(config->cache, config->cache_path, first, &gerr);
         if (gerr) {
             processed_gerror("cache_cleanup: ", config->cache_path, gerr);
-            g_clear_error(&gerr);
         }
         first = false;
         stat_cache_prune(config->cache);
@@ -1899,7 +1855,6 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    // REVIEW: changed the order here. Are there negative consequences?
     // Apply debug mode.
     log_init(config.verbosity, get_base_directory());
     debug = (config.verbosity >= 7);
@@ -1965,7 +1920,7 @@ int main(int argc, char *argv[]) {
     // Ensure directory exists for file content cache.
     filecache_init(config.cache_path, &gerr);
     if (gerr) {
-        log_print(LOG_CRIT, "Could not initialize file content cache directory:%s.", gerr->message);
+        log_print(LOG_CRIT, "main: %s.", gerr->message);
         goto finish;
     }
     log_print(LOG_DEBUG, "Opened ldb file cache.");

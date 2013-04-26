@@ -151,11 +151,17 @@ int filecache_errors(void) {
 }
 
 void filecache_inject_error(int start, int tdx, int fdx) {
-    if (fdx >= start && fdx < (filecache_errors() + start)) inject_error_list[fdx] = false;
-    if (tdx >= start && tdx < (filecache_errors() + start)) inject_error_list[tdx] = true;
-    log_print(LOG_INFO, "filecache_inject_error: %d -- %d:%d %d:%d",
-        start, fdx, (fdx >= start && fdx < (filecache_errors() + start)) ? inject_error_list[fdx] : 0,
-        tdx, (tdx >= start && tdx < (filecache_errors() + start)) ? inject_error_list[tdx] : 0);
+    fdx -= start;
+    tdx -= start;
+    if (fdx >= 0 && fdx < (filecache_errors())) {
+        inject_error_list[fdx] = false;
+    }
+    if (tdx >= 0 && tdx < (filecache_errors())) {
+        inject_error_list[tdx] = true;
+    }
+    log_print(LOG_DEBUG, "filecache_inject_error: %d -- %d:%d %d:%d",
+        start, fdx, (fdx >= 0 && fdx < filecache_errors()) ? inject_error_list[fdx] : 0,
+        tdx, (tdx >= 0 && tdx < filecache_errors()) ? inject_error_list[tdx] : 0);
 }
 
 void filecache_init(char *cache_path, GError **gerr) {
@@ -195,6 +201,11 @@ static void new_cache_file(const char *cache_path, char *cache_file_path, fd_t *
 
     BUMP(cache_file);
 
+    for (size_t pos = 0; pos <= CACHE_FILE_ENTROPY; ++pos) {
+        entropy[pos] = 65 + rand() % 26;
+    }
+    entropy[CACHE_FILE_ENTROPY] = '\0';
+
     snprintf(cache_file_path, PATH_MAX, "%s/files/fusedav-cache-%s-XXXXXX", cache_path, entropy);
     log_print(LOG_DEBUG, "new_cache_file: Using pattern %s", cache_file_path);
     if ((*fd = mkstemp(cache_file_path)) < 0 || inject_error(2)) {
@@ -230,7 +241,6 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
     free(key);
 
     if (ldberr != NULL || inject_error(4)) {
-        log_print(LOG_ERR, "leveldb_set error: %s", ldberr);
         free(ldberr);
         g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s", ldberr);
         return;
@@ -313,9 +323,10 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
         return NULL;
     }
 
-    // REVIEW: We haven't been treating this as an error. Should we?
     if (vallen != sizeof(struct filecache_pdata)) {
-        log_print(LOG_WARNING, "Length %lu is not expected length %lu.", vallen, sizeof(struct filecache_pdata));
+        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct filecache_pdata));
+        free(pdata);
+        return NULL;
     }
 
     log_print(LOG_DEBUG, "Returning from filecache_pdata_get: path=%s :: cachefile=%s", path, pdata->filename);
@@ -408,7 +419,7 @@ static int get_fresh_fd(filecache_t *cache,
             if (errno == ENOENT) {
                 // try again
                 ret = -EAGAIN;
-                log_print(LOG_NOTICE, "get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
+                log_print(LOG_INFO, "get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
             }
             else {
                 g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open failed");
@@ -591,7 +602,7 @@ static int get_fresh_fd(filecache_t *cache,
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 200: ");
-                // REVIEW: @TODO We just set ret = 0 above; do we want success here?
+                ret = -1;
                 goto finish;
             }
 
@@ -620,6 +631,7 @@ static int get_fresh_fd(filecache_t *cache,
                 }
             }
             ret = -ENOENT;
+            goto finish;
         }
         else {
             // Not sure what to do here; goto finish, or try the loop another time?
@@ -732,7 +744,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
                 *used_grace = true;
         }
         else {
-            log_print(LOG_ERR, "filecache_open: Failed on get_fresh_fd on %s", path);
+            g_set_error(gerr, system_quark(), errno, "filecache_open: Failed on get_fresh_fd: ");
             goto fail;
         }
         ++retries;
@@ -753,12 +765,10 @@ fail:
     log_print(LOG_DEBUG, "filecache_open: No valid fd set for path %s. Setting fh structure to NULL.", path);
     info->fh = (uint64_t) NULL;
 
-    if (sdata != NULL)
-        free(sdata);
+    free(sdata);
 
 finish:
-    if (pdata != NULL)
-        free(pdata);
+    free(pdata);
 
     return;
 }
@@ -888,8 +898,6 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
     curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
-    // REVIEW: 1. Using E_FC_CURLERR even though on return in sync, it set ENOENT
-    // 2. What if the response code is not 200 -> 300? Is it an error? Do we have an etag?
     res = curl_easy_perform(session);
     if (res != CURLE_OK || inject_error(25)) {
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: curl_easy_perform is not CURLE_OK: %s", curl_easy_strerror(res));
@@ -960,7 +968,6 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
         g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: ");
         goto finish;
     }
-    // REVIEW: is it fatal to have a null pdata? We could do the sync and not update the cache entry.
     if (pdata == NULL || inject_error(28)) {
         g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_sync: pdata is NULL");
         goto finish;

@@ -21,6 +21,8 @@
 
 extern int debug;
 
+#ifndef G_DEFINE_QUARK
+
 #define             G_DEFINE_QUARK(QN, q_n)\
 static GQuark \
 q_n##_quark (void) \
@@ -34,4 +36,5 @@ q_n##_quark (void) \
 // @TODO: Move this elsewhere.
 char *strip_trailing_slash(char *fn, int *is_dir);
 
+#endif
 #endif

@@ -122,11 +122,13 @@ int statcache_errors(void) {
 }
 
 void statcache_inject_error(int start, int tdx, int fdx) {
-    if (fdx >= start && fdx < (statcache_errors() + start)) inject_error_list[fdx] = false;
-    if (tdx >= start && tdx < (statcache_errors() + start)) inject_error_list[tdx] = true;
-    log_print(LOG_INFO, "filecache_inject_error: %d -- %d:%d %d:%d",
-        start, fdx, (fdx >= start && fdx < (statcache_errors() + start)) ? inject_error_list[fdx] : 0,
-        tdx, (tdx >= start && tdx < (statcache_errors() + start)) ? inject_error_list[tdx] : 0);
+    fdx -= start;
+    tdx -= start;
+    if (fdx >= 0 && fdx < (statcache_errors())) inject_error_list[fdx] = false;
+    if (tdx >= 0 && tdx < (statcache_errors())) inject_error_list[tdx] = true;
+    log_print(LOG_DEBUG, "statcache_inject_error: %d -- %d:%d %d:%d",
+        start, fdx, fdx >= 0 && fdx < statcache_errors() ? inject_error_list[fdx] : 0,
+        tdx, (tdx >= 0 && tdx < (statcache_errors())) ? inject_error_list[tdx] : 0);
 }
 
 unsigned long stat_cache_get_local_generation(void) {
@@ -312,6 +314,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
+    // @TODO this should be a gerror
     if (vallen != sizeof(struct stat_cache_value)) {
         log_print(LOG_NOTICE, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
@@ -899,7 +902,6 @@ void stat_cache_prune(stat_cache_t *cache) {
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
                     log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\'", path);
-                    // REVIEW: Can we ignore gerrors here?
                     stat_cache_delete(cache, path, NULL);
                 }
             }
