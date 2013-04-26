@@ -1728,7 +1728,7 @@ static int config_privileges(struct fusedav_config *config) {
 }
 
 // Set to true to inject errors; Make sure it is false for production
-bool injecting_errors = true;
+bool injecting_errors = false;
 
 // error injection routines
 #define FUSEDAV_ERRORS 2
