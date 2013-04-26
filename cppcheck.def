@@ -106,68 +106,16 @@ void leveldb_env_destroy(void *p) {
     free(p);
 }
 
-// Neon
-
-//ne_sock_cipher
-//ne_malloc
-//ne_calloc
-//ne_realloc
-//ne_strdup
-//ne_strndup
-//ne_parse_statusline
-//ne_buffer_grow
-
-ne_request *ne_request_create() {
+CURL *curl_easy_init() {
     return malloc(1);
 }
-void ne_request_destroy(ne_request *p) {
+void curl_easy_cleanup(CURL *p) {
     free(p);
 }
 
-void ne_free(void *p) {
+void *curl_easy_unescape() {
+    return malloc(1);
+}
+void curl_free(void *p) {
     free(p);
-}
-
-int ne_uri_parse(const char *uri, ne_uri *parsed) {
-    parsed->scheme = malloc(1);
-    parsed->host = malloc(1);
-    parsed->userinfo = malloc(1);
-    parsed->path = malloc(1);
-    parsed->query = malloc(1);
-    parsed->fragment = malloc(1);
-}
-
-ne_uri *ne_uri_resolve(const ne_uri *base, const ne_uri *relative,
-                       ne_uri *result) {
-    ne_uri_parse("", result);
-    return result;
-}
-
-void ne_uri_free(ne_uri *parsed) {
-    free(parsed->scheme);
-    free(parsed->host);
-    free(parsed->userinfo);
-    free(parsed->path);
-    free(parsed->query);
-    free(parsed->fragment);
-}
-
-void *ne_uri_unparse() {
-    return malloc(1);
-}
-
-void *ne_path_escape() {
-    return malloc(1);
-}
-
-void *ne_path_unescape() {
-    return malloc(1);
-}
-
-void *ne_path_parent() {
-    return malloc(1);
-}
-
-void *ne_rfc1123_date() {
-    return malloc(1);
 }
