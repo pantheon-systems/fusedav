@@ -21,4 +21,5 @@ config.h.in
 _trial_temp
 /utils/readrecursive
 /utils/readwhatwaswritten
+/src/*.plist
 

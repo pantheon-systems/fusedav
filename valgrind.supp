@@ -6,31 +6,6 @@
    fun:main
 }
 {
-   session_free-runs-on-exit
-   Memcheck:Leak
-   ...
-   fun:session_set_uri
-   fun:main
-}
-{
-   ne_addr_destroy-runs-later
-   Memcheck:Leak
-   fun:malloc
-   fun:make_request
-   fun:__check_pf
-   fun:getaddrinfo
-   fun:ne_addr_resolve
-   fun:lookup_host.isra.1
-   ...
-}
-{
-   gnutls_global_deinit-runs-on-exit
-   Memcheck:Leak
-   ...
-   fun:ne_sock_init
-   fun:main
-}
-{
    fuse_unmount-runs-on-exit
    Memcheck:Leak
    ...
