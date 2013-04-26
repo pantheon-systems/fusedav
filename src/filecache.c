@@ -652,6 +652,7 @@ static int get_fresh_fd(filecache_t *cache,
 }
 
 // top-level open call
+// @TODO Get rid of ret
 void filecache_open(char *cache_path, filecache_t *cache, const char *path,
         struct fuse_file_info *info, unsigned grace_level, bool *used_grace, GError **gerr) {
     struct filecache_pdata *pdata = NULL;
@@ -757,7 +758,6 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
         if (pdata) log_print(LOG_DEBUG, "filecache_open: Setting fd to session data structure with fd %d for %s :: %s:%ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
         else log_print(LOG_DEBUG, "filecache_open: Setting fd to session data structure with fd %d for %s :: (no pdata).", sdata->fd, path);
         info->fh = (uint64_t) sdata;
-        ret = 0;
         goto finish;
     }
 

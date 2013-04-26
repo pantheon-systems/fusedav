@@ -1758,6 +1758,7 @@ static void fusedav_inject_error(int start, int tdx, int fdx) {
 }
 
 static void *inject_error_mechanism(void *ptr) {
+    int fdx = 0;
     int fcerrors; // number of error locations in filecache
     int scerrors; // number of error locations in statcache
     int fderrors; // number of error locations in statcache
@@ -1773,8 +1774,7 @@ static void *inject_error_mechanism(void *ptr) {
 
     // Limits the extent of the storm. Some protection against accidental setting.
     for (int idx = 0; idx < 512; idx++) {
-        int tdx = 0;
-        int fdx = 0;
+        int tdx;
         sleep(4);
         tdx = rand() % (fcerrors + scerrors);
         log_print(LOG_DEBUG, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
