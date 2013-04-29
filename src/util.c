@@ -197,6 +197,7 @@ static bool inject_error(int edx, int start, int numerrors) {
     edx += start;
     if ((edx < numerrors + start) && inject_error_list[edx]) {
         inject_error_list[edx] = false;
+        log_print(LOG_NOTICE, "inject_error(%d, %d, %d)", edx - start, start, numerrors);
         return true;
     }
     return false;

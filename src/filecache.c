@@ -716,6 +716,11 @@ ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_
 
     BUMP(read);
 
+    if (sdata == NULL) {
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
+        return -1;
+    }
+
     log_print(LOG_DEBUG, "filecache_read: fd=%d", sdata->fd);
 
     bytes_read = pread(sdata->fd, buf, size, offset);
@@ -736,6 +741,11 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
     ssize_t bytes_written;
 
     BUMP(write);
+
+    if (sdata == NULL) {
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
+        return -1;
+    }
 
     log_print(LOG_DEBUG, "filecache_write: fd=%d", sdata->fd);
 
@@ -775,6 +785,11 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
 
     BUMP(close);
+
+    if (sdata == NULL) {
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
+        return;
+    }
 
     log_print(LOG_DEBUG, "filecache_close: fd (%d :: %d).", sdata->fd, sdata->fd);
 
@@ -878,7 +893,10 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 
     BUMP(sync);
 
-    assert(sdata);
+    if (sdata == NULL) {
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_sync: sdata is NULL");
+        goto finish;
+    }
 
     // We only do the sync if we have a path
     // If we are accessing a bare file descriptor (open/unlink/read|write),
@@ -954,7 +972,7 @@ finish:
 
     free(pdata);
 
-    log_print(LOG_DEBUG, "filecache_sync: Done syncing file (%s, fd=%d).", path, sdata->fd);
+    log_print(LOG_DEBUG, "filecache_sync: Done syncing file (%s, fd=%d).", path, sdata ? sdata->fd : -1);
 
     return;
 }
@@ -964,6 +982,11 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
 
     BUMP(truncate);
+
+    if (sdata == NULL) {
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
+        return;
+    }
 
     log_print(LOG_DEBUG, "filecache_truncate(%d)", sdata->fd);
 

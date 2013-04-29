@@ -37,6 +37,7 @@
  * to do an operation, we don't have the file in the cache, so we can't update, etc.
  */
 #define E_FC_PDATANULL ENOENT
+#define E_FC_SDATANULL EIO
 #define E_FC_LDBERR EIO
 #define E_FC_CURLERR EIO
 
