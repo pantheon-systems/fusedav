@@ -196,7 +196,6 @@ static pthread_key_t path_cvt_tsd_key;
 
 // GError mechanisms
 G_DEFINE_QUARK(FUSEDAV, fusedav)
-static bool inject_error(int edx);
 
 static void sigsegv_handler(int signum) {
     assert(signum == 11);
@@ -475,11 +474,11 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         // On true error, we set an error and return, avoiding the complete PROPFIND.
         // On sucess we avoid the complete PROPFIND
         // On ESTALE, we do a complete PROPFIND
-        if (propfind_result == 0 && !inject_error(0)) {
+        if (propfind_result == 0 && !fusedav_inject_error(0)) {
             log_print(LOG_DEBUG, "Freshen PROPFIND success");
             needs_update = false;
         }
-        else if (propfind_result == -ESTALE && !inject_error(0)) {
+        else if (propfind_result == -ESTALE && !fusedav_inject_error(0)) {
             log_print(LOG_DEBUG, "Freshen PROPFIND failed because of staleness.");
         }
         else {
@@ -498,7 +497,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
         // REVIEW: can we get an ESTALE here, and should we handle it differently?
-        if (propfind_result < 0 || inject_error(1)) {
+        if (propfind_result < 0 || fusedav_inject_error(1)) {
             g_set_error(gerr, fusedav_quark(), EIO, "update_directory: Complete PROPFIND failed on %s", path);
             return;
         }
@@ -1715,63 +1714,12 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
-// Set to true to inject errors; Make sure it is false for production
-bool injecting_errors = false;
 
 // error injection routines
-#define FUSEDAV_ERRORS 2
-// counting on global being automatically initialized to all 0
-static bool inject_error_list[FUSEDAV_ERRORS] = {false};
-
-static bool inject_error(int edx) {
-    bool ret;
-    if (!injecting_errors) return false;
-    ret = inject_error_list[edx];
-    if (ret) log_print(LOG_NOTICE, "inject_error: %d %d", edx, ret);
-    // Turn the error off
-    inject_error_list[edx] = false;
-    return ret;
-}
-
-static int fusedav_errors(void) {
-    return FUSEDAV_ERRORS;
-}
-
-static void fusedav_inject_error(int start, int tdx, int fdx) {
-    if (fdx >= start && fdx < fusedav_errors()) inject_error_list[fdx] = false;
-    if (tdx >= start && tdx < fusedav_errors()) inject_error_list[tdx] = true;
-    log_print(LOG_DEBUG, "fusedav_inject_error: %d -- %d:%d %d:%d",
-        start, fdx, (fdx >= start && fdx < fusedav_errors()) ? inject_error_list[fdx] : 0,
-        tdx, (tdx >= start && tdx < fusedav_errors()) ? inject_error_list[tdx] : 0);
-}
-
-static void *inject_error_mechanism(void *ptr) {
-    int fdx = 0;
-    int fcerrors; // number of error locations in filecache
-    int scerrors; // number of error locations in statcache
-    int fderrors; // number of error locations in statcache
-    if(!injecting_errors) return NULL;
-
-    // ptr stuff just to get rid of warning message about unused parameter
-    log_print(LOG_NOTICE, "INJECTING ERRORS! %p", ptr ? ptr : 0);
-
-    srand(time(NULL));
-    fcerrors = filecache_errors();
-    scerrors = statcache_errors();
-    fderrors = fusedav_errors();
-
-    // Limits the extent of the storm. Some protection against accidental setting.
-    for (int idx = 0; idx < 512; idx++) {
-        int tdx;
-        sleep(4);
-        tdx = rand() % (fcerrors + scerrors);
-        log_print(LOG_DEBUG, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
-        fusedav_inject_error(0, tdx, fdx);
-        filecache_inject_error(fderrors, tdx, fdx);
-        statcache_inject_error(fderrors + fcerrors, tdx, fdx);
-        fdx = tdx;
-    }
-    return NULL;
+// This routine is here because it is easier to update if one adds a new call to <>_inject_error() than if it were in util.c
+int fusedav_errors(void) {
+    int const inject_errors = 2; // Number of places we call fusedav_inject_error(). Update when changed.
+    return inject_errors;
 }
 
 static void *cache_cleanup(void *ptr) {

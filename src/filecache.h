@@ -27,6 +27,7 @@
 #include <glib.h>
 #include "session.h"
 #include "fuse.h"
+#include "util.h"
 
 /* Ultimately, it will be a dav_* function returning the value, so set it up for appropriate
  * values here, i.e. errno-like values. If curl errors occur, they are quite reasonably
@@ -54,9 +55,5 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr);
 int filecache_fd(struct fuse_file_info *info);
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr);
 void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr);
-
-// error injection mechanism; should only run during development when injecting errors
-int filecache_errors(void);
-void filecache_inject_error(int fcerrors, int tdx, int fdx);
 
 #endif

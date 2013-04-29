@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -24,8 +24,10 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 #include "util.h"
+#include "log.h"
 
 #define PS (0x0001) /* "+" */
 #define PC (0x0002) /* "%" */
@@ -41,11 +43,11 @@
 #define DG (0x0400) /* DIGIT */
 #define AL (0x0800) /* ALPHA */
 
-#define GD (0x1000) /* gen-delims    = "#" / "[" / "]" 
+#define GD (0x1000) /* gen-delims    = "#" / "[" / "]"
                      * ... except ":", "/", "@", and "?" */
 
 #define SD (0x2000) /* sub-delims    = "!" / "$" / "&" / "'" / "(" / ")"
-                     *               / "*" / "+" / "," / ";" / "=" 
+                     *               / "*" / "+" / "," / ";" / "="
                      * ... except "+" which is PS */
 
 #define OT (0x4000) /* others */
@@ -85,13 +87,13 @@ static const unsigned int uri_chars[256] = {
 /*   5x */ AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, GD, OT, GD, OT, US,
 /*   6x */ OT, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL,
 /*   7x */ AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, AL, OT, OT, OT, TD, OT,
-/*   8x */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, 
-/*   9x */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, 
-/*   Ax */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, 
-/*   Bx */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, 
-/*   Cx */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, 
-/*   Dx */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, 
-/*   Ex */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, 
+/*   8x */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT,
+/*   9x */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT,
+/*   Ax */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT,
+/*   Bx */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT,
+/*   Cx */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT,
+/*   Dx */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT,
+/*   Ex */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT,
 /*   Fx */ OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT, OT
 };
 
@@ -142,3 +144,67 @@ char *path_escape(const char *path) {
     *p = '\0';
     return ret;
 }
+
+// error injection routines
+// Set to true to inject errors; Make sure it is false for production
+bool injecting_errors = false;
+static bool *inject_error_list;
+static int fusedav_start;
+static int filecache_start;
+static int statcache_start;
+static int fcerrors; // number of error locations in filecache
+static int scerrors; // number of error locations in statcache
+static int fderrors; // number of error locations in statcache
+
+void *inject_error_mechanism(void *ptr) {
+    int fdx = 0;
+    if(!injecting_errors) return NULL;
+
+    // ptr stuff just to get rid of warning message about unused parameter
+    log_print(LOG_NOTICE, "INJECTING ERRORS! %p", ptr ? ptr : 0);
+
+    srand(time(NULL));
+    fderrors = fusedav_errors();
+    fusedav_start = 0;
+    fcerrors = filecache_errors();
+    filecache_start = fderrors;
+    scerrors = statcache_errors();
+    statcache_start = filecache_start + fcerrors;
+    inject_error_list = calloc(sizeof(bool), fderrors + fcerrors + scerrors);
+    if (inject_error_list == NULL) {
+        log_print(LOG_NOTICE, "inject_error_mechanism: failed to calloc inject_error_list");
+        return NULL;
+    }
+
+    // Limits the extent of the storm. Some protection against accidental setting.
+    for (int idx = 0; idx < 512; idx++) {
+        int tdx;
+        sleep(4);
+        tdx = rand() % (fderrors + fcerrors + scerrors);
+        log_print(LOG_DEBUG, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+    }
+    free(inject_error_list);
+    return NULL;
+}
+
+// fusedav.c bzw filecache.c, statcache.c, will call these routines to decide whether to throw an injected error
+bool fusedav_inject_error(int edx) {
+    edx += fusedav_start;
+    if (edx < fderrors + fusedav_start) return inject_error_list[edx];
+    return false;
+}
+bool filecache_inject_error(int edx) {
+    edx += filecache_start;
+    if (edx < fcerrors + filecache_start) return inject_error_list[edx];
+    return false;
+}
+
+bool statcache_inject_error(int edx) {
+    edx += statcache_start;
+    if (edx < scerrors + statcache_start) return inject_error_list[edx];
+    return false;
+}
+
