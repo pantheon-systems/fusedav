@@ -84,16 +84,33 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.status_code = (unsigned long) atol(strtok_r(NULL, " ", &token_status));
     }
     else if (strcmp(name, "href") == 0) {
-        const char *after_scheme = strstr(state->estate.current_data, "//") + 2;
-        const char *server_path = strstr(after_scheme, "/");
-        const size_t path_len = strlen(server_path);
-
+        const char *after_scheme;
+        const char *server_path;
+        size_t path_len;
         log_print(LOG_INFO, "href: %s", state->estate.current_data);
+        after_scheme = strstr(state->estate.current_data, "//") + 2;
+        if (after_scheme != NULL) {
+            server_path = strstr(after_scheme, "/");
+            if (server_path != NULL) {
+                path_len = strlen(server_path);
+                strncpy(state->rstate.path, server_path, PATH_MAX);
+                // Trim trailing slash, if any.
+                if (state->rstate.path[path_len - 1] == '/') {
+                    state->rstate.path[path_len - 1] = '\0';
+                }
+            }
+        }
 
-        strncpy(state->rstate.path, server_path, PATH_MAX);
-        // Trim trailing slash, if any.
-        if (state->rstate.path[path_len - 1] == '/')
-            state->rstate.path[path_len - 1] = '\0';
+        // @TODO: Restore this older, safer implementation once the base_host
+        // matches the hrefs in the PROPFIND.
+        //if (strstr(state->estate.current_data, get_base_host()) == state->estate.current_data) {
+        //    size_t path_len;
+        //    strncpy(state->rstate.path, state->estate.current_data + strlen(get_base_host()), PATH_MAX);
+        //    // Trim trailing slash, if any.
+        //    path_len = strlen(state->rstate.path);
+        //    if (state->rstate.path[path_len - 1] == '/')
+        //        state->rstate.path[path_len - 1] = '\0';
+        //}
     }
     // @TODO: Update Valhalla server to use HTTP/1.1 410 Gone instead.
     else if (strcmp(name, "event") == 0) {
