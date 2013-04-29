@@ -93,6 +93,9 @@ static void endElement(void *userData, const XML_Char *name) {
             if (state->rstate.path[path_len - 1] == '/')
                 state->rstate.path[path_len - 1] = '\0';
         }
+        else {
+            log_print(LOG_WARNING, "Could not find base host %s in href %s.", get_base_host(), state->estate.current_data);
+        }
     }
     // @TODO: Update Valhalla server to use HTTP/1.1 410 Gone instead.
     else if (strcmp(name, "event") == 0) {
