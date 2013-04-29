@@ -311,7 +311,7 @@ static const char *path_cvt(const char *path) {
 
 static int processed_gerror(const char *prefix, const char *path, GError *gerr) {
     int ret;
-    char *shortpath;
+    char const *shortpath;
     char const *base_directory = get_base_directory();
 
     if (path == NULL) shortpath = NULL;
