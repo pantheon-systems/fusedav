@@ -273,10 +273,6 @@ static const char *path_cvt(const char *path) {
 
     log_print(LOG_DEBUG, "path_cvt(%s)", path ? path : "null path");
 
-    // Path might be NULL if file was unlinked but file descriptor remains open.
-    if (path == NULL)
-        return NULL;
-
     // Path might be null if file was unlinked but file descriptor remains open
     // Detect here at top of function, otherwise pthread_getspecific returns bogus
     // values
@@ -629,6 +625,8 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         return -1;
     }
 
+    // REVIEW: @TODO: Grace mode setting ignore_freshness should not result in
+    // -ENOENT for cache misses.
     if (response == NULL) {
         log_print(LOG_DEBUG, "NULL response from stat_cache_value_get for path %s.", path);
 
@@ -757,11 +755,14 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         // In that case, skip the progressive propfind and go straight to complete propfind
         update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
         if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
-            if ((*gerr)->code == EIO) {
-                if (config->grace) set_saint_mode();
+            // If the error is non-EIO or grace is off, fail.
+            if ((*gerr)->code != EIO || !config->grace) {
+                g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
+                goto fail;
             }
-            goto fail;
+            log_print(LOG_WARNING, "get_stat: Attempting recovery with grace from error %s on path %s.", subgerr->message, path);
+            g_clear_error(&subgerr);
+            set_saint_mode();
         }
     }
 
@@ -774,7 +775,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         goto fail;
     }
-    goto finish;
+    if (ret > 0) goto finish;
 
 fail:
     memset(stbuf, 0, sizeof(struct stat));
@@ -1755,7 +1756,6 @@ int main(int argc, char *argv[]) {
     int ret = 1;
     pthread_t cache_cleanup_thread;
     pthread_t error_injection_thread;
-    int fail = 0;
 
     // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
@@ -1776,10 +1776,6 @@ int main(int argc, char *argv[]) {
     // Parse options.
     if (fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
-        goto finish;
-    }
-
-    if (fail) {
         goto finish;
     }
 

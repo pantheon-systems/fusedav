@@ -73,7 +73,9 @@ static void set_bases(const char *url) {
         uriFreeUriMembersA(&uri);
     }
 
-    base = malloc(strlen(url));
+    // Adding one to the strlen(url) to please static analysis, even
+    // though base is guaranteed to be shorter.
+    base = malloc(strlen(url) + 1);
     base[0] = '/';
     base_pos = 0;
 
@@ -95,8 +97,9 @@ static void set_bases(const char *url) {
     if (base[base_pos - 1] == '/' && base_pos > 1)
         base[base_pos - 1] = '\0';
 
-    // Assemble the base host.
-    base_host = malloc(strlen(url));
+    // Assemble the base host. Adding one to the strlen(url) to please
+    // static analysis, even though base_host is guaranteed to be shorter.
+    base_host = malloc(strlen(url) + 1);
 
     // Scheme.
     addition = uri.scheme.afterLast - uri.scheme.first;
@@ -183,14 +186,13 @@ static void session_tsd_key_init(void) {
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
     if (type == CURLINFO_TEXT) {
         char *msg = malloc(size + 1);
-        strncpy(msg, data, size);
-        msg[size] = '\0';
-        if (msg[size - 1] == '\n')
-            msg[size - 1] = '\0';
         if (msg != NULL) {
+            strncpy(msg, data, size);
+            msg[size] = '\0';
+            if (msg[size - 1] == '\n') msg[size - 1] = '\0';
             log_print(LOG_INFO, "cURL: %s", msg);
+            free(msg);
         }
-        free(msg);
     }
     return 0;
 }
@@ -226,7 +228,6 @@ CURL *session_request_init(const char *path) {
     free(full_url);
 
     //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
-    curl_easy_setopt(session, CURLOPT_URL, full_url);
     if (ca_certificate != NULL)
         curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
     if (client_certificate != NULL) {

@@ -689,6 +689,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
                 free(entry);
+                stat_cache_iterator_free(iter);
                 return;
             }
         }

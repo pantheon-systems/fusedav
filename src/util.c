@@ -147,6 +147,8 @@ char *path_escape(const char *path) {
 
 // error injection routines
 // Set to true to inject errors; Make sure it is false for production
+// If you change to true, also include an all-caps comment so it will be obvious if
+// you diff before push that you have done this, and you can't correct before push
 bool injecting_errors = false;
 static bool *inject_error_list;
 static int fusedav_start;
