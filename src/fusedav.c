@@ -559,7 +559,7 @@ static int dav_readdir(
     filler(buf, "..", NULL, 0);
 
     // If we are in grace mode, we don't do the freshness check. In this case,
-    // stat_cache_enumerate can only return either success, or an empty directory, which is not really an error
+    // stat_cache_enumerate can only return either success, or no data available, which is not really an error
     if (config->grace && use_saint_mode())
         ignore_freshness = true;
 
@@ -568,7 +568,7 @@ static int dav_readdir(
     if (ret < 0) {
         if (debug) {
             if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, "DIR-CACHE-TOO-OLD: %s", path);
-            else if (ret == -STAT_CACHE_NO_DATA) log_print(LOG_DEBUG, "Empty directory: %s", path);
+            else if (ret == -STAT_CACHE_NO_DATA) log_print(LOG_DEBUG, "DIR_CACHE-NO-DATA available: %s", path);
             else log_print(LOG_DEBUG, "DIR-CACHE-MISS: %s", path);
         }
 
