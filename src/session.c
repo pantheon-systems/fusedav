@@ -240,7 +240,7 @@ CURL *session_request_init(const char *path) {
     curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 100);
     curl_easy_setopt(session, CURLOPT_TIMEOUT_MS, 600000);
     curl_easy_setopt(session, CURLOPT_LOW_SPEED_LIMIT, 1024);
-    curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 3);
+    curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 60);
     curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
     curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
