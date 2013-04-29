@@ -40,6 +40,7 @@
 #include "statcache.h"
 #include "fusedav.h"
 #include "log.h"
+#include "util.h"
 
 #define REFRESH_INTERVAL 3
 #define CACHE_FILE_ENTROPY 20

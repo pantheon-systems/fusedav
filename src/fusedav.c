@@ -499,7 +499,6 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
-        // REVIEW: can we get an ESTALE here, and should we handle it differently?
         if (propfind_result < 0 || fusedav_inject_error(1)) {
             g_set_error(gerr, fusedav_quark(), EIO, "update_directory: Complete PROPFIND failed on %s", path);
             return;
@@ -721,10 +720,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, getattr_propfind_callback, NULL) < 0) {
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "get _stat: ");
+                g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
                 goto fail;
             }
-            g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat: PROPFIND failed");
+            g_set_error(gerr, fusedav_quark(), EIO, "get_stat: PROPFIND failed");
             goto fail;
         }
         log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", path);

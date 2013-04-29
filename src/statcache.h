@@ -23,7 +23,6 @@
 #include <leveldb/c.h>
 #include <glib.h>
 #include <errno.h>
-#include "util.h"
 
 #define RGEN_LEN 128
 #define STAT_CACHE_OLD_DATA 2

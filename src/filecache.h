@@ -27,7 +27,6 @@
 #include <glib.h>
 #include "session.h"
 #include "fuse.h"
-#include "util.h"
 
 /* Ultimately, it will be a dav_* function returning the value, so set it up for appropriate
  * values here, i.e. errno-like values. If curl errors occur, they are quite reasonably
