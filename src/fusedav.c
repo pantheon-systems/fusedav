@@ -274,10 +274,6 @@ static const char *path_cvt(const char *path) {
 
     log_print(LOG_DEBUG, "path_cvt(%s)", path ? path : "null path");
 
-    // Path might be NULL if file was unlinked but file descriptor remains open.
-    if (path == NULL)
-        return NULL;
-
     // Path might be null if file was unlinked but file descriptor remains open
     // Detect here at top of function, otherwise pthread_getspecific returns bogus
     // values
@@ -1819,7 +1815,6 @@ int main(int argc, char *argv[]) {
     int ret = 1;
     pthread_t cache_cleanup_thread;
     pthread_t error_injection_thread;
-    int fail = 0;
 
     // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
@@ -1840,10 +1835,6 @@ int main(int argc, char *argv[]) {
     // Parse options.
     if (fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse options.");
-        goto finish;
-    }
-
-    if (fail) {
         goto finish;
     }
 

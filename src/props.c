@@ -79,7 +79,7 @@ static void endElement(void *userData, const XML_Char *name) {
     struct propfind_state *state = (struct propfind_state *) userData;
 
     if (strcmp(name, "status") == 0) {
-        char *token_status;
+        char *token_status = NULL;
         strtok_r(state->estate.current_data, " ", &token_status);
         state->rstate.status_code = (unsigned long) atol(strtok_r(NULL, " ", &token_status));
     }

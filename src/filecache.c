@@ -241,8 +241,8 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
     free(key);
 
     if (ldberr != NULL || inject_error(4)) {
-        free(ldberr);
         g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s", ldberr);
+        free(ldberr);
         return;
     }
 
@@ -389,7 +389,7 @@ static int get_fresh_fd(filecache_t *cache,
     CURLcode res;
     struct filecache_pdata *pdata;
     char etag[ETAG_MAX];
-    char response_filename[PATH_MAX];
+    char response_filename[PATH_MAX] = "\0";
     int response_fd = -1;
     bool close_response_fd = true;
 
@@ -495,7 +495,7 @@ static int get_fresh_fd(filecache_t *cache,
     // Set an ETag header capture path.
     etag[0] = '\0';
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
-    curl_easy_setopt(session, CURLOPT_WRITEHEADER, (void *) etag);
+    curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
     // Create a new temp file in case cURL needs to write to one.
     new_cache_file(cache_path, response_filename, &response_fd, &tmpgerr);
@@ -526,6 +526,12 @@ static int get_fresh_fd(filecache_t *cache,
         // missing and handled it there.
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &code);
         if (code == 304) {
+            // This should never happen with a well-behaved server.
+            if (pdata == NULL) {
+                g_set_error(gerr, system_quark(), E_FC_PDATANULL, "get_fresh_fd: Should not get HTTP 304 from server when pdata is NULL because etag is empty.");
+                goto finish;
+            }
+
             log_print(LOG_DEBUG, "Got 304 on %s with etag %s", path, pdata->etag);
 
             // Mark the cache item as revalidated at the current time.
@@ -643,10 +649,10 @@ static int get_fresh_fd(filecache_t *cache,
     // truncate.
     assert(!(flags & O_TRUNC));
 
-    finish:
+finish:
     if (close_response_fd) {
-        close(response_fd);
-        unlink(response_filename);
+        if (response_fd >= 0) close(response_fd);
+        if (response_filename[0] != '\0') unlink(response_filename);
     }
     return ret;
 }
