@@ -379,12 +379,11 @@ static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *u
 }
 
 // Get a file descriptor pointing to the latest full copy of the file.
-static int get_fresh_fd(filecache_t *cache,
+static void get_fresh_fd(filecache_t *cache,
         const char *cache_path, const char *path, struct filecache_sdata *sdata,
         struct filecache_pdata **pdatap, int flags, bool skip_validation, GError **gerr) {
     CURL *session;
     GError *tmpgerr = NULL;
-    int ret = -EBADFD;
     long code;
     CURLcode res;
     struct filecache_pdata *pdata;
@@ -414,18 +413,10 @@ static int get_fresh_fd(filecache_t *cache,
         // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
         sdata->fd = open(pdata->filename, flags & ~O_TRUNC);
         if (sdata->fd < 0 || inject_error(7)) {
-            log_print(LOG_INFO, "get_fresh_fd: < 0, %s with flags %x returns < 0: errno: %d, %s : ENOENT %d", path, flags, errno, strerror(errno), ENOENT);
-            // If the cachefile named in pdata->filename does not exist ...
-            if (errno == ENOENT) {
-                // try again
-                ret = -EAGAIN;
-                log_print(LOG_INFO, "get_fresh_fd: ENOENT on fresh/trunc, cause retry: open for fresh/trunc on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
-            }
-            else {
-                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open failed");
-                // ret defaults to EBADFD
-            }
-            return ret;
+            log_print(LOG_INFO, "get_fresh_fd: < 0, %s with flags %x returns < 0: errno: %d, %s : ENOENT=%d", path, flags, errno, strerror(errno), ENOENT);
+            // If the cachefile named in pdata->filename does not exist, or any other error occurs...
+            g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open failed: %s", strerror(errno));
+            goto finish;
         }
 
         if (flags & O_TRUNC) {
@@ -470,7 +461,6 @@ static int get_fresh_fd(filecache_t *cache,
             log_print(LOG_DEBUG, "get_fresh_fd: O_TRUNC not specified on fd %d:%s::%s", sdata->fd, path, pdata->filename);
         }
 
-        ret = 0;
         // We're done; no need to access the server...
         goto finish;
     }
@@ -552,24 +542,12 @@ static int get_fresh_fd(filecache_t *cache,
                     // delete pdata from cache, we can't trust its values.
                     // We see one site continually failing on the same non-existent cache file.
                     filecache_delete(cache, path, true, &tmpgerr);
-                    if (tmpgerr) {
-                        g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd ENOENT on 304: ");
-                        goto finish;
-                    }
-                    else {
-                        // Now that we've gotten rid of pdata
-                        ret = -EAGAIN;
-                        log_print(LOG_NOTICE, "get_fresh_fd: ENOENT, cause retry: open for 304 on %s with flags %x returns < 0: errno: %d, %s", path, flags, errno, strerror(errno));
-                    }
                 }
-                else {
-                    g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open for 304 failed");
-                    log_print(LOG_INFO, "get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
-                    goto finish;
-                }
+                g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open for 304 failed: %s", strerror(errno));
+                log_print(LOG_INFO, "get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
+                goto finish;
             }
             else {
-                ret = 0;
                 log_print(LOG_DEBUG, "get_fresh_fd: open for 304 on %s with flags %x succeeded; fd %d", pdata->filename, flags, sdata->fd);
             }
         }
@@ -596,8 +574,6 @@ static int get_fresh_fd(filecache_t *cache,
             strncpy(pdata->etag, etag, ETAG_MAX);
             pdata->etag[ETAG_MAX] = '\0'; // length of etag is ETAG_MAX + 1 to accomodate this null terminator
 
-            ret = 0;
-
             // Point the persistent cache to the new file content.
             pdata->last_server_update = time(NULL);
             strncpy(pdata->filename, response_filename, PATH_MAX);
@@ -608,7 +584,6 @@ static int get_fresh_fd(filecache_t *cache,
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 200: ");
-                ret = -1;
                 goto finish;
             }
 
@@ -636,7 +611,6 @@ static int get_fresh_fd(filecache_t *cache,
                     log_print(LOG_NOTICE, "get_fresh_fd: on 404 stat_cache_delete failed on %s", path);
                 }
             }
-            ret = -ENOENT;
             goto finish;
         }
         else {
@@ -654,26 +628,22 @@ finish:
         if (response_fd >= 0) close(response_fd);
         if (response_filename[0] != '\0') unlink(response_filename);
     }
-    return ret;
 }
 
 // top-level open call
-// @TODO Get rid of ret
 void filecache_open(char *cache_path, filecache_t *cache, const char *path,
         struct fuse_file_info *info, unsigned grace_level, bool *used_grace, GError **gerr) {
     struct filecache_pdata *pdata = NULL;
     struct filecache_sdata *sdata = NULL;
     GError *tmpgerr = NULL;
-    int ret = -EBADF;
     int flags = info->flags;
-    unsigned retries = 0;
     const unsigned max_retries = 2;
     bool skip_validation = false;
+    unsigned retries;
 
     BUMP(open);
-
-    if (used_grace != NULL)
-        *used_grace = false;
+    assert(used_grace);
+    *used_grace = false;
 
     if (grace_level >= 2)
         skip_validation = true;
@@ -687,7 +657,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
         goto fail;
     }
 
-    do {
+    for (retries = 0; true; ++retries) {
         // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
         // the second time. (Unlike on a linux file system, where the second time open
         // is called with O_CREAT, the flag is there but is ignored.) So O_CREAT here
@@ -699,7 +669,9 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
         // in the cache, so we need to create a new cache file for it (or it has aged
         // out of the cache.) If it is in the cache, we let get_fresh_fd handle it.
 
-        pdata = filecache_pdata_get(cache, path, NULL);
+        if (pdata == NULL)
+            pdata = filecache_pdata_get(cache, path, NULL);
+
         if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
             if ((flags & O_CREAT) && (pdata != NULL)) {
                 // This will orphan the previous filecache file
@@ -711,51 +683,39 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
                 g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: ");
                 goto fail;
             }
-            // create_file doesn't need to return an error code, but we need ret == 0 to proceed below
-            // This is a bit hokey.
-            ret = 0;
+            break;
         }
-        else {
-            // Get a file descriptor pointing to a guaranteed-fresh file.
-            log_print(LOG_DEBUG, "filecache_open: calling get_fresh_fd on %s", path);
-            ret = get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, skip_validation, &tmpgerr);
-            if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: ");
-                goto fail;
+
+        // Get a file descriptor pointing to a guaranteed-fresh file.
+        log_print(LOG_DEBUG, "filecache_open: calling get_fresh_fd on %s", path);
+        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, skip_validation, &tmpgerr);
+        if (tmpgerr) {
+            if (tmpgerr->domain == curl_quark() && grace_level >= 1 && retries < max_retries) {
+                log_print(LOG_WARNING, "filecache_open: Falling back with grace mode for path %s. Error: %s", path, tmpgerr->message);
+                g_clear_error(&tmpgerr);
+                skip_validation = true;
+                *used_grace = true;
+                continue;
             }
-        }
-        if (ret == 0) {
-            log_print(LOG_DEBUG, "filecache_open: success on %s", path);
-        }
-        else if (ret == -EAGAIN && (retries < max_retries)) {
-            log_print(LOG_NOTICE, "filecache_open: Got EAGAIN on %s; trying again", path);
-            filecache_delete(cache, path, true, &tmpgerr);
-            if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: EAGAIN: ");
-                goto fail;
-            }
-            else {
+            else if (tmpgerr->domain == system_quark() && retries < max_retries) {
+                log_print(LOG_WARNING, "filecache_open: Retrying with reset pdata for path %s. Error: %s", path, tmpgerr->message);
+                g_clear_error(&tmpgerr);
+                filecache_delete(cache, path, true, &tmpgerr);
                 // Now that we've gotten rid of cache entry, free pdata
                 free(pdata);
                 pdata = NULL;
+                continue;
             }
-        }
-        else if (grace_level >= 1 && ret == -EBADFD) { // REVIEW: do we really want EBADFD and not EBADF?
-            log_print(LOG_NOTICE, "filecache_open: Falling back with grace mode.");
-            free(pdata);
-            pdata = NULL;
-            skip_validation = true;
-            if (retries < max_retries)
-                ret = -EAGAIN;
-            if (used_grace != NULL)
-                *used_grace = true;
-        }
-        else {
-            g_set_error(gerr, system_quark(), errno, "filecache_open: Failed on get_fresh_fd: ");
+
+            g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: Failed on get_fresh_fd: ");
             goto fail;
         }
-        ++retries;
-    } while (ret == -EAGAIN);
+
+        // If we've reached here, it's successful, and we don't want to retry.
+        break;
+    }
+
+    log_print(LOG_DEBUG, "filecache_open: success on %s", path);
 
     if (flags & O_RDONLY || flags & O_RDWR) sdata->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
@@ -775,8 +735,6 @@ fail:
 
 finish:
     free(pdata);
-
-    return;
 }
 
 // top-level read call
