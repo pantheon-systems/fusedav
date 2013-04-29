@@ -311,7 +311,14 @@ static const char *path_cvt(const char *path) {
 
 static int processed_gerror(const char *prefix, const char *path, GError *gerr) {
     int ret;
-    log_print(LOG_ERR, "%s on %s: %s -- %d: %s", prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
+    char *shortpath;
+    char const *base_directory = get_base_directory();
+
+    if (path == NULL) shortpath = NULL;
+    else if (base_directory == NULL) shortpath = path;
+    else if (strlen(path) > strlen(base_directory)) shortpath = path + strlen(base_directory);
+    else shortpath = path;
+    log_print(LOG_ERR, "%s on %s: %s -- %d: %s", prefix, shortpath ? shortpath : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
     ret = -gerr->code;
     g_clear_error(&gerr);
     return ret;
@@ -756,7 +763,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
         if (subgerr) {
             // If the error is non-EIO or grace is off, fail.
-            if ((*gerr)->code != EIO || !config->grace) {
+            if (subgerr->code != EIO || !config->grace) {
                 g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
                 goto fail;
             }
@@ -834,6 +841,8 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     log_print(LOG_INFO, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
     common_getattr(path, stbuf, info, &gerr);
     if (gerr) {
+        // Don't print error on ENOENT; that's what get_attr is for
+        if (gerr->code == ENOENT) return -gerr->code;
         return processed_gerror("dav_fgetattr: ", path, gerr);
     }
     log_print(LOG_DEBUG, "Done: dav_fgetattr(%s)", path?path:"null path");
@@ -851,6 +860,8 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     log_print(LOG_INFO, "CALLBACK: dav_getattr(%s)", path);
     common_getattr(path, stbuf, NULL, &gerr);
     if (gerr) {
+        // Don't print error on ENOENT; that's what get_attr is for
+        if (gerr->code == ENOENT) return -gerr->code;
         return processed_gerror("dav_getattr: ", path, gerr);
     }
     log_print(LOG_DEBUG, "Done: dav_getattr(%s)", path);
