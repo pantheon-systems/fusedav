@@ -634,6 +634,9 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         memset(stbuf, 0, sizeof(struct stat));
         return -1;
     }
+
+    // @TODO: Grace mode setting ignore_freshness should not result in
+    // -ENOENT for cache misses.
     if (ignore_freshness) {
         log_print(LOG_DEBUG, "Ignoring freshness and sending -ENOENT for path %s.", path);
         memset(stbuf, 0, sizeof(struct stat));
@@ -705,7 +708,7 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
                 memset(stbuf, 0, sizeof(struct stat));
-                g_propagate_prefixed_error(gerr, tmpgerr, "get _stat: ");
+                g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
                 return -1;
             }
             log_print(LOG_NOTICE, "PROPFIND failed on path: %s", path);
@@ -744,12 +747,15 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         GError *subgerr = NULL;
         ret = update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
         if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
-            ret = -1;
-            if ((*gerr)->code == EIO) {
-                if (config->grace) set_saint_mode();
+            // If the error is non-EIO or grace is off, fail.
+            if ((*gerr)->code != EIO || !config->grace) {
+                ret = -1;
+                g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
+                goto fail;
             }
-            goto fail;
+            log_print(LOG_WARNING, "get_stat: Attempting recovery with grace from error %s on path %s.", subgerr->message, path);
+            g_clear_error(&subgerr);
+            set_saint_mode();
         }
     }
 
@@ -760,7 +766,7 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         ret = -1;
         goto fail;
     }
-    goto finish;
+    if (ret > 0) goto finish;
 
 fail:
     memset(stbuf, 0, sizeof(struct stat));
