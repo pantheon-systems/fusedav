@@ -193,20 +193,24 @@ void *inject_error_mechanism(void *ptr) {
 }
 
 // fusedav.c bzw filecache.c, statcache.c, will call these routines to decide whether to throw an injected error
-bool fusedav_inject_error(int edx) {
-    edx += fusedav_start;
-    if (edx < fderrors + fusedav_start) return inject_error_list[edx];
-    return false;
-}
-bool filecache_inject_error(int edx) {
-    edx += filecache_start;
-    if (edx < fcerrors + filecache_start) return inject_error_list[edx];
+static bool inject_error(int edx, int start, int numerrors) {
+    edx += start;
+    if ((edx < numerrors + start) && inject_error_list[edx]) {
+        inject_error_list[edx] = false;
+        return true;
+    }
     return false;
 }
 
+bool fusedav_inject_error(int edx) {
+    return inject_error(edx, fusedav_start, fderrors);
+}
+
+bool filecache_inject_error(int edx) {
+    return inject_error(edx, filecache_start, fcerrors);
+}
+
 bool statcache_inject_error(int edx) {
-    edx += statcache_start;
-    if (edx < scerrors + statcache_start) return inject_error_list[edx];
-    return false;
+    return inject_error(edx, statcache_start, scerrors);
 }
 
