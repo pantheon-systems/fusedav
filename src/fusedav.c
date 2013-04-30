@@ -767,7 +767,13 @@ static int get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         ret = -1;
         goto fail;
     }
-    if (ret > 0) goto finish;
+    if (ret > 0) {
+        log_print(LOG_DEBUG, "get_stat: Got normal response from get_stat_from_cache on path %s.", path);
+        goto finish;
+    }
+    else {
+        log_print(LOG_DEBUG, "get_stat: Got failed response from get_stat_from_cache on path %s.", path);
+    }
 
 fail:
     memset(stbuf, 0, sizeof(struct stat));
