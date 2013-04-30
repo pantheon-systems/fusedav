@@ -36,6 +36,7 @@
  * to do an operation, we don't have the file in the cache, so we can't update, etc.
  */
 #define E_FC_PDATANULL ENOENT
+#define E_FC_SDATANULL EIO
 #define E_FC_LDBERR EIO
 #define E_FC_CURLERR EIO
 
@@ -54,9 +55,5 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr);
 int filecache_fd(struct fuse_file_info *info);
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr);
 void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr);
-
-// error injection mechanism; should only run during development when injecting errors
-int filecache_errors(void);
-void filecache_inject_error(int fcerrors, int tdx, int fdx);
 
 #endif
