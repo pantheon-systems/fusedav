@@ -770,12 +770,12 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     }
 
     // Try again to hit the file in the stat cache.
-    get_stat_from_cache(path, stbuf, true, &tmpgerr);
+    ret = get_stat_from_cache(path, stbuf, true, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         goto fail;
     }
-    if (ret > 0) goto finish;
+    if (ret == 0) goto finish;
 
 fail:
     memset(stbuf, 0, sizeof(struct stat));
