@@ -82,7 +82,4 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) 
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 void stat_cache_prune(stat_cache_t *cache);
 
-// error injection mechanism; should only run during development when injecting errors
-int statcache_errors(void);
-void statcache_inject_error(int fcerrors, int tdx, int fdx);
 #endif
