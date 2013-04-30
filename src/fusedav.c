@@ -852,6 +852,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     if (gerr) {
         return processed_gerror("dav_getattr: ", path, gerr);
     }
+    print_stat(stbuf, "dav_getattr");
     log_print(LOG_DEBUG, "Done: dav_getattr(%s): ret=%d", path, ret);
 
     return ret;
@@ -1361,7 +1362,9 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     log_print(LOG_INFO, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
     do_open(path, info, &gerr);
     if (gerr) {
-        return processed_gerror("dav_open: ", path, gerr);
+        int ret = processed_gerror("dav_open: ", path, gerr);
+        log_print(LOG_DEBUG, "CALLBACK: dav_open: returns %d", ret);
+        return ret;
     }
     return 0;
 }
