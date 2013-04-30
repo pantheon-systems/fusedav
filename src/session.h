@@ -19,17 +19,14 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
-#include <ne_session.h>
-#include <ne_locks.h>
+#include <curl/curl.h>
 
-ne_session *session_get(int with_lock);
-int session_set_uri(const char *s, const char*u, const char*p, const char *client_cert, const char *ca_cert);
-void session_free(void);
-
-int session_is_local(const ne_uri *u);
-
-extern char *base_directory;
-extern ne_uri uri;
-extern char *username;
+int session_config_init(char *base, char *ca_cert, char *client_cert);
+CURL *session_request_init(const char *path);
+CURL *session_get_handle(void);
+void session_config_free(void);
+const char *get_base_url(void);
+const char *get_base_directory(void);
+const char *get_base_host(void);
 
 #endif

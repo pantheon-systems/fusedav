@@ -1,5 +1,5 @@
-#ifndef foologhfoo
-#define foologhfoo
+#ifndef fooutilhfoo
+#define fooutilhfoo
 
 /***
   This file is part of fusedav.
@@ -19,9 +19,27 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
-#include <systemd/sd-journal.h>
+#include <time.h>
+#include <unistd.h>
 
-void log_init(int verbosity, const char *base_dir);
-int log_print(int verbosity, const char *format, ...);
+#ifdef __GNUC__
+#define __unused __attribute__ ((unused))
+#else
+#define __unused
+#endif
+
+char *path_parent(const char *uri);
+char *path_escape(const char *path);
+
+// Error injection routines
+extern bool injecting_errors;
+int fusedav_errors(void);
+int filecache_errors(void);
+int statcache_errors(void);
+
+void *inject_error_mechanism(void *ptr);
+bool fusedav_inject_error(int edx);
+bool filecache_inject_error(int edx);
+bool statcache_inject_error(int edx);
 
 #endif

@@ -18,10 +18,12 @@ bin_PROGRAMS=fusedav
 
 fusedav_SOURCES=fusedav.c fusedav.h \
 				statcache.c statcache.h \
-				ldb-filecache.c ldb-filecache.h \
+				filecache.c filecache.h \
 				session.c session.h \
 				log.c log.h \
-				bloom-filter.c bloom-filter.h
+				bloom-filter.c bloom-filter.h \
+				props.c props.h \
+				util.c util.h
 
-fusedav_CFLAGS = $(AM_CFLAGS) $(NEON_CFLAGS) $(FUSE_CFLAGS) $(YAML_CFLAGS) $(LEVELDB_CFLAGS) $(SYSTEMD_CFLAGS) $(ZLIB_CFLAGS) -DFUSE_USE_VERSION=26
-fusedav_LDADD = -lpthread -ljemalloc $(NEON_LIBS) $(FUSE_LIBS) $(YAML_LIBS) $(LEVELDB_LIBS) $(SYSTEMD_LIBS) $(ZLIB_LIBS)
+fusedav_CFLAGS = $(AM_CFLAGS) $(CURL_CFLAGS) $(URIPARSER_CFLAGS) $(FUSE_CFLAGS) $(YAML_CFLAGS) $(LEVELDB_CFLAGS) $(SYSTEMD_CFLAGS) $(ZLIB_CFLAGS) $(GLIB_CFLAGS) -DFUSE_USE_VERSION=26
+fusedav_LDADD = -lpthread -ljemalloc -lrt -lresolv -lexpat $(CURL_LIBS) $(URIPARSER_LIBS) $(FUSE_LIBS) $(YAML_LIBS) $(LEVELDB_LIBS) $(SYSTEMD_LIBS) $(ZLIB_LIBS) $(GLIB_LIBS)
