@@ -775,7 +775,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         goto fail;
     }
-    if (ret > 0) goto finish;
+    if (ret == 0) goto finish;
 
 fail:
     memset(stbuf, 0, sizeof(struct stat));
