@@ -621,6 +621,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
     if (response != NULL) {
         log_print(LOG_DEBUG, "Got response from stat_cache_value_get for path %s.", path);
         *stbuf = response->st;
+        print_stat(stbuf, "stat_cache_value_get response");
         free(response);
         log_print(LOG_DEBUG, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, ignore_freshness, stbuf->st_mode ? "0" : "ENOENT");
         return stbuf->st_mode == 0 ? -ENOENT : 0;
@@ -817,6 +818,8 @@ static int common_getattr(const char *path, struct stat *stbuf, struct fuse_file
     stbuf->st_atim.tv_nsec = 0;
     stbuf->st_mtim.tv_nsec = 0;
     stbuf->st_ctim.tv_nsec = 0;
+
+    //assert(stbuf->st_mode);
 
     return 0;
 }
