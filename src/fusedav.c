@@ -716,7 +716,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         GError *subgerr = NULL;
         log_print(LOG_DEBUG, "Performing zero-depth PROPFIND on path: %s", path);
         // @TODO: Armor this better if the server returns unexpected data.
-        // REVIEW: why do we think it is ENOENT, not ESTALE or "other"
         if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, getattr_propfind_callback, NULL) < 0) {
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
@@ -728,9 +727,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         }
         log_print(LOG_DEBUG, "Zero-depth PROPFIND succeeded: %s", path);
 
-        // REVIEW: Is this correct: since we aren't doing a progressive propfind, we can't get an ESTALE return,
-        // which is the only non zero non error return. So we either get success, or true error.
-        // So, ignore return value.
         get_stat_from_cache(path, stbuf, true, &subgerr);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
@@ -772,9 +768,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         }
     }
 
-    // REVIEW: Is this correct: since we aren't doing a progressive propfind, we can't get an ESTALE return,
-    // which is the only non zero non error return. So we either get success, or true error.
-    // So, ignore return value.
     // Try again to hit the file in the stat cache.
     get_stat_from_cache(path, stbuf, true, &tmpgerr);
     if (tmpgerr) {
