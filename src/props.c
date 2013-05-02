@@ -184,7 +184,7 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     if (!state->failure) {
         if (XML_Parse(parser, contents, real_size, 0) == 0) {
             int error_code = XML_GetErrorCode(parser);
-            log_print(LOG_WARNING, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
+            log_print(LOG_NOTICE, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
             state->failure = true;
         }
     }
@@ -246,7 +246,11 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
 
     if (response_code == 207) {
         // Finalize parsing.
-        if (XML_Parse(parser, NULL, 0, 1) == 0) {
+        if (state.failure) {
+            log_print(LOG_WARNING, "Could not finalize parsing of the 207 response because it's already in a failed state.");
+            goto finish;
+        }
+        else if (XML_Parse(parser, NULL, 0, 1) == 0) {
             int error_code = XML_GetErrorCode(parser);
             log_print(LOG_WARNING, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
         }
