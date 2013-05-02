@@ -145,11 +145,12 @@ char *path_escape(const char *path) {
     return ret;
 }
 
+#if INJECTING_ERRORS
 // error injection routines
 // Set to true to inject errors; Make sure it is false for production
 // If you change to true, also include an all-caps comment so it will be obvious if
 // you diff before push that you have done this, and you can't correct before push
-bool injecting_errors = false;
+bool injecting_errors = true;
 static bool *inject_error_list;
 static int fusedav_start;
 static int filecache_start;
@@ -203,15 +204,18 @@ static bool inject_error(int edx, int start, int numerrors) {
     return false;
 }
 
-bool fusedav_inject_error(int edx) {
+bool fd_inject_error(int edx) {
     return inject_error(edx, fusedav_start, fderrors);
 }
 
-bool filecache_inject_error(int edx) {
+bool fc_inject_error(int edx) {
     return inject_error(edx, filecache_start, fcerrors);
 }
 
-bool statcache_inject_error(int edx) {
+bool sc_inject_error(int edx) {
     return inject_error(edx, statcache_start, scerrors);
 }
+#else
+bool injecting_errors = false;
+#endif
 
