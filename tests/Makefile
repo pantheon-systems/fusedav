@@ -1,4 +1,4 @@
-testdir = /opt/fusedav/utils
+testdir = /opt/fusedav/tests
 
 cltest = $(testdir)/cltest.sh
 # usage on Makefile line: 'cltest-flags=-i64'
