@@ -1852,6 +1852,7 @@ int main(int argc, char *argv[]) {
 
     // Error injection mechanism. Should only be run during development.
     if (injecting_errors) {
+        log_print(LOG_INFO, "JB TEST error injection thread creation.");
         if (pthread_create(&error_injection_thread, NULL, inject_error_mechanism, NULL)) {
             log_print(LOG_INFO, "Failed to create error injection thread.");
             goto finish;

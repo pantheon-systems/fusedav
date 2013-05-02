@@ -150,7 +150,6 @@ char *path_escape(const char *path) {
 // Set to true to inject errors; Make sure it is false for production
 // If you change to true, also include an all-caps comment so it will be obvious if
 // you diff before push that you have done this, and you can't correct before push
-bool injecting_errors = true;
 static bool *inject_error_list;
 static int fusedav_start;
 static int filecache_start;
@@ -161,7 +160,6 @@ static int fderrors; // number of error locations in statcache
 
 void *inject_error_mechanism(void *ptr) {
     int fdx = 0;
-    if(!injecting_errors) return NULL;
 
     // ptr stuff just to get rid of warning message about unused parameter
     log_print(LOG_NOTICE, "INJECTING ERRORS! %p", ptr ? ptr : 0);
@@ -215,7 +213,13 @@ bool fc_inject_error(int edx) {
 bool sc_inject_error(int edx) {
     return inject_error(edx, statcache_start, scerrors);
 }
+
 #else
-bool injecting_errors = false;
+
+void *inject_error_mechanism(void *ptr) {
+    ptr = NULL;
+    return ptr;
+}
+
 #endif
 

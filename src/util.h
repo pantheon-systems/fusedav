@@ -32,24 +32,30 @@ char *path_parent(const char *uri);
 char *path_escape(const char *path);
 
 // Error injection routines
-extern bool injecting_errors;
 int fusedav_errors(void);
 int filecache_errors(void);
 int statcache_errors(void);
 
 void *inject_error_mechanism(void *ptr);
+
+#if INJECT_ERRORS
+
+#define injecting_errors true
 bool fd_inject_error(int edx);
 bool fc_inject_error(int edx);
 bool sc_inject_error(int edx);
 
-#ifdef INJECT_ERRORS
 #define fusedav_inject_error(edx) fd_inject_error(edx)
 #define filecache_inject_error(edx) fc_inject_error(edx)
 #define statcache_inject_error(edx) sc_inject_error(edx)
+
 #else
+
+#define injecting_errors false
 #define fusedav_inject_error(edx) false
 #define filecache_inject_error(edx) false
 #define statcache_inject_error(edx) false
+
 #endif
 
 #endif
