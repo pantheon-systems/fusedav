@@ -48,6 +48,7 @@ struct propfind_state {
     void *userdata;
     struct response_state rstate;
     struct element_state estate;
+    bool failure;
 };
 
 static void startElement(__unused void *userData, __unused const XML_Char *name, __unused const XML_Char **atts) {
@@ -173,13 +174,19 @@ static void endElement(void *userData, const XML_Char *name) {
 static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb, void *userp) {
     XML_Parser parser = (XML_Parser) userp;
     size_t real_size = length * nmemb;
+    struct propfind_state *state;
 
     log_print(LOG_DEBUG, "Got chunk of %u bytes.", real_size);
 
-    if (XML_Parse(parser, contents, real_size, 0) == 0) {
-        int error_code = XML_GetErrorCode(parser);
-        log_print(LOG_WARNING, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
-        return 0; // Zero bytes processed is failure.
+    state = (struct propfind_state *) XML_GetUserData(parser);
+
+    // Skip further parsing if we're already in a failure state.
+    if (!state->failure) {
+        if (XML_Parse(parser, contents, real_size, 0) == 0) {
+            int error_code = XML_GetErrorCode(parser);
+            log_print(LOG_WARNING, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
+            state->failure = true;
+        }
     }
 
     return real_size;
@@ -203,6 +210,7 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     memset(&state, 0, sizeof(struct propfind_state));
     state.callback = results;
     state.userdata = userdata;
+    state.failure = false;
 
     // Configure the parser.
     parser = XML_ParserCreate(NULL);
