@@ -1,10 +1,6 @@
 import unittest
-import os
-import shutil
 import logging
 import subprocess
-from sh import cp, mv, rm, echo, touch
-import time
 
 from titan.pantheon import logger
 
