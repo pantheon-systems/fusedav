@@ -14,6 +14,7 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+INJECT_ERRORS=0
 bin_PROGRAMS=fusedav
 
 fusedav_SOURCES=fusedav.c fusedav.h \
@@ -25,5 +26,5 @@ fusedav_SOURCES=fusedav.c fusedav.h \
 				props.c props.h \
 				util.c util.h
 
-fusedav_CFLAGS = $(AM_CFLAGS) $(CURL_CFLAGS) $(URIPARSER_CFLAGS) $(FUSE_CFLAGS) $(YAML_CFLAGS) $(LEVELDB_CFLAGS) $(SYSTEMD_CFLAGS) $(ZLIB_CFLAGS) $(GLIB_CFLAGS) -DFUSE_USE_VERSION=26
+fusedav_CFLAGS = $(AM_CFLAGS) $(CURL_CFLAGS) $(URIPARSER_CFLAGS) $(FUSE_CFLAGS) $(YAML_CFLAGS) $(LEVELDB_CFLAGS) $(SYSTEMD_CFLAGS) $(ZLIB_CFLAGS) $(GLIB_CFLAGS) -DFUSE_USE_VERSION=26 -DINJECT_ERRORS=${INJECT_ERRORS}
 fusedav_LDADD = -lpthread -ljemalloc -lrt -lresolv -lexpat $(CURL_LIBS) $(URIPARSER_LIBS) $(FUSE_LIBS) $(YAML_LIBS) $(LEVELDB_LIBS) $(SYSTEMD_LIBS) $(ZLIB_LIBS) $(GLIB_LIBS)
