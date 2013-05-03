@@ -220,7 +220,7 @@ void *inject_error_mechanism(void *ptr) {
 
         log_print(LOG_DEBUG, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
 
-        // Make the new location true but turn off the locaitons for the old location.
+        // Make the new location true but turn off the locations for the old location.
         inject_error_list[tdx] = true;
         inject_error_list[fdx] = false;
         fdx = tdx;
@@ -236,9 +236,8 @@ void *inject_error_mechanism(void *ptr) {
 static bool inject_error(int edx, int start, int numerrors) {
     // Move to the section of the list where this file's inject_error locations start
     edx += start;
-    // See if the error location is between this start, and the number of inject_error location this file has
-    // and if it has been set by the mechanism
-    if ((edx < numerrors + start) && inject_error_list[edx]) {
+    // See if the error location has been set by the mechanism
+    if (inject_error_list[edx]) {
         inject_error_list[edx] = false;
         log_print(LOG_NOTICE, "inject_error(%d, %d, %d)", edx - start, start, numerrors);
         return true;
