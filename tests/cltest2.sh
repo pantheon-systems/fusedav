@@ -1,4 +1,5 @@
 #! /bin/bash
+set +e
 
 start=1
 # Skip to test $start, which can be passed as a parameter
