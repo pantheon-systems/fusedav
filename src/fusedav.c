@@ -139,6 +139,7 @@ struct fusedav_config {
     char *cache_path;
     stat_cache_t *cache;
     struct stat_cache_supplemental cache_supplemental;
+    char *config_file;
     uid_t uid;
     gid_t gid;
     mode_t dir_mode;
@@ -166,6 +167,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
+     FUSEDAV_OPT("config_file=%s",                 config_file, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
@@ -1756,6 +1758,146 @@ static void *cache_cleanup(void *ptr) {
     return NULL;
 }
 
+/* fusedav.conf looks something like:
+    [Fuse]
+    allow_other=true
+    noexec=true
+    atomic_o_trunc=true
+
+    [Config]
+    progressive_propfind=true
+    hard_remove=true
+    refresh_dir_for_file_stat=true
+    ignoreutimens=true
+    ignorexattr=true
+    dir_mode=0770
+    file_mode=0660
+    uid=10061
+    gid=10061
+    run_as_uid=6f7a106722f74cc7bd96d4d06785ed78
+    cache_path=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/cache
+
+    [Certificates]
+    cache_uri=http://50.57.148.118:10061/fusedav-peer-cache
+    ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
+    client_certificate=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/certs/binding.p12
+    client_certificate_password=pantheon
+
+    [Log]
+    verbosity=5
+*/
+
+static int parse_configs(const char *config_file, GError **gerr) {
+    struct key_dest {
+        char *key;
+        void *dest;
+    } key_action_s;
+    static
+    GKeyFile *keyfile;
+    GError *tmpgerr = NULL;
+    gchar **group_list;
+    gsize group_list_len;
+    const int Fuse = 0;
+    const int Config = 1;
+    const int Certificates = 2;
+    const int Log = 3;
+    static const char *groups[] = {"Fuse", "Config", "Certificates", "Log", NULL};
+    static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
+    static const char *config_bkeys[] = {"proressive_propfind", "refresh_dir_for_file_stat", "ignoreutimens", "ignorexattr", NULL};
+    static const char *config_ikeys[] = {"dir_mode", "file_mode", "uid", "gid", NULL};
+    static const char *config_skeys[] = {"run_as_uid", "cache_path", "cache_uri", NULL};
+    static const char *cert_skeys[] = {"ca_certificate", "client_certificate", "client_certificate_password", NULL};
+    static const char *log_keys[] = {"verbosity", NULL};
+    // Figure out how to get log levels by section
+
+    log_print(LOG_NOTICE, "parse_configs: file %s", config_file);
+    keyfile = g_key_file_new();
+    g_key_file_load_from_file(keyfile, config_file, G_KEY_FILE_NONE, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on load_from_file");
+        return -1;
+    }
+
+    /* Groups are: Fuse, Pantheon, Log, Certificates */
+    // TODO: don't know what to do if the key is false
+    for (int idx = 0; fuse_bkeys[idx] != NULL; idx++) {
+        bret = g_key_file_get_boolean(keyfile, groups[Fuse], fuse_bkeys[idx], &tmpgerr);
+        if ((tmpgerr == NULL) && (bret == true)) fuse_opt_add_arg(&args, "-o " fuse_bkeys[idx]);
+    }
+
+    for (int idx = 0; config_bkeys[idx] != NULL; idx++) {
+        bret = g_key_file_get_boolean(keyfile, groups[Config], config_bkeys[idx], &tmpgerr);
+        if (tmpgerr == NULL) {
+            if (!strcmp("progressive_propfind", config_bkeys[idx])) config->progressive_propfind = gret;
+            else if (!strcmp("refresh_dir_for_file_stat", config_bkeys[idx])) config->refresh_dir_for_file_stat = gret;
+            else if (!strcmp("ignoreutimens", config_bkeys[idx])) config->ignoreutimens = gret;
+            else if (!strcmp("ignorexattr", config_bkeys[idx])) config->ignorexattr = gret;
+        }
+    }
+
+    // dir_mode and file_mode are normally octal, and key_file doesn't handle them
+    for (int idx = 0; config_ikeys[idx] != NULL; idx++) {
+        iret = g_key_file_get_integer(keyfile, groups[Config], config_ikeys[idx], &tmpgerr);
+        if (tmpgerr == NULL) {
+            if (!strcmp("dir_mode", config_ikeys[idx])) config->dir_mode = gret;
+            else if (!strcmp("file_mode", config_ikeys[idx])) config->file_mode = gret;
+            else if (!strcmp("uid", config_ikeys[idx])) config->uid = gret;
+            else if (!strcmp("gid", config_ikeys[idx])) config->gid = gret;
+        }
+    }
+
+    for (int idx = 0; config_skeys[idx] != NULL; idx++) {
+        sret = g_key_file_get_string(keyfile, groups[Config], config_skeys[idx], &tmpgerr);
+        if (tmpgerr == NULL) {
+            if (!strcmp("run_as_uid", config_skeys[idx])) strcpy(config->run_as_uid, sret);
+            else if (!strcmp("cache_path", config_skeys[idx])) strcpy(config->cache_path, sret);
+            else if (!strcmp("cache_uri", config_skeys[idx])) strcpy(config->cache_uri, sret);
+        }
+    }
+
+    for (int idx = 0; cert_skeys[idx] != NULL; idx++) {
+        sret = g_key_file_get_string(keyfile, groups[Config], cert_skeys[idx], &tmpgerr);
+        if (tmpgerr == NULL) {
+            if (!strcmp("ca_certificate", cert_skeys[idx])) strcpy(config->ca_certificate, sret);
+            else if (!strcmp("client_certificate", cert_skeys[idx])) strcpy(config->client_certificate, sret);
+            else if (!strcmp("client_certificate_password", cert_skeys[idx])) strcpy(config->client_certificate_password, sret);
+        }
+    }
+
+    group_list = g_key_file_get_groups(keyfile, &group_list_len);
+    log_print(LOG_NOTICE, "parse_configs: glen:%d", group_list_len);
+    for (gsize idx = 0; idx < group_list_len; idx++) {
+        char *group = group_list[idx];
+        char **key_list;
+        gsize key_list_len;
+
+        if (group == NULL) break;
+        key_list = g_key_file_get_keys(keyfile, group, &key_list_len, &tmpgerr);
+        log_print(LOG_NOTICE, "parse_configs: dlen: %d", key_list_len);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on get_keys");
+            return -1;
+        }
+        for (gsize jdx = 0; jdx < key_list_len; jdx++) {
+            char *value = g_key_file_get_value(keyfile, group, key_list[jdx], &tmpgerr);
+            if (tmpgerr) {
+                g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on get_value");
+                return -1;
+            }
+            log_print(LOG_NOTICE, "parse_configs: %s, %s = %s", group, key_list[jdx], value);
+            if (!strncmp("allow_other", key_list[jdx], strlen("allow_other"))) {
+                bret = g_key_file_get_boolean(
+            }
+            // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
+            // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
+        }
+    }
+
+    g_key_file_free(keyfile);
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -1806,6 +1948,11 @@ int main(int argc, char *argv[]) {
 
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, "FUSE could not parse the command line.");
+        goto finish;
+    }
+
+    if (parse_configs(config.config_file, &gerr) < 0) {
+        processed_gerror("Could not open fusedav config file:", config.config_file, gerr);
         goto finish;
     }
 

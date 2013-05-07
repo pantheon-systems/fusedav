@@ -32,8 +32,8 @@
 
 #include "log.h"
 
-static int maximum_verbosity;
-static char base_directory_abbrev[9];
+static int maximum_verbosity = 5;
+static char base_directory_abbrev[9] = {};
 
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
