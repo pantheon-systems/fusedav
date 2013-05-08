@@ -20,8 +20,11 @@
 ***/
 
 #include <systemd/sd-journal.h>
+#include "log_sections.h"
 
-void log_init(int verbosity, const char *base_dir);
-int log_print(int verbosity, const char *format, ...);
+void log_set_section_verbosity(char *vstr);
+void log_init(unsigned int verbosity, const char *base_dir);
+int log_print_old(unsigned int verbosity, const char *format, ...);
+int log_print(unsigned int verbosity, unsigned int section, const char *format, ...);
 
 #endif

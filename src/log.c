@@ -32,12 +32,25 @@
 
 #include "log.h"
 
-static int maximum_verbosity = 5;
-static char base_directory_abbrev[9] = {};
+static unsigned int maximum_verbosity = 5;
+static unsigned int section_verbosity[SECTIONS] = {0};
+static char base_directory_abbrev[9] = {0};
 
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
-void log_init(int verbosity, const char *base_dir) {
+void log_set_section_verbosity(char *vstr) {
+    unsigned int vlen = strlen(vstr);
+    unsigned int idx = 0;
+    unsigned int jdx;
+    for (idx = 0; idx < vlen; idx++) {
+        section_verbosity[idx] = strtol(vstr, NULL, 10);
+    }
+    for (jdx = idx; jdx < SECTIONS; jdx++) {
+        section_verbosity[idx] = 0;
+    }
+}
+
+void log_init(unsigned int verbosity, const char *base_dir) {
     maximum_verbosity = verbosity;
 
     // We assume "/sites/<site id>/environments/..."
@@ -62,19 +75,32 @@ void log_init(int verbosity, const char *base_dir) {
     }
 }
 
-int log_print(int verbosity, const char *format, ...) {
-    int r = 0;
+int log_print_old(unsigned int verbosity, const char *format, ...) {
+    va_list ap;
+    int ret;
+    va_start(ap, format);
+    ret = log_print(verbosity, SECTION_DEFAULT, format, ap);
+    va_end(ap);
+    return ret;
+}
+
+int log_print(unsigned int verbosity, unsigned int section, const char *format, ...) {
+    int ret = 0;
     va_list ap;
     char *formatwithtid;
+
+    // If the section verbosity is not 0, use it as the verbosity level;
+    // otherwise, just use the verbosity level passed in
+    if (section < SECTIONS && section_verbosity[section]) verbosity = section_verbosity[section];
 
     if (verbosity <= maximum_verbosity) {
         va_start(ap, format);
         asprintf(&formatwithtid, "[%s] [tid=%lu] [sid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), base_directory_abbrev, errlevel[verbosity], format);
         assert(formatwithtid);
-        r = sd_journal_printv(verbosity, formatwithtid, ap);
+        ret = sd_journal_printv(verbosity, formatwithtid, ap);
         free(formatwithtid);
         va_end(ap);
     }
 
-    return r;
+    return ret;
 }

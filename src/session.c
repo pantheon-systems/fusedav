@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -123,8 +123,8 @@ static void set_bases(const char *url) {
 
     uriFreeUriMembersA(&uri);
 
-    log_print(LOG_INFO, "Using base directory: %s", base);
-    log_print(LOG_INFO, "Using base host: %s", base_host);
+    log_print_old(LOG_INFO, "Using base directory: %s", base);
+    log_print_old(LOG_INFO, "Using base host: %s", base_host);
 
     base_directory = base;
 }
@@ -135,7 +135,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     assert(base);
 
     if (curl_global_init(CURL_GLOBAL_ALL)) {
-        log_print(LOG_CRIT, "Failed to initialize libcurl.");
+        log_print_old(LOG_CRIT, "Failed to initialize libcurl.");
         return -1;
     }
 
@@ -155,11 +155,11 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
 
         // Repair p12 to point to pem for now.
         if (strcmp(client_certificate + strlen(client_certificate) - 4, ".p12") == 0) {
-            log_print(LOG_WARNING, "Remapping deprecated certificate path: %s", client_certificate);
+            log_print_old(LOG_WARNING, "Remapping deprecated certificate path: %s", client_certificate);
             strncpy(client_certificate + strlen(client_certificate) - 4, ".pem", 4);
         }
 
-        log_print(LOG_INFO, "Using client certificate at path: %s", client_certificate);
+        log_print_old(LOG_INFO, "Using client certificate at path: %s", client_certificate);
     }
 
     return 0;
@@ -173,13 +173,13 @@ void session_config_free(void) {
 
 static void session_destroy(void *s) {
     CURL *session = s;
-    log_print(LOG_NOTICE, "Destroying cURL session.");
+    log_print_old(LOG_NOTICE, "Destroying cURL session.");
     assert(s);
     curl_easy_cleanup(session);
 }
 
 static void session_tsd_key_init(void) {
-    log_print(LOG_DEBUG, "session_tsd_key_init()");
+    log_print_old(LOG_DEBUG, "session_tsd_key_init()");
     pthread_key_create(&session_tsd_key, session_destroy);
 }
 
@@ -190,7 +190,7 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
             strncpy(msg, data, size);
             msg[size] = '\0';
             if (msg[size - 1] == '\n') msg[size - 1] = '\0';
-            log_print(LOG_INFO, "cURL: %s", msg);
+            log_print_old(LOG_INFO, "cURL: %s", msg);
             free(msg);
         }
     }
@@ -205,7 +205,7 @@ CURL *session_get_handle(void) {
     if ((session = pthread_getspecific(session_tsd_key)))
         return session;
 
-    log_print(LOG_NOTICE, "Opening cURL session.");
+    log_print_old(LOG_NOTICE, "Opening cURL session.");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
@@ -224,7 +224,7 @@ CURL *session_request_init(const char *path) {
 
     asprintf(&full_url, "%s%s", get_base_host(), path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
-    log_print(LOG_INFO, "Initializing request to URL: %s", full_url);
+    log_print_old(LOG_INFO, "Initializing request to URL: %s", full_url);
     free(full_url);
 
     //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
