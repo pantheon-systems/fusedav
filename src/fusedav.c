@@ -139,7 +139,7 @@ struct fusedav_config {
     char *cache_path;
     stat_cache_t *cache;
     struct stat_cache_supplemental cache_supplemental;
-    char *config_file;
+    // char *config_file;
     uid_t uid;
     gid_t gid;
     mode_t dir_mode;
@@ -167,7 +167,7 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
      FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
      FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
-     FUSEDAV_OPT("config_file=%s",                 config_file, 0),
+     // FUSEDAV_OPT("config_file=%s",                 config_file, 0),
      FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
      FUSEDAV_OPT("nodaemon",                       nodaemon, true),
      FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
@@ -1790,124 +1790,124 @@ static void *cache_cleanup(void *ptr) {
     verbosity=5
 */
 
-static int parse_configs(struct fuse_args *args, struct fusedav_config *config, GError **gerr) {
-    GKeyFile *keyfile;
-    GError *tmpgerr = NULL;
-    const int Fuse = 0;
-    const int Config = 1;
-    const int Certificates = 2;
-    const int Log = 3;
-    static const char *groups[] = {"Fuse", "Config", "Certificates", "Log", NULL};
-    static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
-    static const char *config_bkeys[] = {"proressive_propfind", "refresh_dir_for_file_stat", "ignoreutimens", "ignorexattr", NULL};
-    static const char *config_ikeys[] = {"dir_mode", "file_mode", "uid", "gid", NULL};
-    static const char *config_skeys[] = {"run_as_uid", "run_as_gid", "cache_path", "cache_uri", NULL};
-    static const char *cert_skeys[] = {"ca_certificate", "client_certificate", "client_certificate_password", NULL};
-    static const char *log_ikeys[] = {"verbosity", NULL};
-    static const char *log_skeys[] = {"section_verbosity", NULL};
-    bool bret;
-    int iret;
-    char *sret;
+//static int parse_configs(struct fuse_args *args, struct fusedav_config *config, GError **gerr) {
+    //GKeyFile *keyfile;
+    //GError *tmpgerr = NULL;
+    //const int Fuse = 0;
+    //const int Config = 1;
+    //const int Certificates = 2;
+    //const int Log = 3;
+    //static const char *groups[] = {"Fuse", "Config", "Certificates", "Log", NULL};
+    //static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
+    //static const char *config_bkeys[] = {"proressive_propfind", "refresh_dir_for_file_stat", "ignoreutimens", "ignorexattr", NULL};
+    //static const char *config_ikeys[] = {"dir_mode", "file_mode", "uid", "gid", NULL};
+    //static const char *config_skeys[] = {"run_as_uid", "run_as_gid", "cache_path", "cache_uri", NULL};
+    //static const char *cert_skeys[] = {"ca_certificate", "client_certificate", "client_certificate_password", NULL};
+    //static const char *log_ikeys[] = {"verbosity", NULL};
+    //static const char *log_skeys[] = {"section_verbosity", NULL};
+    //bool bret;
+    //int iret;
+    //char *sret;
 
-    log_print_old(LOG_NOTICE, "parse_configs: file %s", config->config_file);
-    keyfile = g_key_file_new();
-    g_key_file_load_from_file(keyfile, config->config_file, G_KEY_FILE_NONE, &tmpgerr);
-    if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on load_from_file");
-        return -1;
-    }
+    //log_print_old(LOG_NOTICE, "parse_configs: file %s", config->config_file);
+    //keyfile = g_key_file_new();
+    //g_key_file_load_from_file(keyfile, config->config_file, G_KEY_FILE_NONE, &tmpgerr);
+    //if (tmpgerr) {
+        //g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on load_from_file");
+        //return -1;
+    //}
 
-    /* Groups are: Fuse, Pantheon, Log, Certificates */
-    // TODO: don't know what to do if the key is false
-    for (int idx = 0; fuse_bkeys[idx] != NULL; idx++) {
-        bret = g_key_file_get_boolean(keyfile, groups[Fuse], fuse_bkeys[idx], &tmpgerr);
-        if ((tmpgerr == NULL) && (bret == true)) {
-            char *fuse_arg = NULL;
-            asprintf(&fuse_arg, "-o %s", fuse_bkeys[idx]);
-            fuse_opt_add_arg(args, fuse_arg);
-            free(fuse_arg);
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
+    ///* Groups are: Fuse, Pantheon, Log, Certificates */
+    //// TODO: don't know what to do if the key is false
+    //for (int idx = 0; fuse_bkeys[idx] != NULL; idx++) {
+        //bret = g_key_file_get_boolean(keyfile, groups[Fuse], fuse_bkeys[idx], &tmpgerr);
+        //if ((tmpgerr == NULL) && (bret == true)) {
+            //char *fuse_arg = NULL;
+            //asprintf(&fuse_arg, "-o %s", fuse_bkeys[idx]);
+            //fuse_opt_add_arg(args, fuse_arg);
+            //free(fuse_arg);
+        //}
+        //else {
+            //g_clear_error(&tmpgerr);
+        //}
+    //}
 
-    for (int idx = 0; config_bkeys[idx] != NULL; idx++) {
-        bret = g_key_file_get_boolean(keyfile, groups[Config], config_bkeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("progressive_propfind", config_bkeys[idx])) config->progressive_propfind = bret;
-            else if (!strcmp("refresh_dir_for_file_stat", config_bkeys[idx])) config->refresh_dir_for_file_stat = bret;
-            else if (!strcmp("ignoreutimens", config_bkeys[idx])) config->ignoreutimens = bret;
-            else if (!strcmp("ignorexattr", config_bkeys[idx])) config->ignorexattr = bret;
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
+    //for (int idx = 0; config_bkeys[idx] != NULL; idx++) {
+        //bret = g_key_file_get_boolean(keyfile, groups[Config], config_bkeys[idx], &tmpgerr);
+        //if (tmpgerr == NULL) {
+            //if (!strcmp("progressive_propfind", config_bkeys[idx])) config->progressive_propfind = bret;
+            //else if (!strcmp("refresh_dir_for_file_stat", config_bkeys[idx])) config->refresh_dir_for_file_stat = bret;
+            //else if (!strcmp("ignoreutimens", config_bkeys[idx])) config->ignoreutimens = bret;
+            //else if (!strcmp("ignorexattr", config_bkeys[idx])) config->ignorexattr = bret;
+        //}
+        //else {
+            //g_clear_error(&tmpgerr);
+        //}
+    //}
 
-    // dir_mode and file_mode are normally octal, and key_file doesn't handle them
-    for (int idx = 0; config_ikeys[idx] != NULL; idx++) {
-        iret = g_key_file_get_integer(keyfile, groups[Config], config_ikeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("dir_mode", config_ikeys[idx])) config->dir_mode = iret;
-            else if (!strcmp("file_mode", config_ikeys[idx])) config->file_mode = iret;
-            else if (!strcmp("uid", config_ikeys[idx])) config->uid = iret;
-            else if (!strcmp("gid", config_ikeys[idx])) config->gid = iret;
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
+    //// dir_mode and file_mode are normally octal, and key_file doesn't handle them
+    //for (int idx = 0; config_ikeys[idx] != NULL; idx++) {
+        //iret = g_key_file_get_integer(keyfile, groups[Config], config_ikeys[idx], &tmpgerr);
+        //if (tmpgerr == NULL) {
+            //if (!strcmp("dir_mode", config_ikeys[idx])) config->dir_mode = iret;
+            //else if (!strcmp("file_mode", config_ikeys[idx])) config->file_mode = iret;
+            //else if (!strcmp("uid", config_ikeys[idx])) config->uid = iret;
+            //else if (!strcmp("gid", config_ikeys[idx])) config->gid = iret;
+        //}
+        //else {
+            //g_clear_error(&tmpgerr);
+        //}
+    //}
 
-    for (int idx = 0; config_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Config], config_skeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("run_as_uid", config_skeys[idx])) strcpy(config->run_as_uid_name, sret);
-            else if (!strcmp("run_as_gid", config_skeys[idx])) strcpy(config->run_as_gid_name, sret);
-            else if (!strcmp("cache_path", config_skeys[idx])) strcpy(config->cache_path, sret);
-            else if (!strcmp("cache_uri", config_skeys[idx])) strcpy(config->cache_uri, sret);
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
+    //for (int idx = 0; config_skeys[idx] != NULL; idx++) {
+        //sret = g_key_file_get_string(keyfile, groups[Config], config_skeys[idx], &tmpgerr);
+        //if (tmpgerr == NULL) {
+            //if (!strcmp("run_as_uid", config_skeys[idx])) strcpy(config->run_as_uid_name, sret);
+            //else if (!strcmp("run_as_gid", config_skeys[idx])) strcpy(config->run_as_gid_name, sret);
+            //else if (!strcmp("cache_path", config_skeys[idx])) strcpy(config->cache_path, sret);
+            //else if (!strcmp("cache_uri", config_skeys[idx])) strcpy(config->cache_uri, sret);
+        //}
+        //else {
+            //g_clear_error(&tmpgerr);
+        //}
+    //}
 
-    for (int idx = 0; cert_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Certificates], cert_skeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("ca_certificate", cert_skeys[idx])) strcpy(config->ca_certificate, sret);
-            else if (!strcmp("client_certificate", cert_skeys[idx])) strcpy(config->client_certificate, sret);
-            else if (!strcmp("client_certificate_password", cert_skeys[idx])) strcpy(config->client_certificate_password, sret);
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
+    //for (int idx = 0; cert_skeys[idx] != NULL; idx++) {
+        //sret = g_key_file_get_string(keyfile, groups[Certificates], cert_skeys[idx], &tmpgerr);
+        //if (tmpgerr == NULL) {
+            //if (!strcmp("ca_certificate", cert_skeys[idx])) strcpy(config->ca_certificate, sret);
+            //else if (!strcmp("client_certificate", cert_skeys[idx])) strcpy(config->client_certificate, sret);
+            //else if (!strcmp("client_certificate_password", cert_skeys[idx])) strcpy(config->client_certificate_password, sret);
+        //}
+        //else {
+            //g_clear_error(&tmpgerr);
+        //}
+    //}
 
-    for (int idx = 0; log_ikeys[idx] != NULL; idx++) {
-        iret = g_key_file_get_integer(keyfile, groups[Log], log_skeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("section_verbosity", log_skeys[idx])) config->verbosity = iret;
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
+    //for (int idx = 0; log_ikeys[idx] != NULL; idx++) {
+        //iret = g_key_file_get_integer(keyfile, groups[Log], log_skeys[idx], &tmpgerr);
+        //if (tmpgerr == NULL) {
+            //if (!strcmp("section_verbosity", log_skeys[idx])) config->verbosity = iret;
+        //}
+        //else {
+            //g_clear_error(&tmpgerr);
+        //}
+    //}
 
-    for (int idx = 0; log_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Log], log_skeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("section_verbosity", log_skeys[idx])) log_set_section_verbosity(sret);
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
+    //for (int idx = 0; log_skeys[idx] != NULL; idx++) {
+        //sret = g_key_file_get_string(keyfile, groups[Log], log_skeys[idx], &tmpgerr);
+        //if (tmpgerr == NULL) {
+            //if (!strcmp("section_verbosity", log_skeys[idx])) log_set_section_verbosity(sret);
+        //}
+        //else {
+            //g_clear_error(&tmpgerr);
+        //}
+    //}
 
-    g_key_file_free(keyfile);
+    //g_key_file_free(keyfile);
 
-    return 0;
-}
+    //return 0;
+//}
 
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
