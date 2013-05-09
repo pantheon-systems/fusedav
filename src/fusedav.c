@@ -1835,8 +1835,12 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
     /* Groups are: Fuse, Pantheon, Log, Certificates */
     static const char *groups[] = {"Fuse", "Config", "Certificates", "Log", NULL};
     static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
+
     static const char *config_bkeys[] = {"progressive_propfind", "refresh_dir_for_file_stat", "ignoreutimens",
                                          "ignorexattr", "nodaemon", "grace", "singlethread", NULL};
+    enum econfig_bkeys_t {progressive_propfind, refresh_dir_for_file_stat, ignoreutimens,
+                        ignorexattr, nodaemon, grace, singlethread};
+    enum econfig_bkeys_t econfig_bkeys;
     static const char *config_ikeys[] = {"uid", "gid", NULL};
     static const char *config_skeys[] = {"dir_mode", "file_mode", "run_as_uid", "run_as_gid", "cache_path", "cache_uri", NULL};
     static const char *cert_skeys[] = {"ca_certificate", "client_certificate", "client_certificate_password", NULL};
@@ -1887,34 +1891,34 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     /* Config boolean args */
 
-    for (int idx = 0; config_bkeys[idx] != NULL; idx++) {
-        bret = g_key_file_get_boolean(keyfile, groups[Config], config_bkeys[idx], &tmpgerr);
+    for (econfig_bkeys = 0; config_bkeys[econfig_bkeys] != NULL; econfig_bkeys++) {
+        bret = g_key_file_get_boolean(keyfile, groups[Config], config_bkeys[econfig_bkeys], &tmpgerr);
         if (tmpgerr == NULL) {
-            if (!strcmp("progressive_propfind", config_bkeys[idx])) {
+            if (econfig_bkeys == progressive_propfind) {
                 config->progressive_propfind = bret;
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: progressive_propfind %d", config->progressive_propfind);
             }
-            else if (!strcmp("refresh_dir_for_file_stat", config_bkeys[idx])) {
+            else if (!strcmp("refresh_dir_for_file_stat", config_bkeys[econfig_bkeys])) {
                 config->refresh_dir_for_file_stat = bret;
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
             }
-            else if (!strcmp("ignoreutimens", config_bkeys[idx])) {
+            else if (!strcmp("ignoreutimens", config_bkeys[econfig_bkeys])) {
                 config->ignoreutimens = bret;
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ignoreutimens %d", config->ignoreutimens);
             }
-            else if (!strcmp("ignorexattr", config_bkeys[idx])) {
+            else if (!strcmp("ignorexattr", config_bkeys[econfig_bkeys])) {
                 config->ignorexattr = bret;
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ignorexattr %d", config->ignorexattr);
             }
-            else if (!strcmp("nodaemon", config_bkeys[idx])) {
+            else if (!strcmp("nodaemon", config_bkeys[econfig_bkeys])) {
                 config->nodaemon = bret;
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: nodaemon %d", config->nodaemon);
             }
-            else if (!strcmp("grace", config_bkeys[idx])) {
+            else if (!strcmp("grace", config_bkeys[econfig_bkeys])) {
                 config->grace = bret;
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: grace %d", config->grace);
             }
-            else if (!strcmp("singlethread", config_bkeys[idx])) {
+            else if (!strcmp("singlethread", config_bkeys[econfig_bkeys])) {
                 config->singlethread = bret;
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: singlethread %d", config->singlethread);
             }
