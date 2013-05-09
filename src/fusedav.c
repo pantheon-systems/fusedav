@@ -1762,36 +1762,36 @@ static void *cache_cleanup(void *ptr) {
 }
 
 static void print_config(struct fusedav_config *config) {
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "CONFIG:");
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "progressive_propfind %d", config->progressive_propfind);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "ignoreutimens %d", config->ignoreutimens);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "ignorexattr %d", config->ignorexattr);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "grace %d", config->grace);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "singlethread %d", config->singlethread);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "dir_mode %#o", config->dir_mode);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "file_mode %#o", config->file_mode);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "uid %ul", config->uid);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "gid %ul", config->gid);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "run_as_uid_name %s", config->run_as_uid_name);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "run_as_gid_name %s", config->run_as_gid_name);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache_uri %s", config->cache_uri);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "ca_certificate %s", config->ca_certificate);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "client_certificate %s", config->client_certificate);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "client_certificate_password %s", config->client_certificate_password);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "verbosity %d", config->verbosity);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "section_verbosity %s", config->section_verbosity);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "CONFIG:");
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "progressive_propfind %d", config->progressive_propfind);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignoreutimens %d", config->ignoreutimens);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignorexattr %d", config->ignorexattr);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "grace %d", config->grace);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "singlethread %d", config->singlethread);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "dir_mode %#o", config->dir_mode);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "file_mode %#o", config->file_mode);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "uid %ul", config->uid);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "gid %ul", config->gid);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_uid_name %s", config->run_as_uid_name);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_gid_name %s", config->run_as_gid_name);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_uri %s", config->cache_uri);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ca_certificate %s", config->ca_certificate);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate %s", config->client_certificate);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate_password %s", config->client_certificate_password);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "verbosity %d", config->verbosity);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "section_verbosity %s", config->section_verbosity);
 
     // These are not subject to change by the parse config method
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "uri: %s", config->uri);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache %p", config->cache);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "config_file %s", config->config_file);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "uri: %s", config->uri);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache %p", config->cache);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "config_file %s", config->config_file);
 
     // We could set these, but they are NULL by default, so don't know how to put that in the config file
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
 }
 
 /* fusedav.conf looks something like:
@@ -1874,7 +1874,7 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
             // If there is a space after "-o", fuse will misparse and fail to start
             asprintf(&fuse_arg, "-o%s", fuse_bkeys[idx]);
             fuse_opt_add_arg(args, fuse_arg);
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: fuse_arg %s", fuse_arg);
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: fuse_arg %s", fuse_arg);
 
             free(fuse_arg);
         }
@@ -1892,31 +1892,31 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         if (tmpgerr == NULL) {
             if (!strcmp("progressive_propfind", config_bkeys[idx])) {
                 config->progressive_propfind = bret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: progressive_propfind %d", config->progressive_propfind);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: progressive_propfind %d", config->progressive_propfind);
             }
             else if (!strcmp("refresh_dir_for_file_stat", config_bkeys[idx])) {
                 config->refresh_dir_for_file_stat = bret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
             }
             else if (!strcmp("ignoreutimens", config_bkeys[idx])) {
                 config->ignoreutimens = bret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: ignoreutimens %d", config->ignoreutimens);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ignoreutimens %d", config->ignoreutimens);
             }
             else if (!strcmp("ignorexattr", config_bkeys[idx])) {
                 config->ignorexattr = bret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: ignorexattr %d", config->ignorexattr);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ignorexattr %d", config->ignorexattr);
             }
             else if (!strcmp("nodaemon", config_bkeys[idx])) {
                 config->nodaemon = bret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: nodaemon %d", config->nodaemon);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: nodaemon %d", config->nodaemon);
             }
             else if (!strcmp("grace", config_bkeys[idx])) {
                 config->grace = bret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: grace %d", config->grace);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: grace %d", config->grace);
             }
             else if (!strcmp("singlethread", config_bkeys[idx])) {
                 config->singlethread = bret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: singlethread %d", config->singlethread);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: singlethread %d", config->singlethread);
             }
         }
         else {
@@ -1932,11 +1932,11 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         if (tmpgerr == NULL) {
             if (!strcmp("uid", config_ikeys[idx])) {
                 config->uid = iret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: uid %ul", config->uid);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: uid %ul", config->uid);
             }
             else if (!strcmp("gid", config_ikeys[idx])) {
                 config->gid = iret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: gid %ul", config->gid);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: gid %ul", config->gid);
             }
         }
         else {
@@ -1951,31 +1951,31 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         if (tmpgerr == NULL) {
             if (!strcmp("dir_mode", config_skeys[idx])) {
                 config->dir_mode = strtol(sret, NULL, 8);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: dir_mode %#o", config->dir_mode);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: dir_mode %#o", config->dir_mode);
             }
             else if (!strcmp("file_mode", config_skeys[idx])) {
                 config->file_mode = strtol(sret, NULL, 8);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: file_mode %#o", config->file_mode);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: file_mode %#o", config->file_mode);
             }
             else if (!strcmp("run_as_uid", config_skeys[idx])) {
                 free(config->run_as_uid_name);
                 config->run_as_uid_name = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_uid_name %s", config->run_as_uid_name);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_uid_name %s", config->run_as_uid_name);
             }
             else if (!strcmp("run_as_gid", config_skeys[idx])) {
                 free(config->run_as_gid_name);
                 config->run_as_gid_name = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_gid_name %s", config->run_as_gid_name);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_gid_name %s", config->run_as_gid_name);
             }
             else if (!strcmp("cache_path", config_skeys[idx])) {
                 free(config->cache_path);
                 config->cache_path = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_path %s", config->cache_path);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_path %s", config->cache_path);
             }
             else if (!strcmp("cache_uri", config_skeys[idx])) {
                 free(config->cache_uri);
                 config->cache_uri = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_uri %s", config->cache_uri);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_uri %s", config->cache_uri);
             }
         }
         else {
@@ -1991,17 +1991,17 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
             if (!strcmp("ca_certificate", cert_skeys[idx])) {
                 free(config->ca_certificate);
                 config->ca_certificate = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: ca_certificate %s", config->ca_certificate);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ca_certificate %s", config->ca_certificate);
             }
             else if (!strcmp("client_certificate", cert_skeys[idx])) {
                 free(config->client_certificate);
                 config->client_certificate = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate %s", config->client_certificate);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate %s", config->client_certificate);
             }
             else if (!strcmp("client_certificate_password", cert_skeys[idx])) {
                 free(config->client_certificate_password);
                 config->client_certificate_password = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate_password %s", config->client_certificate_password);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate_password %s", config->client_certificate_password);
             }
         }
         else {
@@ -2016,7 +2016,7 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         if (tmpgerr == NULL) {
             if (!strcmp("verbosity", log_ikeys[idx])) {
                 config->verbosity = iret;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: verbosity %d", config->verbosity);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: verbosity %d", config->verbosity);
             }
         }
         else {
@@ -2032,7 +2032,7 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
             if (!strcmp("section_verbosity", log_skeys[idx])) {
                 free(config->section_verbosity);
                 config->section_verbosity = strdup(sret);
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: section_verbosity %s", config->section_verbosity);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: section_verbosity %s", config->section_verbosity);
                 log_set_section_verbosity(sret);
             }
         }

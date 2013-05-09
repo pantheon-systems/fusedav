@@ -75,13 +75,13 @@ int log_print(unsigned int verbosity, unsigned int section, const char *format, 
     int ret = 0;
     va_list ap;
     char *formatwithtid;
-    unsigned int particular_verbosity = maximum_verbosity;
+    unsigned int local_verbosity = maximum_verbosity;
 
     // If the section verbosity is not 0, use it as the verbosity level;
-    // otherwise, just use the verbosity level passed in
-    if (section < SECTIONS && section_verbosity[section]) particular_verbosity = section_verbosity[section];
+    // otherwise, just use the global maximum_verbosity
+    if (section < SECTIONS && section_verbosity[section]) local_verbosity = section_verbosity[section];
 
-    if (verbosity <= particular_verbosity) {
+    if (verbosity <= local_verbosity) {
         va_start(ap, format);
         asprintf(&formatwithtid, "[%s] [tid=%lu] [sid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), base_directory_abbrev, errlevel[verbosity], format);
         assert(formatwithtid);
