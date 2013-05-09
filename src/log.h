@@ -20,7 +20,6 @@
 ***/
 
 #include <systemd/sd-journal.h>
-#include "log_sections.h"
 
 void log_set_section_verbosity(char *vstr);
 void log_init(unsigned int verbosity, const char *base_dir);

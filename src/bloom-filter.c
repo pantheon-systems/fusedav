@@ -28,6 +28,7 @@
 
 #include "bloom-filter.h"
 #include "log.h"
+#include "log_sections.h"
 
 /* Options that the bloom filter will use, but not visible to clients */
 struct bloomfilter_options_t {
@@ -68,7 +69,7 @@ static long set_salt(void) {
     //struct timespec ts;
     //clock_gettime(CLOCK_MONOTONIC, &ts);
     //return ts.tv_nsec;
-    log_print_old(LOG_DEBUG, "set_salt");
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "set_salt");
 
     return time(NULL);
 }
@@ -95,7 +96,7 @@ static int calculate_sizes(bloomfilter_options_t *options) {
         options->bits_in_chunk = 16;
         options->num_chunks = 2;
         options->filtersize = ((USHRT_MAX) / 8) + 1; // divide by 8 to get number of bytes
-        log_print_old(LOG_DEBUG, "calculate_sizes: %d %d %d", options->bits_in_chunk, options->num_chunks, options->filtersize);
+        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "calculate_sizes: %d %d %d", options->bits_in_chunk, options->num_chunks, options->filtersize);
 
     }
     else if (((options->filtersize * 2) <= UINT_MAX) && options->bits_in_hash_return >= 64) {
@@ -133,15 +134,15 @@ bloomfilter_options_t *bloomfilter_init(unsigned long maxkeys,
     else {
         options->maxkeys = maxkeys;
     }
-    log_print_old(LOG_DEBUG, "bloomfilter_init: max_keys %d", options->maxkeys);
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_init: max_keys %d", options->maxkeys);
 
     options->salt = set_salt();
-    log_print_old(LOG_DEBUG, "bloomfilter_init: set_salt %d", options->salt);
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_init: set_salt %d", options->salt);
 
     if (hashfcn == NULL) {
         options->hashfcn = &hashfunction;
         options->bits_in_hash_return = 32; // because our default is adler32
-        log_print_old(LOG_DEBUG, "bloomfilter_init: hashfcn %d", options->bits_in_hash_return);
+        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_init: hashfcn %d", options->bits_in_hash_return);
     }
     else {
         options->hashfcn = hashfcn;
@@ -161,7 +162,7 @@ bloomfilter_options_t *bloomfilter_init(unsigned long maxkeys,
         if (asprintf(errptr, "Can't create filter; failed to allocate bitfield") < 0) *errptr = NULL;
         goto fail;
     }
-    log_print_old(LOG_DEBUG, "bloomfilter_init: bitfield %d", options->filtersize);
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_init: bitfield %d", options->filtersize);
 
     return options;
 
@@ -192,11 +193,11 @@ static values_t byte_bit_location(unsigned long startvalue, int bits_in_chunk) {
 int bloomfilter_add(bloomfilter_options_t *options, const void *key, size_t klen) {
     values_t values;
 
-    log_print_old(LOG_DEBUG, "bloomfilter_add: enter \'%s\' :: salt %ul", key, options->salt);
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_add: enter \'%s\' :: salt %ul", key, options->salt);
     values.hashvalue = options->hashfcn(options->salt, key, klen);
     for (unsigned int idx = 0; idx < options->num_chunks; idx++) {
         values = byte_bit_location(values.hashvalue, options->bits_in_chunk);
-        log_print_old(LOG_DEBUG, "bloomfilter_add: iter %d :: key: \'%s\' :: salt: %ul :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
+        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_add: iter %d :: key: \'%s\' :: salt: %ul :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
         options->bitfield[values.bytevalue] |= values.bitvalue;
     }
     return 0;
@@ -206,11 +207,11 @@ int bloomfilter_add(bloomfilter_options_t *options, const void *key, size_t klen
 bool bloomfilter_exists(bloomfilter_options_t * options, const void *key, size_t klen) {
     values_t values;
 
-    log_print_old(LOG_DEBUG, "bloomfilter_exists: enter \'%s\' :: salt %ul", key, options->salt);
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_exists: enter \'%s\' :: salt %ul", key, options->salt);
     values.hashvalue = options->hashfcn(options->salt, key, klen);
     for (unsigned int idx = 0; idx < options->num_chunks; idx++) {
         values = byte_bit_location(values.hashvalue, options->bits_in_chunk);
-        log_print_old(LOG_DEBUG, "bloomfilter_exists: iter %d :: key: \'%s\' :: salt: %ul :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
+        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_exists: iter %d :: key: \'%s\' :: salt: %ul :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
         if ((options->bitfield[values.bytevalue] & values.bitvalue) == 0) return false;
     }
     return true;
@@ -218,7 +219,7 @@ bool bloomfilter_exists(bloomfilter_options_t * options, const void *key, size_t
 
 void bloomfilter_destroy(bloomfilter_options_t * options) {
     if (options) {
-        log_print_old(LOG_DEBUG, "bloomfilter_destroy: destroy");
+        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_destroy: destroy");
         free(options->bitfield);
         free(options);
     }

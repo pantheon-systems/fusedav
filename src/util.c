@@ -28,6 +28,7 @@
 
 #include "util.h"
 #include "log.h"
+#include "log_sections.h"
 
 #define PS (0x0001) /* "+" */
 #define PC (0x0002) /* "%" */
@@ -163,7 +164,7 @@ void *inject_error_mechanism(void *ptr) {
     if(!injecting_errors) return NULL;
 
     // ptr stuff just to get rid of warning message about unused parameter
-    log_print_old(LOG_NOTICE, "INJECTING ERRORS! %p", ptr ? ptr : 0);
+    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "INJECTING ERRORS! %p", ptr ? ptr : 0);
 
     srand(time(NULL));
     fderrors = fusedav_errors();
@@ -174,7 +175,7 @@ void *inject_error_mechanism(void *ptr) {
     statcache_start = filecache_start + fcerrors;
     inject_error_list = calloc(sizeof(bool), fderrors + fcerrors + scerrors);
     if (inject_error_list == NULL) {
-        log_print_old(LOG_NOTICE, "inject_error_mechanism: failed to calloc inject_error_list");
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: failed to calloc inject_error_list");
         return NULL;
     }
 
@@ -183,7 +184,7 @@ void *inject_error_mechanism(void *ptr) {
         int tdx;
         sleep(4);
         tdx = rand() % (fderrors + fcerrors + scerrors);
-        log_print_old(LOG_DEBUG, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
+        log_print(LOG_DEBUG, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
         inject_error_list[tdx] = true;
         inject_error_list[fdx] = false;
         fdx = tdx;
@@ -197,7 +198,7 @@ static bool inject_error(int edx, int start, int numerrors) {
     edx += start;
     if ((edx < numerrors + start) && inject_error_list[edx]) {
         inject_error_list[edx] = false;
-        log_print_old(LOG_NOTICE, "inject_error(%d, %d, %d)", edx - start, start, numerrors);
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error(%d, %d, %d)", edx - start, start, numerrors);
         return true;
     }
     return false;
