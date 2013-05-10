@@ -146,8 +146,8 @@ struct fusedav_config {
     gid_t gid;
     mode_t dir_mode;
     mode_t file_mode;
-    char *run_as_uid_name;
-    char *run_as_gid_name;
+    char *run_as_uid;
+    char *run_as_gid;
     bool progressive_propfind;
     bool refresh_dir_for_file_stat;
     bool ignorexattr;
@@ -178,8 +178,8 @@ static struct fuse_opt fusedav_opts[] = {
      FUSEDAV_OPT("gid=%d",                         gid, 0),
      FUSEDAV_OPT("dir_mode=%o",                    dir_mode, 0),
      FUSEDAV_OPT("file_mode=%o",                   file_mode, 0),
-     FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid_name, 0),
-     FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid_name, 0),
+     FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid, 0),
+     FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid, 0),
      FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
      FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
      FUSEDAV_OPT("singlethread",                   singlethread, true),
@@ -1695,8 +1695,8 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
 }
 
 static int config_privileges(struct fusedav_config *config) {
-    if (config->run_as_gid_name != 0) {
-        struct group *g = getgrnam(config->run_as_gid_name);
+    if (config->run_as_gid != 0) {
+        struct group *g = getgrnam(config->run_as_gid);
         if (setegid(g->gr_gid) < 0) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop gid to %d.", g->gr_gid);
             return -1;
@@ -1704,11 +1704,11 @@ static int config_privileges(struct fusedav_config *config) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Set egid to %d.", g->gr_gid);
     }
 
-    if (config->run_as_uid_name != 0) {
-        struct passwd *u = getpwnam(config->run_as_uid_name);
+    if (config->run_as_uid != 0) {
+        struct passwd *u = getpwnam(config->run_as_uid);
 
         // If there's no explict group set, use the user's primary gid.
-        if (config->run_as_gid_name == 0) {
+        if (config->run_as_gid == 0) {
             if (setegid(u->pw_gid) < 0) {
                 log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
                 return -1;
@@ -1762,36 +1762,36 @@ static void *cache_cleanup(void *ptr) {
 }
 
 static void print_config(struct fusedav_config *config) {
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "CONFIG:");
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "progressive_propfind %d", config->progressive_propfind);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "ignoreutimens %d", config->ignoreutimens);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "ignorexattr %d", config->ignorexattr);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "grace %d", config->grace);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "singlethread %d", config->singlethread);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "dir_mode %#o", config->dir_mode);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "file_mode %#o", config->file_mode);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "uid %ul", config->uid);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "gid %ul", config->gid);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "run_as_uid_name %s", config->run_as_uid_name);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "run_as_gid_name %s", config->run_as_gid_name);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache_uri %s", config->cache_uri);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "ca_certificate %s", config->ca_certificate);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "client_certificate %s", config->client_certificate);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "client_certificate_password %s", config->client_certificate_password);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "verbosity %d", config->verbosity);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "section_verbosity %s", config->section_verbosity);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "CONFIG:");
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "progressive_propfind %d", config->progressive_propfind);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignoreutimens %d", config->ignoreutimens);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignorexattr %d", config->ignorexattr);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "grace %d", config->grace);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "singlethread %d", config->singlethread);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "dir_mode %#o", config->dir_mode);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "file_mode %#o", config->file_mode);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "uid %ul", config->uid);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "gid %ul", config->gid);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_uid %s", config->run_as_uid);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_gid %s", config->run_as_gid);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_uri %s", config->cache_uri);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ca_certificate %s", config->ca_certificate);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate %s", config->client_certificate);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate_password %s", config->client_certificate_password);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "verbosity %d", config->verbosity);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "section_verbosity %s", config->section_verbosity);
 
     // These are not subject to change by the parse config method
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "uri: %s", config->uri);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache %p", config->cache);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "config_file %s", config->config_file);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "uri: %s", config->uri);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache %p", config->cache);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "config_file %s", config->config_file);
 
     // We could set these, but they are NULL by default, so don't know how to put that in the config file
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
 }
 
 /* fusedav.conf looks something like:
@@ -1824,78 +1824,50 @@ static void print_config(struct fusedav_config *config) {
     verbosity=5
 */
 
-#define keytuple(name) {#name, name}
-
 static void parse_configs(struct fuse_args *args, struct fusedav_config *config, GError **gerr) {
+
+    #define BOOL 0
+    #define INT 1
+    #define STRING 2
+    #define OCTAL 3
+    #define keytuple(group, key, type) {#group, #key, offsetof(struct fusedav_config, key), type}
+
     struct key_value_dest_s {
+        const char *group;
         const char *key;
-        const int index;
+        const int offset;
+        const int type;
     };
+
     GKeyFile *keyfile;
     GError *tmpgerr = NULL;
-    const int Fuse = 0;
-    const int Config = 1;
-    const int Certificates = 2;
-    const int Log = 3;
-    /* Groups are: Fuse, Pantheon, Log, Certificates */
-    static const char *groups[] = {"Fuse", "Config", "Certificates", "Log", NULL};
+    bool bret;
     static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
+    /* Groups are: Fuse, Pantheon, Log, Certificates */
 
-    enum econfig_bkeys_t {progressive_propfind, refresh_dir_for_file_stat, ignoreutimens,
-                          ignorexattr, nodaemon, grace, singlethread} econfig_bkeys;
-
-    static const struct key_value_dest_s config_bkeys[] = {
-        keytuple(progressive_propfind),
-        keytuple(refresh_dir_for_file_stat),
-        keytuple(ignoreutimens),
-        keytuple(ignorexattr),
-        keytuple(nodaemon),
-        keytuple(grace),
-        keytuple(singlethread),
-        {NULL, 0}
+    static const struct key_value_dest_s config_entries[] = {
+        keytuple(Config, progressive_propfind, BOOL),
+        keytuple(Config, refresh_dir_for_file_stat, BOOL),
+        keytuple(Config, ignoreutimens, BOOL),
+        keytuple(Config, ignorexattr, BOOL),
+        keytuple(Config, nodaemon, BOOL),
+        keytuple(Config, grace, BOOL),
+        keytuple(Config, singlethread, BOOL),
+        keytuple(Config, uid, INT),
+        keytuple(Config, gid, INT),
+        keytuple(Config, dir_mode, OCTAL),
+        keytuple(Config, file_mode, OCTAL),
+        keytuple(Config, run_as_uid, STRING),
+        keytuple(Config, run_as_gid, STRING),
+        keytuple(Config, cache_path, STRING),
+        keytuple(Config, cache_uri, STRING),
+        keytuple(Certificates, ca_certificate, STRING),
+        keytuple(Certificates, client_certificate, STRING),
+        keytuple(Certificates, client_certificate_password, STRING),
+        keytuple(Log, verbosity, INT),
+        keytuple(Log, section_verbosity, STRING),
+        {NULL, NULL, 0, 0}
         };
-
-    enum econfig_ikeys_t {uid, gid} econfig_ikeys;
-    static const struct key_value_dest_s config_ikeys[] = {
-        keytuple(uid),
-        keytuple(gid),
-        {NULL, 0}
-        };
-
-    enum econfig_skeys_t {dir_mode, file_mode, run_as_uid, run_as_gid, cache_path, cache_uri} econfig_skeys;
-    static const struct key_value_dest_s config_skeys[] = {
-        keytuple(dir_mode),
-        keytuple(file_mode),
-        keytuple(run_as_uid),
-        keytuple(run_as_gid),
-        keytuple(cache_path),
-        keytuple(cache_uri),
-        {NULL, 0}
-        };
-
-    enum ecert_skeys_t {ca_certificate, client_certificate, client_certificate_password} ecert_skeys;
-    static const struct key_value_dest_s cert_skeys[] = {
-        keytuple(ca_certificate),
-        keytuple(client_certificate),
-        keytuple(client_certificate_password),
-        {NULL, 0}
-        };
-
-    enum elog_ikeys_t {verbosity} elog_ikeys;
-    static const struct key_value_dest_s log_ikeys[] = {
-        keytuple(verbosity),
-        {NULL, 0}
-        };
-
-    enum elog_skeys_t {section_verbosity} elog_skeys;
-    static const struct key_value_dest_s log_skeys[] = {
-        keytuple(section_verbosity),
-        {NULL, 0}
-        };
-
-    gboolean bret;
-    int iret;
-    char *sret;
 
     print_config(config);
 
@@ -1919,7 +1891,7 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     // REVIEW: if an option is present in the mount file, can we turn it off? i.e. the opposite of -o
     for (int idx = 0; fuse_bkeys[idx] != NULL; idx++) {
-        bret = g_key_file_get_boolean(keyfile, groups[Fuse], fuse_bkeys[idx], &tmpgerr);
+        bret = g_key_file_get_boolean(keyfile, "Fuse", fuse_bkeys[idx], &tmpgerr);
         if ((tmpgerr == NULL) && (bret == true)) {
             char *fuse_arg = NULL;
             // If there is a space after "-o", fuse will misparse and fail to start
@@ -1936,105 +1908,36 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     /* Config args */
 
-    /* Config boolean args */
+    for (int idx = 0; config_entries[idx].key != NULL; idx++) {
+        union type_convert_u {
+            bool bvalue;
+            int ivalue;
+            char *svalue;
+            void *vvalue;
+        } uvalue;
 
-    for (econfig_bkeys = 0; config_bkeys[econfig_bkeys].key != NULL; econfig_bkeys++) {
-        bret = g_key_file_get_boolean(keyfile, groups[Config], config_bkeys[econfig_bkeys].key, &tmpgerr);
+        int type = config_entries[idx].type;
+        int size;
+        void *field;
+
+        size = (type == BOOL) ? sizeof(bool) : (type == INT || type == OCTAL) ? sizeof(int) : (type == STRING) ? sizeof(char *) : sizeof(char *);
+        field = (void *)((unsigned long)config + (unsigned long)config_entries[idx].offset);
+        if (type == BOOL) {
+            uvalue.bvalue = g_key_file_get_boolean(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
+        }
+        else if (type == INT) {
+            uvalue.ivalue = g_key_file_get_integer(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
+        }
+        else if (type == OCTAL) {
+            char *ostr = (void *)g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
+            uvalue.ivalue = strtol(ostr, NULL, 8);
+        }
+        else if (type == STRING) {
+            uvalue.svalue = strdup(g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr));
+        }
+
         if (tmpgerr == NULL) {
-            switch (config_bkeys[econfig_bkeys].index) {
-                case progressive_propfind: config->progressive_propfind = bret; break;
-                case refresh_dir_for_file_stat: config->refresh_dir_for_file_stat = bret; break;
-                case ignoreutimens: config->ignoreutimens = bret; break;
-                case ignorexattr: config->ignorexattr = bret; break;
-                case nodaemon: config->nodaemon = bret; break;
-                case grace: config->grace = bret; break;
-                case singlethread: config->singlethread = bret; break;
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Config integer args */
-
-    // dir_mode and file_mode are normally octal, and key_file doesn't handle them
-    for (econfig_ikeys = 0; config_ikeys[econfig_ikeys].key != NULL; econfig_ikeys++) {
-        iret = g_key_file_get_integer(keyfile, groups[Config], config_ikeys[econfig_ikeys].key, &tmpgerr);
-        if (tmpgerr == NULL) {
-            switch (config_bkeys[econfig_ikeys].index) {
-                case uid: config->uid = iret; break;
-                case gid: config->gid = iret; break;
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Config string args */
-
-    for (econfig_skeys = 0; config_skeys[econfig_skeys].key != NULL; econfig_skeys++) {
-        sret = g_key_file_get_string(keyfile, groups[Config], config_skeys[econfig_skeys].key, &tmpgerr);
-        if (tmpgerr == NULL) {
-            switch (config_skeys[econfig_skeys].index) {
-                // Getting dir_mode and file_mode as strings so we can read as octal
-                case dir_mode: config->dir_mode = strtol(sret, NULL, 8); break;
-                case file_mode: config->file_mode = strtol(sret, NULL, 8); break;
-
-                case run_as_uid: free(config->run_as_uid_name); config->run_as_uid_name = strdup(sret); break;
-                case run_as_gid: free(config->run_as_gid_name); config->run_as_gid_name = strdup(sret); break;
-                case cache_path: free(config->cache_path); config->cache_path = strdup(sret); break;
-                case cache_uri: free(config->cache_uri); config->cache_uri = strdup(sret); break;
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Certificates */
-
-    for (ecert_skeys = 0; cert_skeys[ecert_skeys].key != NULL; ecert_skeys++) {
-        sret = g_key_file_get_string(keyfile, groups[Certificates], cert_skeys[ecert_skeys].key, &tmpgerr);
-        if (tmpgerr == NULL) {
-            switch (config_skeys[ecert_skeys].index) {
-                case ca_certificate: free(config->ca_certificate); config->ca_certificate = strdup(sret); break;
-                case client_certificate: free(config->client_certificate); config->client_certificate = strdup(sret); break;
-                case client_certificate_password: free(config->client_certificate_password); config->client_certificate_password = strdup(sret); break;
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Log args */
-
-    for (elog_ikeys = 0; log_ikeys[elog_ikeys].key != NULL; elog_ikeys++) {
-        iret = g_key_file_get_integer(keyfile, groups[Log], log_ikeys[elog_ikeys].key, &tmpgerr);
-        if (tmpgerr == NULL) {
-            switch (config_bkeys[elog_ikeys].index) {
-                case verbosity: config->verbosity = iret; break;
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Log args string to set different log levels by code section */
-
-    for (elog_skeys = 0; log_skeys[elog_skeys].key != NULL; elog_skeys++) {
-        sret = g_key_file_get_string(keyfile, groups[Log], log_skeys[elog_skeys].key, &tmpgerr);
-        if (tmpgerr == NULL) {
-            switch (config_skeys[elog_skeys].index) {
-                case section_verbosity:
-                    free(config->section_verbosity);
-                    config->section_verbosity = strdup(sret);
-                    log_set_section_verbosity(sret);
-                    break;
-            }
+            memcpy(field, &uvalue.vvalue, size);
         }
         else {
             g_clear_error(&tmpgerr);
