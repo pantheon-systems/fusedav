@@ -1106,9 +1106,15 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
+    // No entry means that the "from" file doesn't really exist, at least it has no cache presence
+    if (entry == NULL) {
+        local_ret = -ENOENT;
+        goto finish;
+    }
+
     log_print(LOG_DEBUG, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
     stat_cache_value_set(config->cache, to, entry, &gerr);
-    if (entry != NULL && gerr) {
+    if (gerr) {
         local_ret = processed_gerror("dav_rename: ", to, gerr);
         log_print(LOG_NOTICE, "dav_rename: failed stat cache moving source entry to destination %d:%s", fd, to);
         // If the local stat_cache move fails, leave the filecache alone so we don't get mixed state
