@@ -1844,7 +1844,7 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
     enum econfig_bkeys_t {progressive_propfind, refresh_dir_for_file_stat, ignoreutimens,
                           ignorexattr, nodaemon, grace, singlethread} econfig_bkeys;
 
-     static const struct key_value_dest_s config_bkeys[] = {
+    static const struct key_value_dest_s config_bkeys[] = {
         keytuple(progressive_propfind),
         keytuple(refresh_dir_for_file_stat),
         keytuple(ignoreutimens),
@@ -1856,12 +1856,43 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         };
 
     enum econfig_ikeys_t {uid, gid} econfig_ikeys;
-    static const struct key_value_dest_s config_ikeys[] = {keytuple(uid), keytuple(gid), {NULL, 0}};
+    static const struct key_value_dest_s config_ikeys[] = {
+        keytuple(uid),
+        keytuple(gid),
+        {NULL, 0}
+        };
 
-    static const char *config_skeys[] = {"dir_mode", "file_mode", "run_as_uid", "run_as_gid", "cache_path", "cache_uri", NULL};
-    static const char *cert_skeys[] = {"ca_certificate", "client_certificate", "client_certificate_password", NULL};
-    static const char *log_ikeys[] = {"verbosity", NULL};
-    static const char *log_skeys[] = {"section_verbosity", NULL};
+    enum econfig_skeys_t {dir_mode, file_mode, run_as_uid, run_as_gid, cache_path, cache_uri} econfig_skeys;
+    static const struct key_value_dest_s config_skeys[] = {
+        keytuple(dir_mode),
+        keytuple(file_mode),
+        keytuple(run_as_uid),
+        keytuple(run_as_gid),
+        keytuple(cache_path),
+        keytuple(cache_uri),
+        {NULL, 0}
+        };
+
+    enum ecert_skeys_t {ca_certificate, client_certificate, client_certificate_password} ecert_skeys;
+    static const struct key_value_dest_s cert_skeys[] = {
+        keytuple(ca_certificate),
+        keytuple(client_certificate),
+        keytuple(client_certificate_password),
+        {NULL, 0}
+        };
+
+    enum elog_ikeys_t {verbosity} elog_ikeys;
+    static const struct key_value_dest_s log_ikeys[] = {
+        keytuple(verbosity),
+        {NULL, 0}
+        };
+
+    enum elog_skeys_t {section_verbosity} elog_skeys;
+    static const struct key_value_dest_s log_skeys[] = {
+        keytuple(section_verbosity),
+        {NULL, 0}
+        };
+
     gboolean bret;
     int iret;
     char *sret;
@@ -1943,36 +1974,18 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     /* Config string args */
 
-    for (int idx = 0; config_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Config], config_skeys[idx], &tmpgerr);
+    for (econfig_skeys = 0; config_skeys[econfig_skeys].key != NULL; econfig_skeys++) {
+        sret = g_key_file_get_string(keyfile, groups[Config], config_skeys[econfig_skeys].key, &tmpgerr);
         if (tmpgerr == NULL) {
-            if (!strcmp("dir_mode", config_skeys[idx])) {
-                config->dir_mode = strtol(sret, NULL, 8);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: dir_mode %#o", config->dir_mode);
-            }
-            else if (!strcmp("file_mode", config_skeys[idx])) {
-                config->file_mode = strtol(sret, NULL, 8);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: file_mode %#o", config->file_mode);
-            }
-            else if (!strcmp("run_as_uid", config_skeys[idx])) {
-                free(config->run_as_uid_name);
-                config->run_as_uid_name = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_uid_name %s", config->run_as_uid_name);
-            }
-            else if (!strcmp("run_as_gid", config_skeys[idx])) {
-                free(config->run_as_gid_name);
-                config->run_as_gid_name = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_gid_name %s", config->run_as_gid_name);
-            }
-            else if (!strcmp("cache_path", config_skeys[idx])) {
-                free(config->cache_path);
-                config->cache_path = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_path %s", config->cache_path);
-            }
-            else if (!strcmp("cache_uri", config_skeys[idx])) {
-                free(config->cache_uri);
-                config->cache_uri = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_uri %s", config->cache_uri);
+            switch (config_skeys[econfig_skeys].index) {
+                // Getting dir_mode and file_mode as strings so we can read as octal
+                case dir_mode: config->dir_mode = strtol(sret, NULL, 8); break;
+                case file_mode: config->file_mode = strtol(sret, NULL, 8); break;
+
+                case run_as_uid: free(config->run_as_uid_name); config->run_as_uid_name = strdup(sret); break;
+                case run_as_gid: free(config->run_as_gid_name); config->run_as_gid_name = strdup(sret); break;
+                case cache_path: free(config->cache_path); config->cache_path = strdup(sret); break;
+                case cache_uri: free(config->cache_uri); config->cache_uri = strdup(sret); break;
             }
         }
         else {
@@ -1982,23 +1995,13 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     /* Certificates */
 
-    for (int idx = 0; cert_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Certificates], cert_skeys[idx], &tmpgerr);
+    for (ecert_skeys = 0; cert_skeys[ecert_skeys].key != NULL; ecert_skeys++) {
+        sret = g_key_file_get_string(keyfile, groups[Certificates], cert_skeys[ecert_skeys].key, &tmpgerr);
         if (tmpgerr == NULL) {
-            if (!strcmp("ca_certificate", cert_skeys[idx])) {
-                free(config->ca_certificate);
-                config->ca_certificate = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ca_certificate %s", config->ca_certificate);
-            }
-            else if (!strcmp("client_certificate", cert_skeys[idx])) {
-                free(config->client_certificate);
-                config->client_certificate = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate %s", config->client_certificate);
-            }
-            else if (!strcmp("client_certificate_password", cert_skeys[idx])) {
-                free(config->client_certificate_password);
-                config->client_certificate_password = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate_password %s", config->client_certificate_password);
+            switch (config_skeys[ecert_skeys].index) {
+                case ca_certificate: free(config->ca_certificate); config->ca_certificate = strdup(sret); break;
+                case client_certificate: free(config->client_certificate); config->client_certificate = strdup(sret); break;
+                case client_certificate_password: free(config->client_certificate_password); config->client_certificate_password = strdup(sret); break;
             }
         }
         else {
@@ -2008,12 +2011,11 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     /* Log args */
 
-    for (int idx = 0; log_ikeys[idx] != NULL; idx++) {
-        iret = g_key_file_get_integer(keyfile, groups[Log], log_ikeys[idx], &tmpgerr);
+    for (elog_ikeys = 0; log_ikeys[elog_ikeys].key != NULL; elog_ikeys++) {
+        iret = g_key_file_get_integer(keyfile, groups[Log], log_ikeys[elog_ikeys].key, &tmpgerr);
         if (tmpgerr == NULL) {
-            if (!strcmp("verbosity", log_ikeys[idx])) {
-                config->verbosity = iret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: verbosity %d", config->verbosity);
+            switch (config_bkeys[elog_ikeys].index) {
+                case verbosity: config->verbosity = iret; break;
             }
         }
         else {
@@ -2023,14 +2025,15 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     /* Log args string to set different log levels by code section */
 
-    for (int idx = 0; log_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Log], log_skeys[idx], &tmpgerr);
+    for (elog_skeys = 0; log_skeys[elog_skeys].key != NULL; elog_skeys++) {
+        sret = g_key_file_get_string(keyfile, groups[Log], log_skeys[elog_skeys].key, &tmpgerr);
         if (tmpgerr == NULL) {
-            if (!strcmp("section_verbosity", log_skeys[idx])) {
-                free(config->section_verbosity);
-                config->section_verbosity = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: section_verbosity %s", config->section_verbosity);
-                log_set_section_verbosity(sret);
+            switch (config_skeys[elog_skeys].index) {
+                case section_verbosity:
+                    free(config->section_verbosity);
+                    config->section_verbosity = strdup(sret);
+                    log_set_section_verbosity(sret);
+                    break;
             }
         }
         else {
