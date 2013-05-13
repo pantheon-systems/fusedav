@@ -1843,7 +1843,7 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
     GError *tmpgerr = NULL;
     bool bret;
     static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
-    /* Groups are: Fuse, Pantheon, Log, Certificates */
+    /* Groups are: Fuse, Config, Log, Certificates */
 
     static const struct key_value_dest_s config_entries[] = {
         keytuple(Config, progressive_propfind, BOOL),
@@ -1869,6 +1869,22 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         {NULL, NULL, 0, 0}
         };
 
+    // JB FIX ME!
+    // Step one: make sure this new version of fusedav is running on all mounts before merging
+    //           changes to titan and the mount file. If the mount file is updated to include
+    //           config_file as an option, the version of fusedav before this one will barf
+    //           since it's not a known option.
+    // Step two: merge changes to titan including config file
+    // Proviso:  ultimately, we want to ensure there is a config file, and err if one is not present
+    //           Until titan is updated to include fusedav in the .mount file, ignore errors
+    //           from non-existant config files
+
+    // Bail for now if we don't have a config file
+    if (config->config_file == NULL) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: config_file is null");
+        return;
+    }
+
     print_config(config);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_CONFIG, "parse_configs: file %s", config->config_file);
@@ -1889,6 +1905,10 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
     /* Fuse Args */
 
+    /* Fuse args are done differently from those which populate the config structure.
+     * They each trigger the same action.
+     */
+
     // REVIEW: if an option is present in the mount file, can we turn it off? i.e. the opposite of -o
     for (int idx = 0; fuse_bkeys[idx] != NULL; idx++) {
         bret = g_key_file_get_boolean(keyfile, "Fuse", fuse_bkeys[idx], &tmpgerr);
@@ -1901,12 +1921,14 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
 
             free(fuse_arg);
         }
-        else {
+        else if (tmpgerr) {
             g_clear_error(&tmpgerr);
         }
     }
 
-    /* Config args */
+    /* Config, Certificate, and Log args */
+
+    /* These populate the config structure */
 
     for (int idx = 0; config_entries[idx].key != NULL; idx++) {
         union type_convert_u {
@@ -1929,19 +1951,28 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
             uvalue.ivalue = g_key_file_get_integer(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
         }
         else if (type == OCTAL) {
-            char *ostr = (void *)g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
-            uvalue.ivalue = strtol(ostr, NULL, 8);
+            // We read octal values as a string and then convert; the g_config functions don't handle octal
+            // so we can't write octal values for our dir and file modes and have g_config handle it natively
+            char *ostr = g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
+            if (tmpgerr) {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_config: error on strtol on octal: %s - %s", config_entries[idx].key, ostr);
+            }
+            else {
+                uvalue.ivalue = strtol(ostr, NULL, 8);
+            }
         }
         else if (type == STRING) {
-            uvalue.svalue = strdup(g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr));
+            uvalue.svalue = g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
         }
 
         if (tmpgerr == NULL) {
             memcpy(field, &uvalue.vvalue, size);
         }
         else {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_config: error on %s : %s", config_entries[idx].key, tmpgerr->message);
             g_clear_error(&tmpgerr);
         }
+
     }
 
     g_key_file_free(keyfile);
@@ -1996,7 +2027,7 @@ int main(int argc, char *argv[]) {
 
     // Set log levels. We use get_base_directory for the log message, so this call needs to follow
     // session_config_init, where base_directory is set
-    log_init(config.verbosity, get_base_directory());
+    log_init(config.verbosity, get_base_directory(), config.section_verbosity);
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Log verbosity: %d.", config.verbosity);
 
