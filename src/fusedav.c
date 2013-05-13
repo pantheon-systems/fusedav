@@ -128,31 +128,28 @@ static void set_saint_mode(void) {
 // Access with struct fusedav_config *config = fuse_get_context()->private_data;
 struct fusedav_config {
     char *uri;
+    // [ProtocolAndPerformance]
+    bool progressive_propfind;
+    bool refresh_dir_for_file_stat;
+    bool grace;
+    bool singlethread;
+    char *cache_uri;
+    // [Authenticate]
     char *username;
     char *password;
     char *ca_certificate;
     char *client_certificate;
-    char *client_certificate_password;
-    char *cache_uri;
-    int  verbosity;
-    char *section_verbosity;
+    // [LogAndProcess]
     bool nodaemon;
-    bool ignoreutimens;
     char *cache_path;
-    stat_cache_t *cache;
-    struct stat_cache_supplemental cache_supplemental;
-    char *config_file;
-    uid_t uid;
-    gid_t gid;
-    mode_t dir_mode;
-    mode_t file_mode;
     char *run_as_uid;
     char *run_as_gid;
-    bool progressive_propfind;
-    bool refresh_dir_for_file_stat;
-    bool ignorexattr;
-    bool singlethread;
-    bool grace;
+    int  verbosity;
+    char *section_verbosity;
+    // Other
+    char *config_file;
+    stat_cache_t *cache;
+    struct stat_cache_supplemental cache_supplemental;
 };
 
 enum {
@@ -162,38 +159,35 @@ enum {
 
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
 
+// REVIEW: is it true we don't need umask, uid, gid, allow_other, noexec, atomic_o_trunc, hard_remove
 static struct fuse_opt fusedav_opts[] = {
-     FUSEDAV_OPT("username=%s",                    username, 0),
-     FUSEDAV_OPT("password=%s",                    password, 0),
-     FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
-     FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
-     FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
-     FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
-     FUSEDAV_OPT("config_file=%s",                 config_file, 0),
-     FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
-     FUSEDAV_OPT("section_verbosity=%s",           section_verbosity, 0),
-     FUSEDAV_OPT("nodaemon",                       nodaemon, true),
-     FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
-     FUSEDAV_OPT("uid=%d",                         uid, 0),
-     FUSEDAV_OPT("gid=%d",                         gid, 0),
-     FUSEDAV_OPT("dir_mode=%o",                    dir_mode, 0),
-     FUSEDAV_OPT("file_mode=%o",                   file_mode, 0),
-     FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid, 0),
-     FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid, 0),
-     FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
-     FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
-     FUSEDAV_OPT("singlethread",                   singlethread, true),
+    // [ProtocolAndPerformance]
+    FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
+    FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
+    FUSEDAV_OPT("grace",                          grace, true),
+    FUSEDAV_OPT("singlethread",                   singlethread, true),
+    FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
+    // [Authenticate]
+    FUSEDAV_OPT("username=%s",                    username, 0),
+    FUSEDAV_OPT("password=%s",                    password, 0),
+    FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
+    FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
+    // [LogAndProcess]
+    FUSEDAV_OPT("nodaemon",                       nodaemon, true),
+    FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
+    FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid, 0),
+    FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid, 0),
+    FUSEDAV_OPT("verbosity=%d",                   verbosity, 5),
+    FUSEDAV_OPT("section_verbosity=%s",           section_verbosity, 0),
+    // Config
+    FUSEDAV_OPT("config_file=%s",                 config_file, 0),
 
-     // These options have no effect.
-     FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
-     FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
-
-     FUSE_OPT_KEY("-V",             KEY_VERSION),
-     FUSE_OPT_KEY("--version",      KEY_VERSION),
-     FUSE_OPT_KEY("-h",             KEY_HELP),
-     FUSE_OPT_KEY("--help",         KEY_HELP),
-     FUSE_OPT_KEY("-?",             KEY_HELP),
-     FUSE_OPT_END
+    FUSE_OPT_KEY("-V",             KEY_VERSION),
+    FUSE_OPT_KEY("--version",      KEY_VERSION),
+    FUSE_OPT_KEY("-h",             KEY_HELP),
+    FUSE_OPT_KEY("--help",         KEY_HELP),
+    FUSE_OPT_KEY("-?",             KEY_HELP),
+    FUSE_OPT_END
 };
 
 static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
@@ -347,18 +341,13 @@ static int simple_propfind_with_redirect(
 }
 
 static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-
     // initialize to 0
     memset(st, 0, sizeof(struct stat));
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: Enter");
 
+    st->st_mode = mode;
     if (is_dir) {
-        // Our default mode for directories is 0770, for files 0660; use them here if not specified
-        if (mode != 0) st->st_mode = mode;
-        else if (config->dir_mode) st->st_mode = config->dir_mode;
-        else st->st_mode = 0770; // Our "default" dir mode
         st->st_mode |= S_IFDIR;
         // In a POSIX systems, directories with subdirs have nlink = 3; otherwise 2. Just use 3
         st->st_nlink = 3;
@@ -366,9 +355,6 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
         st->st_size = 4096;
     }
     else {
-        if (mode != 0) st->st_mode = mode;
-        else if (config->file_mode) st->st_mode = config->file_mode;
-        else st->st_mode = 0660; // Our "default" file mode
         st->st_mode |= S_IFREG;
         st->st_nlink = 1;
         // If we are creating a file, size will start at 0.
@@ -378,8 +364,6 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
     st->st_mtime = st->st_atime;
     st->st_ctime = st->st_mtime;
     st->st_blksize = 4096;
-    st->st_uid = config->uid ? config->uid : getuid();
-    st->st_gid = config->gid ? config->gid : getgid();
 
     if (fd >= 0) {
         st->st_size = lseek(fd, 0, SEEK_END);
@@ -687,7 +671,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     is_base_directory = (strcmp(path, base_directory) == 0);
 
     // If it's the root directory and all attributes are specified, construct a response.
-    if (is_base_directory && config->dir_mode && config->uid && config->gid) {
+    if (is_base_directory) {
 
         // mode = 0 (unspecified), is_dir = true; fd = -1, irrelevant for dir
         fill_stat_generic(stbuf, 0, true, -1);
@@ -791,7 +775,6 @@ finish:
 }
 
 static void common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info, GError **gerr) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
     assert(info != NULL || path != NULL);
@@ -803,14 +786,10 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
             return;
         }
         // These are taken care of by fill_stat_generic below if path is NULL
-        if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
-            stbuf->st_mode = S_IFDIR | config->dir_mode;
-        if (S_ISREG(stbuf->st_mode) && config->file_mode)
-            stbuf->st_mode = S_IFREG | config->file_mode;
-        if (config->uid)
-            stbuf->st_uid = config->uid;
-        if (config->gid)
-            stbuf->st_gid = config->gid;
+        if (S_ISDIR(stbuf->st_mode))
+            stbuf->st_mode |= S_IFDIR;
+        if (S_ISREG(stbuf->st_mode))
+            stbuf->st_mode |= S_IFREG;
     }
     else {
         int fd = filecache_fd(info);
@@ -1535,17 +1514,10 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     return 0;
 }
 
-static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-
+static int dav_chown(__unused const char *path, __unused uid_t u, __unused gid_t g) {
     BUMP(chown);
 
-    // If the uid and gid are fixed, there is nothing to chown.
-    if (config->uid && config->gid)
-        return 0;
-
-    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "NOT IMPLEMENTED: chown(%s, %d:%d)", path, u, g);
-    return -EPROTONOSUPPORT;
+    return 0;
 }
 
 /* We need to accommodate the pattern
@@ -1659,29 +1631,25 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    -V   --version   print version\n"
                 "\n"
                 "fusedav mount options:\n"
+                "    Protocol and performance options:\n"
+                "        -o progressive_propfind\n"
+                "        -o refresh_dir_for_file_stat\n"
+                "        -o grace\n"
+                "        -o singlethread\n"
+                "        -o cache_uri=STRING\n"
                 "    Authenticating with the server:\n"
                 "        -o username=STRING\n"
                 "        -o password=STRING\n"
                 "        -o ca_certificate=PATH\n"
                 "        -o client_certificate=PATH\n"
-                "        -o client_certificate_password=STRING\n"
-                "    File and directory attributes:\n"
-                "        -o uid=STRING (masks file owner)\n"
-                "        -o gid=STRING (masks file group)\n"
-                "        -o file_mode=OCTAL (masks file permissions)\n"
-                "        -o dir_mode=OCTAL (masks directory permissions)\n"
-                "        -o ignoreutimens\n"
-                "    Protocol and performance options:\n"
-                "        -o progressive_propfind\n"
-                "        -o refresh_dir_for_file_stat\n"
-                "        -o singlethread\n"
-                "        -o cache_uri=STRING\n"
                 "    Daemon, logging, and process privilege:\n"
-                "        -o verbosity=NUM (use 7 for debug)\n"
                 "        -o nodaemon\n"
                 "        -o run_as_uid=STRING\n"
                 "        -o run_as_gid=STRING (defaults to primary group for run_as_uid)\n"
-                "        -o cache_path=STRING\n"
+                "        -o verbosity=NUM (use 7 for debug)\n"
+                "        -o section_verbosity=STRING (0 means use global verbosity)\n"
+                "    Other:\n"
+                "        -o config_file=STRING\n"
                 "\n"
                 , outargs->argv[0]);
         fuse_opt_add_arg(outargs, "-ho");
@@ -1771,22 +1739,20 @@ static void print_config(struct fusedav_config *config) {
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "CONFIG:");
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "progressive_propfind %d", config->progressive_propfind);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignoreutimens %d", config->ignoreutimens);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignorexattr %d", config->ignorexattr);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "grace %d", config->grace);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "singlethread %d", config->singlethread);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "dir_mode %#o", config->dir_mode);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "file_mode %#o", config->file_mode);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "uid %ul", config->uid);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "gid %ul", config->gid);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_uid %s", config->run_as_uid);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_gid %s", config->run_as_gid);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_uri %s", config->cache_uri);
+
+    // We could set these two, but they are NULL by default, so don't know how to put that in the config file
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
+
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ca_certificate %s", config->ca_certificate);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate %s", config->client_certificate);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate_password %s", config->client_certificate_password);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_uid %s", config->run_as_uid);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_gid %s", config->run_as_gid);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "verbosity %d", config->verbosity);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "section_verbosity %s", config->section_verbosity);
 
@@ -1795,39 +1761,27 @@ static void print_config(struct fusedav_config *config) {
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache %p", config->cache);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "config_file %s", config->config_file);
 
-    // We could set these, but they are NULL by default, so don't know how to put that in the config file
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
 }
 
 /* fusedav.conf looks something like:
-    [Fuse]
-    allow_other=true
-    noexec=true
-    atomic_o_trunc=true
-    hard_remove=true
-
-    [Config]
+    [ProtocolAndPerformance]
     progressive_propfind=true
     refresh_dir_for_file_stat=true
-    ignoreutimens=true
-    ignorexattr=true
-    dir_mode=0770
-    file_mode=0660
-    uid=10061
-    gid=10061
-    run_as_uid=6f7a106722f74cc7bd96d4d06785ed78
-    run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
-    cache_path=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/cache
+    grace=true
+    singlethread=false
+    cache_uri=http://<%= @interface %>:<%= Etc.getpwnam(@id).gid %>/fusedav-peer-cache
 
-    [Certificates]
-    cache_uri=http://50.57.148.118:10061/fusedav-peer-cache
+    [Authenticate]
     ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
-    client_certificate=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/certs/binding.p12
-    client_certificate_password=pantheon
+    client_certificate=<%= @base %>/certs/binding.pem
 
-    [Log]
+    [LogAndProcess]
+    nodaemon=false
+    cache_path=<%= @base %>/cache
+    run_as_uid=<%= @id %>
+    run_as_gid=<%= @id %>
     verbosity=5
+    section_verbosity=0
 */
 
 static void parse_configs(struct fuse_args *args, struct fusedav_config *config, GError **gerr) {
@@ -1835,7 +1789,6 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
     #define BOOL 0
     #define INT 1
     #define STRING 2
-    #define OCTAL 3
     #define keytuple(group, key, type) {#group, #key, offsetof(struct fusedav_config, key), type}
 
     struct key_value_dest_s {
@@ -1849,29 +1802,23 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
     GError *tmpgerr = NULL;
     bool bret;
     static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
-    /* Groups are: Fuse, Config, Log, Certificates */
+
+    /* Groups are: FileAttributes, ProtocolAndPerformance, Authenticate, LogAndProcess */
 
     static const struct key_value_dest_s config_entries[] = {
-        keytuple(Config, progressive_propfind, BOOL),
-        keytuple(Config, refresh_dir_for_file_stat, BOOL),
-        keytuple(Config, ignoreutimens, BOOL),
-        keytuple(Config, ignorexattr, BOOL),
-        keytuple(Config, nodaemon, BOOL),
-        keytuple(Config, grace, BOOL),
-        keytuple(Config, singlethread, BOOL),
-        keytuple(Config, uid, INT),
-        keytuple(Config, gid, INT),
-        keytuple(Config, dir_mode, OCTAL),
-        keytuple(Config, file_mode, OCTAL),
-        keytuple(Config, run_as_uid, STRING),
-        keytuple(Config, run_as_gid, STRING),
-        keytuple(Config, cache_path, STRING),
-        keytuple(Config, cache_uri, STRING),
-        keytuple(Certificates, ca_certificate, STRING),
-        keytuple(Certificates, client_certificate, STRING),
-        keytuple(Certificates, client_certificate_password, STRING),
-        keytuple(Log, verbosity, INT),
-        keytuple(Log, section_verbosity, STRING),
+        keytuple(ProtocolAndPerformance, progressive_propfind, BOOL),
+        keytuple(ProtocolAndPerformance, refresh_dir_for_file_stat, BOOL),
+        keytuple(ProtocolAndPerformance, grace, BOOL),
+        keytuple(ProtocolAndPerformance, singlethread, BOOL),
+        keytuple(ProtocolAndPerformance, cache_uri, STRING),
+        keytuple(Authenticate, ca_certificate, STRING),
+        keytuple(Authenticate, client_certificate, STRING),
+        keytuple(LogAndProcess, nodaemon, BOOL),
+        keytuple(LogAndProcess, cache_path, STRING),
+        keytuple(LogAndProcess, run_as_uid, STRING),
+        keytuple(LogAndProcess, run_as_gid, STRING),
+        keytuple(LogAndProcess, verbosity, INT),
+        keytuple(LogAndProcess, section_verbosity, STRING),
         {NULL, NULL, 0, 0}
         };
 
@@ -1948,7 +1895,8 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         int size;
         void *field;
 
-        size = (type == BOOL) ? sizeof(bool) : (type == INT || type == OCTAL) ? sizeof(int) : (type == STRING) ? sizeof(char *) : sizeof(char *);
+        // We only have three types, bool, int, and char *
+        size = (type == BOOL) ? sizeof(bool) : (type == INT) ? sizeof(int) : sizeof(char *);
         field = (void *)((unsigned long)config + (unsigned long)config_entries[idx].offset);
         if (type == BOOL) {
             uvalue.bvalue = g_key_file_get_boolean(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
@@ -1956,21 +1904,16 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         else if (type == INT) {
             uvalue.ivalue = g_key_file_get_integer(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
         }
-        else if (type == OCTAL) {
-            // We read octal values as a string and then convert; the g_config functions don't handle octal
-            // so we can't write octal values for our dir and file modes and have g_config handle it natively
-            char *ostr = g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
-            if (tmpgerr) {
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_config: error on strtol on octal: %s - %s", config_entries[idx].key, ostr);
-            }
-            else {
-                uvalue.ivalue = strtol(ostr, NULL, 8);
-            }
-        }
         else if (type == STRING) {
             uvalue.svalue = g_key_file_get_string(keyfile, config_entries[idx].group, config_entries[idx].key, &tmpgerr);
         }
 
+        // fuse actually uses a sscanf to populate fields when using the "...=%d" specifiers we see
+        // fusedav_opts above. The bools never specify a specifier (e.g. %d), but it seems are given
+        // values via *(int *), which seems like it would break a lot of stuff, since bools only take 1 byte.
+        // Since scanf is barely more type-safe than memcpy, and it can't accommodate a bool,
+        // let's leave it as it is for now. We currently only have strings and bools, and even with ints,
+        // this would be preferable for dealing with bools.
         if (tmpgerr == NULL) {
             memcpy(field, &uvalue.vvalue, size);
         }
@@ -2037,9 +1980,6 @@ int main(int argc, char *argv[]) {
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Log verbosity: %d.", config.verbosity);
 
-    if (config.ignoreutimens)
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Ignoring utimens requests.");
-
     if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
         log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "FUSE could not parse the command line.");
         goto finish;
@@ -2074,7 +2014,7 @@ int main(int argc, char *argv[]) {
     }
     else {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to daemonize.");
-        if (fuse_daemonize(/* run in foreground */ 0) < 0) {
+        if (fuse_daemonize(/* 0 means daemonize */ 0) < 0) {
             log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to daemonize.");
             goto finish;
         }
