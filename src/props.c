@@ -26,6 +26,7 @@
 #include <time.h>
 #include <unistd.h> // For getuid/getgid.
 #include <errno.h>
+#include <uriparser/Uri.h>
 
 #include "log.h"
 #include "props.h"
@@ -46,10 +47,97 @@ struct element_state {
 struct propfind_state {
     props_result_callback callback;
     void *userdata;
+    const char *path;
+    CURL *session;
     struct response_state rstate;
     struct element_state estate;
     bool failure;
 };
+
+static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
+    char *path = NULL;
+    char *segment;
+    size_t segment_len = 0;
+    size_t base_segment_len = 0;
+    UriPathSegmentA *cur_base = base_uri->pathHead;
+    UriPathSegmentA *cur = source_uri->pathHead;
+
+    // Iterate through the identical parts.
+    while (cur != NULL && cur_base != NULL) {
+        segment_len = cur->text.afterLast - cur->text.first;
+        base_segment_len = cur_base->text.afterLast - cur_base->text.first;
+
+        if (segment_len != base_segment_len || strncmp(cur->text.first, cur_base->text.first, segment_len) != 0) {
+            break;
+        }
+
+        cur = cur->next;
+        cur_base = cur_base->next;
+    }
+
+    // Verify that we're done with the base path
+    // and still have parts left of the main path.
+    if (cur == NULL || cur_base != NULL) {
+        return NULL;
+    }
+
+    // Iterate through the unique parts.
+    while (cur != NULL) {
+        segment_len = cur->text.afterLast - cur->text.first;
+        segment = malloc(segment_len + 1);
+        strncpy(segment, cur->text.first, segment_len);
+        segment[segment_len] = '\0';
+
+        if (path == NULL) {
+            path = segment;
+        }
+        else {
+            asprintf(&path, "%s/%s", path, segment);
+            free(segment);
+        }
+        cur = cur->next;
+    }
+
+    return path;
+}
+
+static char *get_path_beyond_base(const char *source_url) {
+    UriUriA base_uri;
+    UriParserStateA base_state;
+    UriUriA source_uri;
+    UriParserStateA source_state;
+    const char *base_url = get_base_url();
+    char *path = NULL;
+
+    base_state.uri = &base_uri;
+    source_state.uri = &source_uri;
+
+    // Parse the URLs.
+    if (uriParseUriA(&base_state, base_url) != URI_SUCCESS) {
+        uriFreeUriMembersA(&base_uri);
+        return NULL;
+    }
+    if (uriParseUriA(&source_state, source_url) != URI_SUCCESS) {
+        goto finish;
+    }
+
+    // Normalize the paths.
+    if (uriNormalizeSyntaxExA(&base_uri, URI_NORMALIZE_PATH) != URI_SUCCESS) {
+        goto finish;
+    }
+    if (uriNormalizeSyntaxExA(&source_uri, URI_NORMALIZE_PATH) != URI_SUCCESS) {
+        goto finish;
+    }
+
+    // Compute the relative path and store it to a string.
+    path = get_relative_path(&base_uri, &source_uri);
+
+finish:
+    uriFreeUriMembersA(&base_uri);
+    uriFreeUriMembersA(&source_uri);
+    return path;
+}
+
 
 static void startElement(__unused void *userData, __unused const XML_Char *name, __unused const XML_Char **atts) {
     struct propfind_state *state = (struct propfind_state *) userData;
@@ -85,33 +173,15 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.status_code = (unsigned long) atol(strtok_r(NULL, " ", &token_status));
     }
     else if (strcmp(name, "href") == 0) {
-        const char *after_scheme;
-        const char *server_path;
-        size_t path_len;
+        char *path = get_path_beyond_base(state->estate.current_data);
+        char *unescaped_path = NULL;
+        asprintf(&path, "%s%s", state->path, path);
+        unescaped_path = curl_easy_unescape(state->session, path, 0, NULL);
+        free(path);
         log_print(LOG_INFO, "href: %s", state->estate.current_data);
-        after_scheme = strstr(state->estate.current_data, "//") + 2;
-        if (after_scheme != NULL) {
-            server_path = strstr(after_scheme, "/");
-            if (server_path != NULL) {
-                path_len = strlen(server_path);
-                strncpy(state->rstate.path, server_path, PATH_MAX);
-                // Trim trailing slash, if any.
-                if (state->rstate.path[path_len - 1] == '/') {
-                    state->rstate.path[path_len - 1] = '\0';
-                }
-            }
-        }
-
-        // @TODO: Restore this older, safer implementation once the base_host
-        // matches the hrefs in the PROPFIND.
-        //if (strstr(state->estate.current_data, get_base_host()) == state->estate.current_data) {
-        //    size_t path_len;
-        //    strncpy(state->rstate.path, state->estate.current_data + strlen(get_base_host()), PATH_MAX);
-        //    // Trim trailing slash, if any.
-        //    path_len = strlen(state->rstate.path);
-        //    if (state->rstate.path[path_len - 1] == '/')
-        //        state->rstate.path[path_len - 1] = '\0';
-        //}
+        strncpy(state->rstate.path, unescaped_path, PATH_MAX);
+        state->rstate.path[PATH_MAX - 1] = '\0';
+        free(unescaped_path);
     }
     // @TODO: Update Valhalla server to use HTTP/1.1 410 Gone instead.
     else if (strcmp(name, "event") == 0) {
@@ -211,6 +281,8 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     state.callback = results;
     state.userdata = userdata;
     state.failure = false;
+    state.path = path;
+    state.session = session;
 
     // Configure the parser.
     parser = XML_ParserCreate(NULL);

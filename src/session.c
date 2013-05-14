@@ -28,7 +28,6 @@
 #include <termios.h>
 #include <unistd.h>
 
-#include <uriparser/Uri.h>
 #include <curl/curl.h>
 
 // Included to eventually use res_query() for lookups and failover.
@@ -47,86 +46,9 @@ static pthread_key_t session_tsd_key;
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
-static char *base_host = NULL;
-static char *base_directory = NULL;
 
 const char *get_base_url(void) {
     return base_url;
-}
-
-const char *get_base_directory(void) {
-    return base_directory;
-}
-
-const char *get_base_host(void) {
-    return base_host;
-}
-
-static void set_bases(const char *url) {
-    UriParserStateA state;
-    UriUriA uri;
-    char *base;
-    off_t base_pos, addition;
-
-    state.uri = &uri;
-    if (uriParseUriA(&state, url) != URI_SUCCESS) {
-        uriFreeUriMembersA(&uri);
-    }
-
-    // Adding one to the strlen(url) to please static analysis, even
-    // though base is guaranteed to be shorter.
-    base = malloc(strlen(url) + 1);
-    base[0] = '/';
-    base_pos = 0;
-
-    for (UriPathSegmentA *cur = uri.pathHead; cur != NULL; cur = cur->next) {
-        ++base_pos;
-        addition = cur->text.afterLast - cur->text.first;
-        strncpy(base + base_pos, cur->text.first, addition);
-        base_pos += addition;
-        base[base_pos] = '/';
-    }
-
-    // Keep the slash as the base directory if there's nothing else.
-    if (base_pos == 1)
-        base_pos = 1;
-
-    base[base_pos] = '\0';
-
-    // @TODO: Investigate. This seems to be necessary, but I don't think it should be.
-    if (base[base_pos - 1] == '/' && base_pos > 1)
-        base[base_pos - 1] = '\0';
-
-    // Assemble the base host. Adding one to the strlen(url) to please
-    // static analysis, even though base_host is guaranteed to be shorter.
-    base_host = malloc(strlen(url) + 1);
-
-    // Scheme.
-    addition = uri.scheme.afterLast - uri.scheme.first;
-    strncpy(base_host, uri.scheme.first, addition);
-    base_pos = addition;
-    base_host[base_pos++] = ':';
-    base_host[base_pos++] = '/';
-    base_host[base_pos++] = '/';
-
-    // Host.
-    addition = uri.hostText.afterLast - uri.hostText.first;
-    strncpy(base_host + base_pos, uri.hostText.first, addition);
-    base_pos += addition;
-    base_host[base_pos++] = ':';
-
-    // Port.
-    addition = uri.portText.afterLast - uri.portText.first;
-    strncpy(base_host + base_pos, uri.portText.first, addition);
-    base_pos += addition;
-    base_host[base_pos++] = '\0';
-
-    uriFreeUriMembersA(&uri);
-
-    log_print(LOG_INFO, "Using base directory: %s", base);
-    log_print(LOG_INFO, "Using base host: %s", base_host);
-
-    base_directory = base;
 }
 
 int session_config_init(char *base, char *ca_cert, char *client_cert) {
@@ -139,13 +61,11 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
         return -1;
     }
 
-    // Ensure the base URL has a trailing slash.
+    // Ensure the base URL has no trailing slash.
     base_len = strlen(base);
+    base_url = strdup(base);
     if (base[base_len - 1] == '/')
-        base_url = strdup(base);
-    else
-        asprintf(&base_url, "%s/", base);
-    set_bases(base_url);
+        base_url[base_len - 1] = '\0';
 
     if (ca_cert != NULL)
         ca_certificate = strdup(ca_cert);
@@ -215,6 +135,7 @@ CURL *session_get_handle(void) {
 CURL *session_request_init(const char *path) {
     CURL *session;
     char *full_url = NULL;
+    char *escaped_path;
 
     session = session_get_handle();
 
@@ -222,9 +143,11 @@ CURL *session_request_init(const char *path) {
     curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
     curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
 
-    asprintf(&full_url, "%s%s", get_base_host(), path);
+    escaped_path = curl_easy_escape(session, path, 0);
+    asprintf(&full_url, "%s%s", get_base_url(), path);
+    curl_free(escaped_path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
-    log_print(LOG_INFO, "Initializing request to URL: %s", full_url);
+    log_print(LOG_INFO, "Initialized request to URL: %s", full_url);
     free(full_url);
 
     //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
