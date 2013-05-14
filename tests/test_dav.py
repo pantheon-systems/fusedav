@@ -21,6 +21,7 @@ import os
 import shutil
 import logging
 import time
+import signal
 
 from sh import cp, mv
 
@@ -40,9 +41,8 @@ else:
 
 DAV_CLIENT = 'fusedav'
 
-FUSEDAV_CONFIG = 'verbosity=6,allow_other,noexec,atomic_o_trunc,' +\
-                 'ignoreutimens,ignorexattr,' +\
-                 'dir_mode=0770,file_mode=0660,cache_path='
+FUSEDAV_CONFIG = 'noexec,atomic_o_trunc,' +\
+                 'hard_remove,umask=0007,cache_path='
 
 
 class TestDav(unittest.TestCase):
@@ -50,6 +50,7 @@ class TestDav(unittest.TestCase):
     config_file = None
     mount_point = None
     dav_directory = None
+    fuseprocess = None
 
     def setUp(self):
         log.debug('Testing client: {0}'.format(DAV_CLIENT))
@@ -71,13 +72,18 @@ class TestDav(unittest.TestCase):
         log.debug('Cache dir: {0}'.format(self.cache_dir))
         config = FUSEDAV_CONFIG + self.cache_dir
 
-        command = ['mount', dav_url, self.mount_point, '-t', DAV_CLIENT, '-o',
-                   config]
+        #command = ['mount', dav_url, self.mount_point, '-t', DAV_CLIENT, '-o', config]
+        # The current working directory is <dir we started in>/_trial_temp,
+        # so use ".." find "src/fusedav"
+        log.debug("pwd: " + os.getcwd())
+        command = [ '../src/fusedav', dav_url, self.mount_point, '-o', config]
         log.debug('Executing: ' + ' '.join(command))
-        subprocess.call(command)
+        # subprocess.call(command)
+        self.fuseprocess = subprocess.Popen(command, shell=False)
+        log.debug('pid is ' + str(self.fuseprocess.pid) + ':' + str(os.getpgid(self.fuseprocess.pid)))
 
         self.dav_directory = DavDirectory(self.mount_point, self.files_root)
-        
+
         time.sleep(3)
 
     def test_propfind(self):
@@ -154,19 +160,22 @@ class TestDav(unittest.TestCase):
 
     def tearDown(self):
         time.sleep(1)
-        log.debug("Trying to unmount directory {0}".format(self.mount_point))
+        log.debug("Trying to remove directory {0}".format(self.mount_point))
         for x in xrange(5):
             try:
-                subprocess.call(['umount', self.mount_point])
-                log.debug("Directory unmounted {0}".format(self.mount_point))
-                os.rmdir(self.mount_point)
+                #subprocess.call(['umount', self.mount_point])
+                command = [ 'fusermount', '-uz', self.mount_point ]
+                subprocess.Popen(command, shell=False)
+                os.kill(self.fuseprocess.pid, signal.SIGTERM)
+                #log.debug("Process ({0}) terminated; Directory removed {1}".format(self.fuseprocess.pid, self.mount_point))
+                # os.rmdir(self.mount_point)
+                shutil.rmtree(self.mount_point)
                 break
             except Exception as e:
                 print e
                 time.sleep(1)
         else:
-            log.error("Unable to safely unmount: {0}"\
-                      "".format(self.mount_point))
+            log.error("Unable to safely remove: {0}".format(self.mount_point))
 
         self.dav_server.stop()
 

@@ -22,4 +22,5 @@ _trial_temp
 /tests/readrecursive
 /tests/readwhatwaswritten
 /src/*.plist
+_trial_temp*
 
