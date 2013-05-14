@@ -42,6 +42,7 @@ AC_PROG_CPP
 AC_PROG_INSTALL
 AC_PROG_LN_S
 AC_PROG_MAKE_SET
+AM_PROG_CC_C_O
 
 test_gcc_flag() {
     AC_LANG_CONFTEST([AC_LANG_SOURCE([int main() {}])])

@@ -422,7 +422,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             processed_gerror("getdir_propfind_callback: ", path, gerr);
             return;
         }
-        stat_cache_prune(config->cache);
+        //stat_cache_prune(config->cache);
     }
     else {
         stat_cache_value_set(config->cache, path, &value, &gerr);
