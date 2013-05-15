@@ -551,12 +551,6 @@ static void get_fresh_fd(filecache_t *cache,
             pdata->last_server_update = time(NULL);
             strncpy(pdata->filename, response_filename, PATH_MAX);
 
-            // We don't think this is possible, but check anyway
-            // to avoid any leak.
-            if (sdata->fd > 0) {
-                log_print(LOG_NOTICE, "get_fresh_fd: Closing existing fd %d for path %s because it is being replaced by fd %d.", sdata->fd, path, response_fd);
-                close(sdata->fd);
-            }
             sdata->fd = response_fd;
 
             log_print(LOG_DEBUG, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
