@@ -132,6 +132,53 @@ CURL *session_get_handle(void) {
     return session;
 }
 
+// Return value should be freed using curl_free().
+char *escape_except_slashes(CURL *session, const char *path) {
+    size_t path_len = strlen(path);
+    char *mutable_path = strndup(path, path_len);
+    char *escaped_path = NULL;
+    size_t escaped_path_pos;
+
+    if (mutable_path == NULL) {
+        log_print(LOG_ERR, "Could not allocate memory in strndup for escape_except_slashes.");
+        goto finish;
+    }
+
+    // Convert all slashes to the non-escaped "0" character.
+    for (size_t i = 0; i < path_len; ++i) {
+        if (path[i] == '/') {
+            mutable_path[i] = '0';
+        }
+    }
+
+    escaped_path = curl_easy_escape(session, mutable_path, path_len);
+
+    if (escaped_path == NULL) {
+        log_print(LOG_ERR, "Could not allocate memory in curl_easy_escape for escape_except_slashes.");
+        goto finish;
+    }
+
+    log_print(LOG_DEBUG, "escape_except_slashes: escaped_path: %s", escaped_path);
+
+    // Restore all slashes.
+    escaped_path_pos = 0;
+    for (size_t i = 0; i < path_len; ++i) {
+        if (path[i] == '/') {
+            escaped_path[escaped_path_pos] = '/';
+        }
+        if (escaped_path[escaped_path_pos] == '%') {
+            escaped_path_pos += 2;
+        }
+        ++escaped_path_pos;
+    }
+
+    log_print(LOG_DEBUG, "escape_except_slashes: final escaped_path: %s", escaped_path);
+
+finish:
+    free(mutable_path);
+    return escaped_path;
+}
+
 CURL *session_request_init(const char *path) {
     CURL *session;
     char *full_url = NULL;
@@ -143,8 +190,16 @@ CURL *session_request_init(const char *path) {
     curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
     curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
 
-    escaped_path = curl_easy_escape(session, path, 0);
-    asprintf(&full_url, "%s%s", get_base_url(), path);
+    escaped_path = escape_except_slashes(session, path);
+    if (escaped_path == NULL) {
+        log_print(LOG_ERR, "Allocation failed in escape_except_slashes.");
+        return NULL;
+    }
+    asprintf(&full_url, "%s%s", get_base_url(), escaped_path);
+    if (full_url == NULL) {
+        log_print(LOG_ERR, "Allocation failed in asprintf.");
+        return NULL;
+    }
     curl_free(escaped_path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
     log_print(LOG_INFO, "Initialized request to URL: %s", full_url);

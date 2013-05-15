@@ -108,6 +108,7 @@ static char *get_path_beyond_base(const char *source_url) {
     UriParserStateA source_state;
     const char *base_url = get_base_url();
     char *path = NULL;
+    size_t path_len;
 
     base_state.uri = &base_uri;
     source_state.uri = &source_uri;
@@ -131,6 +132,12 @@ static char *get_path_beyond_base(const char *source_url) {
 
     // Compute the relative path and store it to a string.
     path = get_relative_path(&base_uri, &source_uri);
+    path_len = strlen(path);
+
+    // Drop any trailing slash.
+    if (path[path_len - 1] == '/') {
+        path[path_len - 1] = '\0';
+    }
 
 finish:
     uriFreeUriMembersA(&base_uri);

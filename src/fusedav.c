@@ -987,8 +987,8 @@ static int dav_rename(const char *from, const char *to) {
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MOVE");
 
     // Add the destination header.
-    // @TODO: Check that this is a URL.
-    escaped_to = curl_easy_escape(session, to, 0);
+    // @TODO: Better error handling on failure.
+    escaped_to = escape_except_slashes(session, to);
     asprintf(&header, "Destination: %s%s", get_base_url(), escaped_to);
     curl_free(escaped_to);
     slist = curl_slist_append(slist, header);
