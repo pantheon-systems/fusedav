@@ -853,12 +853,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
 
                 // By putting a null in place of the last slash, path is now dirname(path).
-                // The condition is to preserve base directories of just "/"
-                // @TODO: This should no longer be a special case.
-                if (base_directory_len > 1)
-                    slash[0] = '\0';
-                else
-                    slash[1] = '\0';
+                slash[1] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
                     log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter\'%s\'", path);
