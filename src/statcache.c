@@ -725,7 +725,6 @@ void stat_cache_prune(stat_cache_t *cache) {
     int depth;
     int max_depth = 0;
     const char *base_directory = "/";
-    size_t base_directory_len = 1;
 
     // Statistics
     int visited_entries = 0;
@@ -853,7 +852,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
 
                 // By putting a null in place of the last slash, path is now dirname(path).
-                slash[1] = '\0';
+                slash[0] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
                     log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter\'%s\'", path);
