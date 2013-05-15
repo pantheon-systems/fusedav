@@ -57,14 +57,13 @@ static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
     char *path = NULL;
     char *segment;
     size_t segment_len = 0;
-    size_t base_segment_len = 0;
     UriPathSegmentA *cur_base = base_uri->pathHead;
     UriPathSegmentA *cur = source_uri->pathHead;
 
     // Iterate through the identical parts.
     while (cur != NULL && cur_base != NULL) {
+        size_t base_segment_len = cur_base->text.afterLast - cur_base->text.first;
         segment_len = cur->text.afterLast - cur->text.first;
-        base_segment_len = cur_base->text.afterLast - cur_base->text.first;
 
         if (segment_len != base_segment_len || strncmp(cur->text.first, cur_base->text.first, segment_len) != 0) {
             break;

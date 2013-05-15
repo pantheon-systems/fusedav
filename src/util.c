@@ -158,9 +158,8 @@ bool sc_inject_error(int edx) {
 
 #else
 
-void *inject_error_mechanism(void *ptr) {
-    ptr = NULL;
-    return ptr;
+void *inject_error_mechanism(__unused void *ptr) {
+    return NULL;
 }
 
 #endif
