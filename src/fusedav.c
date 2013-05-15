@@ -150,6 +150,10 @@ struct fusedav_config {
     char *config_file;
     stat_cache_t *cache;
     struct stat_cache_supplemental cache_supplemental;
+    // To be removed when titan and fusedav are in sync
+    bool dummy1;
+    int  dummy2;
+    char *dummy3;
 };
 
 enum {
@@ -159,7 +163,6 @@ enum {
 
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
 
-// REVIEW: is it true we don't need umask, uid, gid, allow_other, noexec, atomic_o_trunc, hard_remove
 static struct fuse_opt fusedav_opts[] = {
     // [ProtocolAndPerformance]
     FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
@@ -181,6 +184,14 @@ static struct fuse_opt fusedav_opts[] = {
     FUSEDAV_OPT("section_verbosity=%s",           section_verbosity, 0),
     // Config
     FUSEDAV_OPT("config_file=%s",                 config_file, 0),
+
+    // If we have an old version of titan and a new version of fusedav when it
+    // gets restarted, we need to handle these old variables to prevent fuse startup error
+    FUSEDAV_OPT("ignoreutimens",                  dummy1, true),
+    FUSEDAV_OPT("ignorexattr",                    dummy1, true),
+    FUSEDAV_OPT("dir_mode=%o",                    dummy2, 0007),
+    FUSEDAV_OPT("file_mode=%o",                   dummy2, 0007),
+    FUSEDAV_OPT("client_certificate_password=%s", dummy3, 0),
 
     FUSE_OPT_KEY("-V",             KEY_VERSION),
     FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -1769,22 +1780,22 @@ static void print_config(struct fusedav_config *config) {
     refresh_dir_for_file_stat=true
     grace=true
     singlethread=false
-    cache_uri=http://<%= @interface %>:<%= Etc.getpwnam(@id).gid %>/fusedav-peer-cache
+    cache_uri=http://50.57.148.118:10061/fusedav-peer-cache
 
     [Authenticate]
     ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
-    client_certificate=<%= @base %>/certs/binding.pem
+    client_certificate=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/certs/binding.pem
 
     [LogAndProcess]
     nodaemon=false
-    cache_path=<%= @base %>/cache
-    run_as_uid=<%= @id %>
-    run_as_gid=<%= @id %>
+    cache_path=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/cache
+    run_as_uid=6f7a106722f74cc7bd96d4d06785ed78
+    run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
     verbosity=5
     section_verbosity=0
 */
 
-static void parse_configs(struct fuse_args *args, struct fusedav_config *config, GError **gerr) {
+static void parse_configs(struct fusedav_config *config, GError **gerr) {
 
     #define BOOL 0
     #define INT 1
@@ -1801,7 +1812,6 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
     GKeyFile *keyfile;
     GError *tmpgerr = NULL;
     bool bret;
-    static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
 
     /* Groups are: FileAttributes, ProtocolAndPerformance, Authenticate, LogAndProcess */
 
@@ -1822,6 +1832,8 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         {NULL, NULL, 0, 0}
         };
 
+    print_config(config);
+
     // JB FIX ME!
     // Step one: make sure this new version of fusedav is running on all mounts before merging
     //           changes to titan and the mount file. If the mount file is updated to include
@@ -1838,8 +1850,6 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
         return;
     }
 
-    print_config(config);
-
     log_print(LOG_INFO, SECTION_FUSEDAV_CONFIG, "parse_configs: file %s", config->config_file);
 
     /* Set up the key file stuff */
@@ -1854,29 +1864,6 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
     } else if (bret == FALSE) {
         g_set_error(gerr, fusedav_quark(), ENOENT, "parse_configs: Error on load_from_file");
         return;
-    }
-
-    /* Fuse Args */
-
-    /* Fuse args are done differently from those which populate the config structure.
-     * They each trigger the same action.
-     */
-
-    // REVIEW: if an option is present in the mount file, can we turn it off? i.e. the opposite of -o
-    for (int idx = 0; fuse_bkeys[idx] != NULL; idx++) {
-        bret = g_key_file_get_boolean(keyfile, "Fuse", fuse_bkeys[idx], &tmpgerr);
-        if ((tmpgerr == NULL) && (bret == true)) {
-            char *fuse_arg = NULL;
-            // If there is a space after "-o", fuse will misparse and fail to start
-            asprintf(&fuse_arg, "-o%s", fuse_bkeys[idx]);
-            fuse_opt_add_arg(args, fuse_arg);
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: fuse_arg %s", fuse_arg);
-
-            free(fuse_arg);
-        }
-        else if (tmpgerr) {
-            g_clear_error(&tmpgerr);
-        }
     }
 
     /* Config, Certificate, and Log args */
@@ -1963,7 +1950,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    parse_configs(&args, &config, &gerr);
+    parse_configs(&config, &gerr);
     if (gerr) {
         processed_gerror("Could not open fusedav config file:", config.config_file, gerr);
         goto finish;
@@ -1986,6 +1973,8 @@ int main(int argc, char *argv[]) {
     }
 
     // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
+    // @TODO temporary to make new fusedav work with old titan, until everyone is up to date
+    fuse_opt_add_arg(&args, "-oumask=0007");
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Parsed command line.");
 
