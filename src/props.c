@@ -47,7 +47,6 @@ struct element_state {
 struct propfind_state {
     props_result_callback callback;
     void *userdata;
-    const char *path;
     CURL *session;
     struct response_state rstate;
     struct element_state estate;
@@ -142,6 +141,9 @@ static char *get_path_beyond_base(const char *source_url) {
 finish:
     uriFreeUriMembersA(&base_uri);
     uriFreeUriMembersA(&source_uri);
+
+    log_print(LOG_DEBUG, "get_path_beyond_base: computed path: %s", path);
+
     return path;
 }
 
@@ -182,7 +184,7 @@ static void endElement(void *userData, const XML_Char *name) {
     else if (strcmp(name, "href") == 0) {
         char *path = get_path_beyond_base(state->estate.current_data);
         char *unescaped_path = NULL;
-        asprintf(&path, "%s%s", state->path, path);
+        asprintf(&path, "/%s", path);
         unescaped_path = curl_easy_unescape(state->session, path, 0, NULL);
         free(path);
         log_print(LOG_INFO, "href: %s", state->estate.current_data);
@@ -288,7 +290,6 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     state.callback = results;
     state.userdata = userdata;
     state.failure = false;
-    state.path = path;
     state.session = session;
 
     // Configure the parser.
