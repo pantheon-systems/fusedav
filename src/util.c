@@ -28,6 +28,7 @@
 
 #include "util.h"
 #include "log.h"
+#include "log_sections.h"
 
 #define PS (0x0001) /* "+" */
 #define PC (0x0002) /* "%" */
@@ -178,7 +179,7 @@ void *inject_error_mechanism(void *ptr) {
     int fdx = 0;
 
     // ptr stuff just to get rid of warning message about unused parameter
-    log_print(LOG_NOTICE, "INJECTING ERRORS! %p", ptr ? ptr : 0);
+    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "INJECTING ERRORS! %p", ptr ? ptr : 0);
 
     /* We are going to make a list of all error injection locations for all three
      * files, fusedav.c, filecache.c, and statcache.c. Then we are going to tell
@@ -205,7 +206,7 @@ void *inject_error_mechanism(void *ptr) {
     // create the list large enough for inject_error locations from all three files
     inject_error_list = calloc(sizeof(bool), fderrors + fcerrors + scerrors);
     if (inject_error_list == NULL) {
-        log_print(LOG_NOTICE, "inject_error_mechanism: failed to calloc inject_error_list");
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: failed to calloc inject_error_list");
         return NULL;
     }
 
@@ -217,8 +218,7 @@ void *inject_error_mechanism(void *ptr) {
 
         // Figure out which error location to set
         tdx = rand() % (fderrors + fcerrors + scerrors);
-
-        log_print(LOG_DEBUG, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
+        log_print(LOG_DEBUG, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
 
         // Make the new location true but turn off the locations for the old location.
         inject_error_list[tdx] = true;
@@ -239,7 +239,7 @@ static bool inject_error(int edx, int start, int numerrors) {
     // See if the error location has been set by the mechanism
     if (inject_error_list[edx]) {
         inject_error_list[edx] = false;
-        log_print(LOG_NOTICE, "inject_error(%d, %d, %d)", edx - start, start, numerrors);
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error(%d, %d, %d)", edx - start, start, numerrors);
         return true;
     }
     return false;

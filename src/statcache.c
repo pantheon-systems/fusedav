@@ -35,6 +35,7 @@
 #include "statcache.h"
 #include "fusedav.h"
 #include "log.h"
+#include "log_sections.h"
 #include "session.h"
 #include "bloom-filter.h"
 #include "util.h"
@@ -76,26 +77,26 @@ static struct statistics stats;
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
 
 void stat_cache_print_stats(void) {
-    log_print(LOG_NOTICE, "Stat Cache Operations:");
-    log_print(LOG_NOTICE, "  local_gen:   %u", FETCH(local_gen));
-    log_print(LOG_NOTICE, "  path2key:    %u", FETCH(path2key));
-    log_print(LOG_NOTICE, "  key2path:    %u", FETCH(key2path));
-    log_print(LOG_NOTICE, "  open:        %u", FETCH(open));
-    log_print(LOG_NOTICE, "  close:       %u", FETCH(close));
-    log_print(LOG_NOTICE, "  value_get:   %u", FETCH(value_get));
-    log_print(LOG_NOTICE, "  updated_ch:  %u", FETCH(updated_ch));
-    log_print(LOG_NOTICE, "  read_updated:%u", FETCH(read_updated));
-    log_print(LOG_NOTICE, "  value_set:   %u", FETCH(value_set));
-    log_print(LOG_NOTICE, "  delete:      %u", FETCH(delete));
-    log_print(LOG_NOTICE, "  del_parent:  %u", FETCH(del_parent));
-    log_print(LOG_NOTICE, "  iter_free:   %u", FETCH(iter_free));
-    log_print(LOG_NOTICE, "  iter_init:   %u", FETCH(iter_init));
-    log_print(LOG_NOTICE, "  iter_current:%u", FETCH(iter_current));
-    log_print(LOG_NOTICE, "  iter_next:   %u", FETCH(iter_next));
-    log_print(LOG_NOTICE, "  enumerate:   %u", FETCH(enumerate));
-    log_print(LOG_NOTICE, "  has_child:   %u", FETCH(has_child));
-    log_print(LOG_NOTICE, "  delete_older:%u", FETCH(delete_older));
-    log_print(LOG_NOTICE, "  prune:       %u", FETCH(prune));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "Stat Cache Operations:");
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  local_gen:   %u", FETCH(local_gen));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  path2key:    %u", FETCH(path2key));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  key2path:    %u", FETCH(key2path));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  open:        %u", FETCH(open));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  close:       %u", FETCH(close));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  value_get:   %u", FETCH(value_get));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  updated_ch:  %u", FETCH(updated_ch));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  read_updated:%u", FETCH(read_updated));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  value_set:   %u", FETCH(value_set));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete:      %u", FETCH(delete));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  del_parent:  %u", FETCH(del_parent));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_free:   %u", FETCH(iter_free));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_init:   %u", FETCH(iter_init));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_current:%u", FETCH(iter_current));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_next:   %u", FETCH(iter_next));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  enumerate:   %u", FETCH(enumerate));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  has_child:   %u", FETCH(has_child));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete_older:%u", FETCH(delete_older));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  prune:       %u", FETCH(prune));
 }
 
 // GError mechanism. The only gerrors we return from statcache are leveldb errors
@@ -119,29 +120,29 @@ unsigned long stat_cache_get_local_generation(void) {
         // Top 40 bits for the timestamp. Bottom 24 bits for the counter.
         // Will be safe for at least a couple hundred years.
         counter = time(NULL);
-        //log_print(LOG_DEBUG, "Pre-shift counter: %lu", counter);
+        //log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "Pre-shift counter: %lu", counter);
         counter <<= 24;
-        //log_print(LOG_DEBUG, "Initialized counter: %lu", counter);
+        //log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "Initialized counter: %lu", counter);
     }
     ret = ++counter;
     pthread_mutex_unlock(&counter_mutex);
-    //log_print(LOG_DEBUG, "stat_cache_get_local_generation: %lu", ret);
+    //log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "stat_cache_get_local_generation: %lu", ret);
     return ret;
 }
 
 int print_stat(struct stat *stbuf, const char *title) {
     if (debug) {
-        log_print(LOG_DEBUG, "stat: %s", title);
-        log_print(LOG_DEBUG, "  .st_mode=%04o", stbuf->st_mode);
-        log_print(LOG_DEBUG, "  .st_nlink=%ld", stbuf->st_nlink);
-        log_print(LOG_DEBUG, "  .st_uid=%d", stbuf->st_uid);
-        log_print(LOG_DEBUG, "  .st_gid=%d", stbuf->st_gid);
-        log_print(LOG_DEBUG, "  .st_size=%ld", stbuf->st_size);
-        log_print(LOG_DEBUG, "  .st_blksize=%ld", stbuf->st_blksize);
-        log_print(LOG_DEBUG, "  .st_blocks=%ld", stbuf->st_blocks);
-        log_print(LOG_DEBUG, "  .st_atime=%ld", stbuf->st_atime);
-        log_print(LOG_DEBUG, "  .st_mtime=%ld", stbuf->st_mtime);
-        log_print(LOG_DEBUG, "  .st_ctime=%ld", stbuf->st_ctime);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "stat: %s", title);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_mode=%04o", stbuf->st_mode);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_nlink=%ld", stbuf->st_nlink);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_uid=%d", stbuf->st_uid);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_gid=%d", stbuf->st_gid);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_size=%ld", stbuf->st_size);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_blksize=%ld", stbuf->st_blksize);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_blocks=%ld", stbuf->st_blocks);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_atime=%ld", stbuf->st_atime);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_mtime=%ld", stbuf->st_mtime);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_ctime=%ld", stbuf->st_ctime);
     }
     return E_SC_SUCCESS;
 }
@@ -160,7 +161,7 @@ static char *path2key(const char *path, bool prefix) {
 
     BUMP(path2key);
 
-    log_print(LOG_DEBUG, "path2key(%s, %i)", path, prefix);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "path2key(%s, %i)", path, prefix);
 
     if (prefix)
         ++depth;
@@ -251,7 +252,7 @@ void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supple
         leveldb_close(cache);
     if (supplemental.options != NULL) {
         leveldb_options_destroy(supplemental.options);
-        log_print(LOG_DEBUG, "leveldb_options_destroy");
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "leveldb_options_destroy");
     }
     if (supplemental.lru != NULL)
         leveldb_cache_destroy(supplemental.lru);
@@ -271,7 +272,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
     key = path2key(path, false);
 
-    log_print(LOG_DEBUG, "CGET: %s", key);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "CGET: %s", key);
 
     options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(options, false);
@@ -287,26 +288,26 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (value == NULL) {
-        log_print(LOG_DEBUG, "stat_cache_value_get miss on path: %s", path);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get miss on path: %s", path);
         return NULL;
     }
 
     // @TODO this should be a gerror
     if (vallen != sizeof(struct stat_cache_value)) {
-        log_print(LOG_NOTICE, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
     if (!skip_freshness_check) {
         current_time = time(NULL);
 
         // First, check against the stat item itself.
-        //log_print(LOG_DEBUG, "Current time: %lu", current_time);
+        //log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Current time: %lu", current_time);
         if (current_time - value->updated > CACHE_TIMEOUT) {
             char *directory;
             time_t directory_updated;
             int is_dir;
 
-            log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
 
             // If that's too old, check the last update of the directory.
             directory = strip_trailing_slash(path_parent(path), &is_dir);
@@ -315,10 +316,10 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_value_get: ");
                 return NULL;
             }
-            //log_print(LOG_DEBUG, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
+            //log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
             free(directory);
             if (current_time - directory_updated > CACHE_TIMEOUT) {
-                log_print(LOG_DEBUG, "%s is too old.", path);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s is too old.", path);
                 free(value);
                 return NULL;
             }
@@ -385,7 +386,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
 
     ret = *value;
 
-    log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, ret);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Children for directory %s were updated at timestamp %lu.", path, ret);
 
     free(value);
     return ret;
@@ -397,7 +398,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     char *key;
 
     if (path == NULL) {
-        log_print(LOG_NOTICE, "stat_cache_value_set: input path is null");
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_value_set: input path is null");
         return;
     }
 
@@ -409,7 +410,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     value->local_generation = stat_cache_get_local_generation();
 
     key = path2key(path, false);
-    log_print(LOG_DEBUG, "CSET: %s (mode %04o)", key, value->st.st_mode);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "CSET: %s (mode %04o)", key, value->st.st_mode);
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
@@ -435,7 +436,7 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
 
     key = path2key(path, false);
 
-    log_print(LOG_DEBUG, "stat_cache_delete: %s", key);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete: %s", key);
 
     options = leveldb_writeoptions_create();
     leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
@@ -448,7 +449,7 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
         return;
     }
 
-    log_print(LOG_DEBUG, "stat_cache_delete: exit %s", path);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete: exit %s", path);
 
     return;
 }
@@ -459,11 +460,11 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 
     BUMP(del_parent);
 
-    log_print(LOG_DEBUG, "stat_cache_delete_parent: %s", path);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: %s", path);
     if ((p = path_parent(path))) {
         int l = strlen(p);
 
-        log_print(LOG_DEBUG, "stat_cache_delete_parent: deleting parent %s", p);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: deleting parent %s", p);
         if (strcmp(p, "/") && l) {
             if (p[l-1] == '/')
                 p[l-1] = 0;
@@ -482,7 +483,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
         free(p);
     }
     else {
-        log_print(LOG_DEBUG, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
         stat_cache_delete(cache, path, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
@@ -516,7 +517,7 @@ static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, con
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
     iter->key_prefix_len = strlen(iter->key_prefix) + 1;
 
-    log_print(LOG_DEBUG, "creating leveldb iterator for prefix %s", iter->key_prefix);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "creating leveldb iterator for prefix %s", iter->key_prefix);
     iter->ldb_options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(iter->ldb_options, false);
     iter->ldb_iter = leveldb_create_iterator(cache, iter->ldb_options);
@@ -542,12 +543,12 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     }
 
     key = leveldb_iter_key(iter->ldb_iter, &klen);
-    log_print(LOG_DEBUG, "fetched key: %s", key);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "fetched key: %s", key);
 
     // If we've gone beyond the end of the prefix range, quit.
     // Use (iter->key_prefix_len - 1) to exclude the NULL at the prefix end.
     if (strncmp(key, iter->key_prefix, iter->key_prefix_len - 1) != 0) {
-        log_print(LOG_DEBUG, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "Key %s does not match prefix %s for %lu characters. Ending iteration.", key, iter->key_prefix, iter->key_prefix_len);
         return NULL;
     }
 
@@ -556,7 +557,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     entry = malloc(sizeof(struct stat_cache_entry));
     entry->key = key;
     entry->value = value;
-    log_print(LOG_DEBUG, "iter_current: key = %s; value = %s", key, value);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "iter_current: key = %s; value = %s", key, value);
     return entry;
 }
 
@@ -585,16 +586,16 @@ static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
     free(key);
 
     while (leveldb_iter_valid(iter)) {
-        //log_print(LOG_DEBUG, "Listing key: %s", leveldb_iter_key(iter, &klen));
+        //log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "Listing key: %s", leveldb_iter_key(iter, &klen));
 
         itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
         if (S_ISDIR(itervalue->st.st_mode)) {
             iterkey = leveldb_iter_key(iter, &klen);
-            log_print(LOG_DEBUG, "Listing directory: %s", iterkey);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "Listing directory: %s", iterkey);
 
             value = stat_cache_value_get(cache, key2path(iterkey));
             if (value) {
-                log_print(LOG_DEBUG, "Direct get mode: %04o", value->st.st_mode);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "Direct get mode: %04o", value->st.st_mode);
                 free(value);
             }
         }
@@ -615,7 +616,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 
     BUMP(enumerate);
 
-    log_print(LOG_DEBUG, "stat_cache_enumerate(%s)", path_prefix);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "stat_cache_enumerate(%s)", path_prefix);
 
     //stat_cache_list_all(cache, path_prefix);
     if (!force) {
@@ -629,24 +630,24 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
         // Check for cache values which are too old; but timestamp = 0 needs to trigger below
         current_time = time(NULL);
         if (current_time - timestamp > CACHE_TIMEOUT) {
-            log_print(LOG_DEBUG, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
             return -STAT_CACHE_OLD_DATA;
         }
     }
 
     iter = stat_cache_iter_init(cache, path_prefix);
-    log_print(LOG_DEBUG, "iterator initialized with prefix: %s", iter->key_prefix);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "iterator initialized with prefix: %s", iter->key_prefix);
 
     while ((entry = stat_cache_iter_current(iter))) {
-        log_print(LOG_DEBUG, "key: %s", entry->key);
-        log_print(LOG_DEBUG, "fn: %s", entry->key + (iter->key_prefix_len - 1));
+        log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "key: %s", entry->key);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "fn: %s", entry->key + (iter->key_prefix_len - 1));
         f(path_prefix, entry->key + (iter->key_prefix_len - 1), user);
         ++found_entries;
         free(entry);
         stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
-    log_print(LOG_DEBUG, "Done iterating: %u items.", found_entries);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "Done iterating: %u items.", found_entries);
 
     if (found_entries == 0)
         return -STAT_CACHE_NO_DATA;
@@ -661,12 +662,12 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
 
     BUMP(has_child);
 
-    log_print(LOG_DEBUG, "stat_cache_dir_has_children(%s)", path);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s)", path);
 
     iter = stat_cache_iter_init(cache, path);
     if ((entry = stat_cache_iter_current(iter))) {
         has_children = true;
-        log_print(LOG_DEBUG, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
         free(entry);
     }
     stat_cache_iterator_free(iter);
@@ -681,7 +682,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
 
     BUMP(delete_older);
 
-    log_print(LOG_DEBUG, "stat_cache_delete_older: %s", path_prefix);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
@@ -698,7 +699,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     }
     stat_cache_iterator_free(iter);
 
-    log_print(LOG_DEBUG, "stat_cache_delete_older: calling stat_cache_prune on %s", path_prefix);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s", path_prefix);
     stat_cache_prune(cache);
 
     return;
@@ -737,23 +738,23 @@ void stat_cache_prune(stat_cache_t *cache) {
 
     elapsedtime = time(NULL);
 
-    log_print(LOG_DEBUG, "stat_cache_prune: enter");
+    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: enter");
 
     boptions = bloomfilter_init(0, NULL, 0, &errptr);
     if (boptions == NULL) {
-        log_print(LOG_WARNING, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
+        log_print(LOG_WARNING, SECTION_STATCACHE_PRUNE, "stat_cache_prune: failed to allocate bloom filter: %s", errptr);
         free(errptr);
         return;
     }
 
     // We need to make sure the base_directory is in the filter before continuing
-    log_print(LOG_DEBUG, "stat_cache_prune: attempting base_directory %s)", base_directory);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: attempting base_directory %s)", base_directory);
     if (bloomfilter_add(boptions, base_directory, strlen(base_directory)) < 0) {
-        log_print(LOG_WARNING, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
+        log_print(LOG_WARNING, SECTION_STATCACHE_PRUNE, "stat_cache_prune: seed: error on ITERKEY: \'%s\')", path);
         return;
     }
 
-    log_print(LOG_DEBUG, "stat_cache_prune: put base_directory %s in filter", base_directory);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: put base_directory %s in filter", base_directory);
 
     roptions = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(roptions, false);
@@ -766,7 +767,7 @@ void stat_cache_prune(stat_cache_t *cache) {
     // on the second pass, process depth greater or equal to than 1000 but less than 9999;
     while (pass < passes) {
 
-        log_print(LOG_DEBUG, "stat_cache_prune: Changing pass:%d (%d)", pass, passes);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: Changing pass:%d (%d)", pass, passes);
         leveldb_iter_seek_to_first(iter);
 
         for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
@@ -775,7 +776,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             // armor against potential faults
             key = key2path(iterkey);
             if (key == NULL) {
-                log_print(LOG_NOTICE, "stat_cache_prune: ignoring malformed iterkey");
+                log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring malformed iterkey");
                 woptions = leveldb_writeoptions_create();
                 leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
                 leveldb_writeoptions_destroy(woptions);
@@ -785,7 +786,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             // We'll need to change path below, so we don't want it to be a part of iterkey.
             // Make a copy first.
             strncpy(path, key, PATH_MAX);
-            log_print(LOG_DEBUG, "stat_cache_prune: ITERKEY: \'%s\' :: %s :: %s", iterkey, path, key);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ITERKEY: \'%s\' :: %s :: %s", iterkey, path, key);
             itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
 
             // We control what kinds of entries are in the leveldb db.
@@ -800,7 +801,7 @@ void stat_cache_prune(stat_cache_t *cache) {
 
             // @TODO seems not to set errno on returning 0
             if (depth == 0 /*&& errno != 0*/) {
-                log_print(LOG_DEBUG, "stat_cache_prune: depth = 0; break:%d, %d", depth, errno);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: depth = 0; break:%d, %d", depth, errno);
                 break;
             }
 
@@ -826,13 +827,13 @@ void stat_cache_prune(stat_cache_t *cache) {
                     passes = 2;
                     max_depth = 99;
                 }
-                log_print(LOG_DEBUG, "stat_cache_prune: New max_depth %d (%d :: %d %d)", max_depth, depth, pass, passes);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: New max_depth %d (%d :: %d %d)", max_depth, depth, pass, passes);
             }
 
             if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) ||
                 (pass == 2 && (depth >= 100 && depth <= 999)) || (pass == 3 && depth >= 1000)) {
 
-                log_print(LOG_DEBUG, "stat_cache_prune: Pass %d (%d)", pass, passes);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: Pass %d (%d)", pass, passes);
                 ++visited_entries;
 
                 // If base_directory is in the stat cache, we don't want to compare it
@@ -848,7 +849,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 // Effectively, we are ignorning this entry. Since base_directory is already
                 // in the stat cache, this must be an errant entry. We should error instead?
                 if (slash == NULL) {
-                    log_print(LOG_INFO, "stat_cache_prune: ignoring errant entry \'%s\'", path);
+                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
                     continue;
                 }
 
@@ -860,32 +861,32 @@ void stat_cache_prune(stat_cache_t *cache) {
                     slash[1] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
-                    log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter\'%s\'", path);
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", path);
                     // If the parent is in the filter, and this child is a directory, add it to
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
                         if (slash) slash[0] = '/';
 
-                        log_print(LOG_DEBUG, "stat_cache_prune: add path to filter \'%s\')", path);
+                        log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
-                            log_print(LOG_ERR, "stat_cache_prune: error on bloomfilter_add: \'%s\')", path);
+                            log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: error on bloomfilter_add: \'%s\')", path);
                             break;
                         }
                     }
                 }
                 else {
-                    log_print(LOG_DEBUG, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", path);
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", path);
                     ++deleted_entries;
                     // Reset to original, complete path
                     if (slash) slash[0] = '/';
-                    log_print(LOG_DEBUG, "stat_cache_prune: deleting \'%s\'", path);
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path, NULL);
                 }
             }
         }
         ++pass;
-        log_print(LOG_DEBUG, "stat_cache_prune: updating pass %d", pass);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: updating pass %d", pass);
     }
 
     // Handle updated_children entries
@@ -908,22 +909,22 @@ void stat_cache_prune(stat_cache_t *cache) {
 
         // Bad entry. Log, delete from cache, continue
         if (basepath == NULL) {
-            log_print(LOG_NOTICE, "stat_cache_prune: key error in updated_children entry: %s", iterkey);
+            log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: key error in updated_children entry: %s", iterkey);
             woptions = leveldb_writeoptions_create();
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
             leveldb_writeoptions_destroy(woptions);
             if (errptr != NULL) {
-                log_print(LOG_ERR, "stat_cache_prune: leveldb_delete error: %s", errptr);
+                log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
                 free(errptr);
             }
             break;
         }
 
         if (bloomfilter_exists(boptions, basepath, strlen(basepath))) {
-            log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter (basepath of)\'%s\'", iterkey);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter (basepath of)\'%s\'", iterkey);
         }
         else {
-            log_print(LOG_DEBUG, "stat_cache_prune: updated_children: deleting \'%s\'", iterkey);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: updated_children: deleting \'%s\'", iterkey);
             ++deleted_entries;
             // We recreate the basics of stat_cache_delete here, since we can't call it directly
             // since it doesn't deal with keys with "updated_children:"
@@ -931,7 +932,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
             leveldb_writeoptions_destroy(woptions);
             if (errptr != NULL) {
-                log_print(LOG_ERR, "stat_cache_prune: leveldb_delete error: %s", errptr);
+                log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
                 free(errptr);
             }
         }
@@ -942,7 +943,7 @@ void stat_cache_prune(stat_cache_t *cache) {
     leveldb_readoptions_destroy(roptions);
 
     elapsedtime = time(NULL) - elapsedtime;
-    log_print(LOG_NOTICE, "stat_cache_prune: visited %d cache entries; deleted %d; had %d issues; elapsedtime %lu", visited_entries, deleted_entries, issues, elapsedtime);
+    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: visited %d cache entries; deleted %d; had %d issues; elapsedtime %lu", visited_entries, deleted_entries, issues, elapsedtime);
 
     bloomfilter_destroy(boptions);
 

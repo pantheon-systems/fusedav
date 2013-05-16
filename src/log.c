@@ -31,13 +31,16 @@
 #include <assert.h>
 
 #include "log.h"
+#include "log_sections.h"
 
-static int maximum_verbosity;
-static char base_directory_abbrev[9];
+static unsigned int maximum_verbosity = 5;
+static unsigned int section_verbosity[SECTIONS] = {0};
+static char base_directory_abbrev[9] = {0};
 
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
-void log_init(int verbosity, const char *base_dir) {
+void log_init(unsigned int verbosity, const char *base_dir, char *vstr) {
+    unsigned int vlen;
     maximum_verbosity = verbosity;
 
     // We assume "/sites/<site id>/environments/..."
@@ -60,21 +63,37 @@ void log_init(int verbosity, const char *base_dir) {
     else {
         strcpy(base_directory_abbrev, "(null)");
     }
+
+    // JB @TODO Until both fusedav and titan are on the new versions reading the config file,
+    // vstr will be NULL, so check and take evasive measures. Later, we should be able to
+    // remove this check
+    if (vstr == NULL) return;
+    vlen = strlen(vstr);
+    for (unsigned int idx = 0; idx < vlen; idx++) {
+        section_verbosity[idx] = vstr[idx] - '0'; // Looking for an integer 0-7
+    }
 }
 
-int log_print(int verbosity, const char *format, ...) {
-    int r = 0;
+int log_print(unsigned int verbosity, unsigned int section, const char *format, ...) {
+    int ret = 0;
     va_list ap;
     char *formatwithtid;
+    unsigned int local_verbosity = maximum_verbosity;
 
-    if (verbosity <= maximum_verbosity) {
+    // If the section verbosity is not 0 for this section, use it as the verbosity level;
+    // otherwise, just use the global maximum_verbosity
+    if (section < SECTIONS && section_verbosity[section]) {
+        local_verbosity = section_verbosity[section];
+    }
+
+    if (verbosity <= local_verbosity) {
         va_start(ap, format);
         asprintf(&formatwithtid, "[%s] [tid=%lu] [sid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), base_directory_abbrev, errlevel[verbosity], format);
         assert(formatwithtid);
-        r = sd_journal_printv(verbosity, formatwithtid, ap);
+        ret = sd_journal_printv(verbosity, formatwithtid, ap);
         free(formatwithtid);
         va_end(ap);
     }
 
-    return r;
+    return ret;
 }

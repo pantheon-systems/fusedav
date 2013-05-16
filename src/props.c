@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -28,6 +28,7 @@
 #include <errno.h>
 
 #include "log.h"
+#include "log_sections.h"
 #include "props.h"
 #include "session.h"
 #include "util.h"
@@ -88,7 +89,7 @@ static void endElement(void *userData, const XML_Char *name) {
         const char *after_scheme;
         const char *server_path;
         size_t path_len;
-        log_print(LOG_INFO, "href: %s", state->estate.current_data);
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "href: %s", state->estate.current_data);
         after_scheme = strstr(state->estate.current_data, "//") + 2;
         if (after_scheme != NULL) {
             server_path = strstr(after_scheme, "/");
@@ -157,7 +158,7 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.st.st_uid = getuid();
         state->rstate.st.st_gid = getgid();
 
-        log_print(LOG_DEBUG, "Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
 
         // Invoke the callback.
         state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code);
@@ -176,7 +177,7 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     size_t real_size = length * nmemb;
     struct propfind_state *state;
 
-    log_print(LOG_DEBUG, "Got chunk of %u bytes.", real_size);
+    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "Got chunk of %u bytes.", real_size);
 
     state = (struct propfind_state *) XML_GetUserData(parser);
 
@@ -184,7 +185,7 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     if (!state->failure) {
         if (XML_Parse(parser, contents, real_size, 0) == 0) {
             int error_code = XML_GetErrorCode(parser);
-            log_print(LOG_NOTICE, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
+            log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
             state->failure = true;
         }
     }
@@ -234,11 +235,11 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
         "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
     // Perform the request and parse the response.
-    log_print(LOG_INFO, "About to perform PROPFIND.");
+    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "About to perform PROPFIND.");
     res = curl_easy_perform(session);
 
     if (res != CURLE_OK) {
-        log_print(LOG_WARNING, "PROPFIND failed: %s", curl_easy_strerror(res));
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "PROPFIND failed: %s", curl_easy_strerror(res));
         goto finish;
     }
 
@@ -247,12 +248,12 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     if (response_code == 207) {
         // Finalize parsing.
         if (state.failure) {
-            log_print(LOG_WARNING, "Could not finalize parsing of the 207 response because it's already in a failed state.");
+            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "Could not finalize parsing of the 207 response because it's already in a failed state.");
             goto finish;
         }
         else if (XML_Parse(parser, NULL, 0, 1) == 0) {
             int error_code = XML_GetErrorCode(parser);
-            log_print(LOG_WARNING, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
         }
     }
     else if (response_code == 404) {
@@ -265,11 +266,11 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
         goto finish;
     }
     else {
-        log_print(LOG_WARNING, "PROPFIND failed with response code: %u", response_code);
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "PROPFIND failed with response code: %u", response_code);
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "PROPFIND completed on path %s", path);
+    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "PROPFIND completed on path %s", path);
     ret = 0;
 
 finish:
