@@ -26,7 +26,6 @@ CURL *session_request_init(const char *path);
 CURL *session_get_handle(void);
 void session_config_free(void);
 const char *get_base_url(void);
-const char *get_base_directory(void);
-const char *get_base_host(void);
+char *escape_except_slashes(CURL *session, const char *path);
 
 #endif
