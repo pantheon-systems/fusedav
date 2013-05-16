@@ -846,6 +846,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(session, CURLOPT_INFILESIZE, st.st_size);
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fdopen(fd, "r"));
 
     // Set a header capture path.

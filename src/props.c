@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -130,6 +130,13 @@ static char *get_path_beyond_base(const char *source_url) {
 
     // Compute the relative path and store it to a string.
     path = get_relative_path(&base_uri, &source_uri);
+
+    // If we've got a NULL, it's just the base path.
+    if (path == NULL) {
+        path = strdup("");
+        goto finish;
+    }
+
     path_len = strlen(path);
 
     // Drop any trailing slash.
@@ -175,44 +182,38 @@ static void characterDataHandler(void *userData, const XML_Char *s, int len) {
 static void endElement(void *userData, const XML_Char *name) {
     struct propfind_state *state = (struct propfind_state *) userData;
 
-    if (strcmp(name, "status") == 0) {
+    if (strcmp(name, "DAV:status") == 0) {
         char *token_status = NULL;
         strtok_r(state->estate.current_data, " ", &token_status);
         state->rstate.status_code = (unsigned long) atol(strtok_r(NULL, " ", &token_status));
     }
-    else if (strcmp(name, "href") == 0) {
+    else if (strcmp(name, "DAV:href") == 0) {
         char *path = get_path_beyond_base(state->estate.current_data);
         char *unescaped_path = NULL;
         asprintf(&path, "/%s", path);
         unescaped_path = curl_easy_unescape(state->session, path, 0, NULL);
         free(path);
-        log_print(LOG_INFO, "href: %s", state->estate.current_data);
+        log_print(LOG_INFO, "DAV:href: %s", state->estate.current_data);
         strncpy(state->rstate.path, unescaped_path, PATH_MAX);
         state->rstate.path[PATH_MAX - 1] = '\0';
         free(unescaped_path);
     }
-    // @TODO: Update Valhalla server to use HTTP/1.1 410 Gone instead.
-    else if (strcmp(name, "event") == 0) {
-        if (strcmp(state->estate.current_data, "DESTROYED") == 0) {
-            state->rstate.status_code = 410;
-        }
-    }
-    else if (strcmp(name, "collection") == 0) {
+    else if (strcmp(name, "DAV:collection") == 0) {
         state->rstate.st.st_mode |= S_IFDIR;
     }
-    else if (strcmp(name, "getcontentlength") == 0) {
+    else if (strcmp(name, "DAV:getcontentlength") == 0) {
         state->rstate.st.st_size = atol(state->estate.current_data);
     }
-    else if (strcmp(name, "getlastmodified") == 0) {
+    else if (strcmp(name, "DAV:getlastmodified") == 0) {
         state->rstate.st.st_mtime = curl_getdate(state->estate.current_data, NULL);
         state->rstate.st.st_atime = state->rstate.st.st_mtime;
     }
-    else if (strcmp(name, "creationdate") == 0) {
+    else if (strcmp(name, "DAV:creationdate") == 0) {
         struct tm t;
         strptime(state->estate.current_data, "%FT%H:%M:%S%z", &t);
         state->rstate.st.st_ctime = mktime(&t);
     }
-    else if (strcmp(name, "response") == 0) {
+    else if (strcmp(name, "DAV:response") == 0) {
         // Default to a normal file if it's not explicitly a directory.
         if (state->rstate.st.st_mode & S_IFDIR) {
             state->rstate.st.st_mode |= 0770;
@@ -236,8 +237,6 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.st.st_gid = getgid();
 
         log_print(LOG_DEBUG, "Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
-
-        // Invoke the callback.
         state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code);
 
         // Reset response state.
@@ -292,7 +291,7 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     state.session = session;
 
     // Configure the parser.
-    parser = XML_ParserCreate(NULL);
+    parser = XML_ParserCreateNS(NULL, '\0');
     XML_SetUserData(parser, &state);
     XML_SetElementHandler(parser, startElement, endElement);
     XML_SetCharacterDataHandler(parser, characterDataHandler);
@@ -329,9 +328,13 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
             log_print(LOG_WARNING, "Could not finalize parsing of the 207 response because it's already in a failed state.");
             goto finish;
         }
-        else if (XML_Parse(parser, NULL, 0, 1) == 0) {
+
+        if (XML_Parse(parser, NULL, 0, 1) == 0) {
             int error_code = XML_GetErrorCode(parser);
             log_print(LOG_WARNING, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+        }
+        else {
+            log_print(LOG_DEBUG, "Finished final parsing on the PROPFIND response.");
         }
     }
     else if (response_code == 404) {
