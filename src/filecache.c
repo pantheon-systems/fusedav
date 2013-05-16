@@ -552,12 +552,6 @@ static void get_fresh_fd(filecache_t *cache,
             pdata->last_server_update = time(NULL);
             strncpy(pdata->filename, response_filename, PATH_MAX);
 
-            // We don't think this is possible, but check anyway
-            // to avoid any leak.
-            if (sdata->fd > 0) {
-                log_print(LOG_NOTICE, "get_fresh_fd: Closing existing fd %d for path %s because it is being replaced by fd %d.", sdata->fd, path, response_fd);
-                close(sdata->fd);
-            }
             sdata->fd = response_fd;
 
             log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
@@ -853,6 +847,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(session, CURLOPT_INFILESIZE, st.st_size);
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fdopen(fd, "r"));
 
     // Set a header capture path.

@@ -196,9 +196,6 @@ static struct fuse_opt fusedav_opts[] = {
      FUSE_OPT_END
 };
 
-static pthread_once_t path_cvt_once = PTHREAD_ONCE_INIT;
-static pthread_key_t path_cvt_tsd_key;
-
 // GError mechanisms
 G_DEFINE_QUARK(FUSEDAV, fusedav)
 
@@ -266,64 +263,9 @@ static void sigusr2_handler(__unused int signum) {
     stat_cache_print_stats();
 }
 
-static void path_cvt_tsd_key_init(void) {
-    pthread_key_create(&path_cvt_tsd_key, free);
-}
-
-static const char *path_cvt(const char *path) {
-    char *r, *t;
-    int l;
-    const char *base_dir;
-    size_t base_dir_len;
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "path_cvt(%s)", path ? path : "null path");
-
-    // Path might be null if file was unlinked but file descriptor remains open
-    // Detect here at top of function, otherwise pthread_getspecific returns bogus
-    // values
-    if (path == NULL) return NULL;
-
-    pthread_once(&path_cvt_once, path_cvt_tsd_key_init);
-
-    if ((r = pthread_getspecific(path_cvt_tsd_key)))
-        free(r);
-
-    base_dir = get_base_directory();
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "base_dir: %s", base_dir);
-
-    base_dir_len = strlen(base_dir);
-    t = malloc((l = base_dir_len + strlen(path)) + 1);
-    assert(t);
-    // Only include the base dir if it's more than "/"
-    if (base_dir[base_dir_len - 1] == '/')
-        sprintf(t, "%s", path);
-    else
-        sprintf(t, "%s%s", base_dir, path);
-
-    if (l > 1 && t[l-1] == '/')
-        t[l-1] = 0;
-
-    r = path_escape(t);
-    free(t);
-
-    pthread_setspecific(path_cvt_tsd_key, r);
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "%s=path_cvt(%s)", r, path);
-
-    return r;
-}
-
 static int processed_gerror(const char *prefix, const char *path, GError *gerr) {
     int ret;
-    char const *shortpath;
-    char const *base_directory = get_base_directory();
-
-    if (path == NULL) shortpath = NULL;
-    else if (base_directory == NULL) shortpath = path;
-    else if (strlen(path) > strlen(base_directory)) shortpath = path + strlen(base_directory);
-    else shortpath = path;
-    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s", prefix, shortpath ? shortpath : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
+    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s", prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
     ret = -gerr->code;
     g_clear_error(&gerr);
     return ret;
@@ -438,22 +380,15 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     }
 }
 
-static void getdir_cache_callback(const char *root, const char *fn, void *user) {
-    CURL *session = session_get_handle();
+static void getdir_cache_callback(__unused const char *path_prefix, const char *filename, void *user) {
     struct fill_info *f = user;
-    char path[PATH_MAX];
-    char *h;
 
     assert(f);
 
-    snprintf(path, sizeof(path), "%s/%s", !strcmp(root, "/") ? "" : root, fn);
-
-    h = curl_easy_unescape(session, fn, strlen(fn), NULL);
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_cache_callback fn: %s", h);
-
-    f->filler(f->buf, h, NULL, 0);
-    curl_free(h);
+    if (strlen(filename) > 0) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_cache_callback path: %s", filename);
+        f->filler(f->buf, filename, NULL, 0);
+    }
 }
 
 static void update_directory(const char *path, bool attempt_progessive_update, GError **gerr) {
@@ -539,8 +474,6 @@ static int dav_readdir(
     int ret;
     bool ignore_freshness = false;
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "Initialized with base directory: %s", get_base_directory());
-
     BUMP(readdir);
 
     // We might get a null path if we are accessing a bare file descriptor
@@ -552,7 +485,6 @@ static int dav_readdir(
         return -ENOENT;
     }
 
-    path = path_cvt(path);
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_readdir(%s)", path);
 
     f.buf = buf;
@@ -592,6 +524,7 @@ static int dav_readdir(
         stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
     }
 
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "Successful readdir for path: %s", path);
     return 0;
 }
 
@@ -668,7 +601,6 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
 static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char *parent_path;
-    const char *base_directory;
     char *nepp = NULL;
     GError *tmpgerr = NULL;
     int is_dir = 0;
@@ -681,10 +613,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat(%s, stbuf)", path);
 
-    base_directory = get_base_directory();
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Checking if path %s matches base directory: %s", path, base_directory);
-    is_base_directory = (strcmp(path, base_directory) == 0);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Checking if path %s matches base directory.", path);
+    is_base_directory = (strcmp(path, "/") == 0);
 
     // If it's the root directory and all attributes are specified, construct a response.
     if (is_base_directory && config->dir_mode && config->uid && config->gid) {
@@ -836,8 +766,6 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 
     BUMP(fgetattr);
 
-    path = path_cvt(path);
-
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
     common_getattr(path, stbuf, info, &gerr);
     if (gerr) {
@@ -854,8 +782,6 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     GError *gerr = NULL;
 
     BUMP(getattr);
-
-    path = path_cvt(path);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_getattr(%s)", path);
     common_getattr(path, stbuf, NULL, &gerr);
@@ -878,8 +804,6 @@ static int dav_unlink(const char *path) {
     CURLcode res;
 
     BUMP(unlink);
-
-    path = path_cvt(path);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_unlink(%s)", path);
 
@@ -930,8 +854,6 @@ static int dav_rmdir(const char *path) {
     CURLcode res;
 
     BUMP(rmdir);
-
-    path = path_cvt(path);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_rmdir(%s)", path);
 
@@ -997,8 +919,6 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     BUMP(mkdir);
 
-    path = path_cvt(path);
-
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
     snprintf(fn, sizeof(fn), "%s/", path);
@@ -1042,13 +962,14 @@ static int dav_rename(const char *from, const char *to) {
     int fd = -1;
     struct stat st;
     char fn[PATH_MAX], *_from;
+    char *escaped_to;
     struct stat_cache_value *entry = NULL;
 
     BUMP(rename);
 
-    from = _from = strdup(path_cvt(from));
     assert(from);
-    to = path_cvt(to);
+    assert(to);
+    _from = strdup(from);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_rename(%s, %s)", from, to);
 
@@ -1071,8 +992,10 @@ static int dav_rename(const char *from, const char *to) {
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MOVE");
 
     // Add the destination header.
-    // @TODO: Check that this is a URL.
-    asprintf(&header, "Destination: %s%s", get_base_host(), to);
+    // @TODO: Better error handling on failure.
+    escaped_to = escape_except_slashes(session, to);
+    asprintf(&header, "Destination: %s%s", get_base_url(), escaped_to);
+    curl_free(escaped_to);
     slist = curl_slist_append(slist, header);
     free(header);
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
@@ -1166,8 +1089,6 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     BUMP(release);
 
-    path = path_cvt(path);
-
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
     // path might be NULL if we are accessing a bare file descriptor.
@@ -1206,8 +1127,6 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
 
     BUMP(fsync);
 
-    path = path_cvt(path);
-
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
 
@@ -1237,8 +1156,6 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
 
     BUMP(flush);
-
-    path = path_cvt(path);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_flush(%s)", path ? path : "null path");
 
@@ -1272,8 +1189,6 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     GError *gerr = NULL;
 
     BUMP(mknod);
-
-    path = path_cvt(path);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -1352,8 +1267,6 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
     BUMP(open);
 
-    path = path_cvt(path);
-
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
     // return an EBADF.
@@ -1381,7 +1294,6 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
     // We might get a null path if we are reading from a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
     // In this case we continue to do the read.
-    path = path_cvt(path);
     log_print(LOG_INFO, SECTION_FUSEDAV_IO, "CALLBACK: dav_read(%s, %lu+%lu)", path ? path : "null path", (unsigned long) offset, (unsigned long) size);
 
     bytes_read = filecache_read(info, buf, size, offset, &gerr);
@@ -1407,7 +1319,6 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     // We might get a null path if we are writing to a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
     // In this case we continue to do the write, but we skip the sync below
-    path = path_cvt(path);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_IO, "CALLBACK: dav_write(%s, %lu+%lu)", path ? path : "null path", (unsigned long) offset, (unsigned long) size);
 
@@ -1450,8 +1361,6 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     int fd;
 
     BUMP(ftruncate);
-
-    path = path_cvt(path);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -1500,8 +1409,6 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     int fd;
 
     BUMP(create);
-
-    path = path_cvt(path);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
@@ -2039,7 +1946,6 @@ static void parse_configs(struct fuse_args *args, struct fusedav_config *config,
                 free(config->section_verbosity);
                 config->section_verbosity = strdup(sret);
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: section_verbosity %s", config->section_verbosity);
-                log_set_section_verbosity(sret);
             }
         }
         else {
@@ -2099,7 +2005,7 @@ int main(int argc, char *argv[]) {
 
     // Set log levels. We use get_base_directory for the log message, so this call needs to follow
     // session_config_init, where base_directory is set
-    log_init(config.verbosity, get_base_directory());
+    log_init(config.verbosity, config.section_verbosity, get_base_url());
     debug = (config.verbosity >= 7);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Log verbosity: %d.", config.verbosity);
 

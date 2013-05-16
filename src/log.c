@@ -39,15 +39,15 @@ static char base_directory_abbrev[9] = {0};
 
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
-void log_set_section_verbosity(char *vstr) {
-    unsigned int vlen = strlen(vstr);
-    for (unsigned int idx = 0; idx < vlen; idx++) {
-        section_verbosity[idx] = vstr[idx] - '0'; // Looking for an integer 0-7
-    }
-}
-
-void log_init(unsigned int verbosity, const char *base_dir) {
+void log_init(unsigned int verbosity, const char *section_verbosity, const char *base_url) {
+    const char *base_dir = NULL;
     maximum_verbosity = verbosity;
+
+    base_dir = strstr(base_url, "/sites");
+    if (base_dir == NULL) {
+        strcpy(base_directory_abbrev, "(null)");
+        return;
+    }
 
     // We assume "/sites/<site id>/environments/..."
     // So get ride of "/sites/", and copy the next 8, which will be an abbreviated version of the site id.
