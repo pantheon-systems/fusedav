@@ -39,8 +39,10 @@ static char base_directory_abbrev[9] = {0};
 
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
-void log_init(unsigned int verbosity, const char *section_verbosity, const char *base_url) {
+void log_init(unsigned int verbosity, const char *section_verbosity_str, const char *base_url) {
     const char *base_dir = NULL;
+    unsigned int vlen;
+
     maximum_verbosity = verbosity;
 
     base_dir = strstr(base_url, "/sites");
@@ -69,6 +71,15 @@ void log_init(unsigned int verbosity, const char *section_verbosity, const char 
     else {
         strcpy(base_directory_abbrev, "(null)");
     }
+
+    // JB @TODO Until both fusedav and titan are on the new versions reading the config file,
+    // vstr will be NULL, so check and take evasive measures. Later, we should be able to
+    // remove this check
+    if (section_verbosity_str == NULL) return;
+    vlen = strlen(section_verbosity_str);
+    for (unsigned int idx = 0; idx < vlen; idx++) {
+        section_verbosity[idx] = section_verbosity_str[idx] - '0'; // Looking for an integer 0-7
+    }
 }
 
 int log_print(unsigned int verbosity, unsigned int section, const char *format, ...) {
@@ -77,9 +88,11 @@ int log_print(unsigned int verbosity, unsigned int section, const char *format, 
     char *formatwithtid;
     unsigned int local_verbosity = maximum_verbosity;
 
-    // If the section verbosity is not 0, use it as the verbosity level;
+    // If the section verbosity is not 0 for this section, use it as the verbosity level;
     // otherwise, just use the global maximum_verbosity
-    if (section < SECTIONS && section_verbosity[section]) local_verbosity = section_verbosity[section];
+    if (section < SECTIONS && section_verbosity[section]) {
+        local_verbosity = section_verbosity[section];
+    }
 
     if (verbosity <= local_verbosity) {
         va_start(ap, format);

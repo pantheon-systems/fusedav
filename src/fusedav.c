@@ -58,6 +58,8 @@
 #include "fusedav.h"
 #include "props.h"
 #include "util.h"
+#include "fusedav_config.h"
+#include "signal_handling.h"
 
 mode_t mask = 0;
 int debug = 1;
@@ -73,33 +75,6 @@ struct fill_info {
     fuse_fill_dir_t filler;
     const char *root;
 };
-
-struct statistics {
-    unsigned chmod;
-    unsigned chown;
-    unsigned create;
-    unsigned fsync;
-    unsigned flush;
-    unsigned ftruncate;
-    unsigned fgetattr;
-    unsigned getattr;
-    unsigned mkdir;
-    unsigned mknod;
-    unsigned open;
-    unsigned read;
-    unsigned readdir;
-    unsigned release;
-    unsigned rename;
-    unsigned rmdir;
-    unsigned unlink;
-    unsigned utimens;
-    unsigned write;
-};
-
-static struct statistics stats;
-
-#define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
-#define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
 
 #define SAINT_MODE_DURATION 10
 
@@ -125,143 +100,8 @@ static void set_saint_mode(void) {
     pthread_mutex_unlock(&last_failure_mutex);
 }
 
-// Access with struct fusedav_config *config = fuse_get_context()->private_data;
-struct fusedav_config {
-    char *uri;
-    char *username;
-    char *password;
-    char *ca_certificate;
-    char *client_certificate;
-    char *client_certificate_password;
-    char *cache_uri;
-    int  verbosity;
-    char *section_verbosity;
-    bool nodaemon;
-    bool ignoreutimens;
-    char *cache_path;
-    stat_cache_t *cache;
-    struct stat_cache_supplemental cache_supplemental;
-    char *config_file;
-    uid_t uid;
-    gid_t gid;
-    mode_t dir_mode;
-    mode_t file_mode;
-    char *run_as_uid_name;
-    char *run_as_gid_name;
-    bool progressive_propfind;
-    bool refresh_dir_for_file_stat;
-    bool ignorexattr;
-    bool singlethread;
-    bool grace;
-};
-
-enum {
-     KEY_HELP,
-     KEY_VERSION,
-};
-
-#define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
-
-static struct fuse_opt fusedav_opts[] = {
-     FUSEDAV_OPT("username=%s",                    username, 0),
-     FUSEDAV_OPT("password=%s",                    password, 0),
-     FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
-     FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
-     FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
-     FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
-     FUSEDAV_OPT("config_file=%s",                 config_file, 0),
-     FUSEDAV_OPT("verbosity=%d",                   verbosity, 7),
-     FUSEDAV_OPT("section_verbosity=%s",           section_verbosity, 0),
-     FUSEDAV_OPT("nodaemon",                       nodaemon, true),
-     FUSEDAV_OPT("ignoreutimens",                  ignoreutimens, true),
-     FUSEDAV_OPT("uid=%d",                         uid, 0),
-     FUSEDAV_OPT("gid=%d",                         gid, 0),
-     FUSEDAV_OPT("dir_mode=%o",                    dir_mode, 0),
-     FUSEDAV_OPT("file_mode=%o",                   file_mode, 0),
-     FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid_name, 0),
-     FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid_name, 0),
-     FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
-     FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
-     FUSEDAV_OPT("singlethread",                   singlethread, true),
-
-     // These options have no effect.
-     FUSEDAV_OPT("ignorexattr",                    ignorexattr, true),
-     FUSEDAV_OPT("client_certificate_password=%s", client_certificate_password, 0),
-
-     FUSE_OPT_KEY("-V",             KEY_VERSION),
-     FUSE_OPT_KEY("--version",      KEY_VERSION),
-     FUSE_OPT_KEY("-h",             KEY_HELP),
-     FUSE_OPT_KEY("--help",         KEY_HELP),
-     FUSE_OPT_KEY("-?",             KEY_HELP),
-     FUSE_OPT_END
-};
-
 // GError mechanisms
 G_DEFINE_QUARK(FUSEDAV, fusedav)
-
-static void sigsegv_handler(int signum) {
-    assert(signum == 11);
-    log_print(LOG_CRIT, SECTION_FUSEDAV_DEFAULT, "Segmentation fault.");
-    signal(signum, SIG_DFL);
-    kill(getpid(), signum);
-}
-
-static void malloc_stats_output(__unused void *cbopaque, const char *s) {
-    char stripped[256];
-    size_t len;
-
-    len = strlen(s);
-    if (len >= 256) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "Skipping line over 256 characters.");
-        return;
-    }
-
-    // Ignore up to one leading space.
-    if (s[0] == '\n')
-        strncpy(stripped, s + 1, len);
-    else
-        strncpy(stripped, s, len);
-
-    // Ignore up to two trailing spaces.
-    if (stripped[len - 2] == '\n')
-        stripped[len - 2] = '\0';
-    if (stripped[len - 1] == '\n')
-        stripped[len - 1] = '\0';
-    stripped[len] = '\0';
-
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "%s", stripped);
-}
-
-static void sigusr2_handler(__unused int signum) {
-    mallctl("prof.dump", NULL, NULL, NULL, 0);
-
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "Caught SIGUSR2. Printing status.");
-    malloc_stats_print(malloc_stats_output, NULL, "");
-
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "Operations:");
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  chmod:       %u", FETCH(chmod));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  chown:       %u", FETCH(chown));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  create:      %u", FETCH(create));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  fsync:       %u", FETCH(fsync));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  flush:       %u", FETCH(flush));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  ftruncate:   %u", FETCH(ftruncate));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  fgetattr:    %u", FETCH(fgetattr));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  getattr:     %u", FETCH(getattr));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  mkdir:       %u", FETCH(mkdir));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  mknod:       %u", FETCH(mknod));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  open:        %u", FETCH(open));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  read:        %u", FETCH(read));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  readdir:     %u", FETCH(readdir));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  release:     %u", FETCH(release));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  rename:      %u", FETCH(rename));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  rmdir:       %u", FETCH(rmdir));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  unlink:      %u", FETCH(unlink));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  utimens:     %u", FETCH(utimens));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  write:       %u", FETCH(write));
-
-    filecache_print_stats();
-    stat_cache_print_stats();
-}
 
 static int processed_gerror(const char *prefix, const char *path, GError *gerr) {
     int ret;
@@ -289,18 +129,13 @@ static int simple_propfind_with_redirect(
 }
 
 static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-
     // initialize to 0
     memset(st, 0, sizeof(struct stat));
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: Enter");
 
+    st->st_mode = mode;
     if (is_dir) {
-        // Our default mode for directories is 0770, for files 0660; use them here if not specified
-        if (mode != 0) st->st_mode = mode;
-        else if (config->dir_mode) st->st_mode = config->dir_mode;
-        else st->st_mode = 0770; // Our "default" dir mode
         st->st_mode |= S_IFDIR;
         // In a POSIX systems, directories with subdirs have nlink = 3; otherwise 2. Just use 3
         st->st_nlink = 3;
@@ -308,9 +143,6 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
         st->st_size = 4096;
     }
     else {
-        if (mode != 0) st->st_mode = mode;
-        else if (config->file_mode) st->st_mode = config->file_mode;
-        else st->st_mode = 0660; // Our "default" file mode
         st->st_mode |= S_IFREG;
         st->st_nlink = 1;
         // If we are creating a file, size will start at 0.
@@ -320,8 +152,6 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
     st->st_mtime = st->st_atime;
     st->st_ctime = st->st_mtime;
     st->st_blksize = 4096;
-    st->st_uid = config->uid ? config->uid : getuid();
-    st->st_gid = config->gid ? config->gid : getgid();
 
     if (fd >= 0) {
         st->st_size = lseek(fd, 0, SEEK_END);
@@ -474,7 +304,7 @@ static int dav_readdir(
     int ret;
     bool ignore_freshness = false;
 
-    BUMP(readdir);
+    BUMP(dav_readdir);
 
     // We might get a null path if we are accessing a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -617,7 +447,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     is_base_directory = (strcmp(path, "/") == 0);
 
     // If it's the root directory and all attributes are specified, construct a response.
-    if (is_base_directory && config->dir_mode && config->uid && config->gid) {
+    if (is_base_directory) {
 
         // mode = 0 (unspecified), is_dir = true; fd = -1, irrelevant for dir
         fill_stat_generic(stbuf, 0, true, -1);
@@ -721,7 +551,6 @@ finish:
 }
 
 static void common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info, GError **gerr) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
     assert(info != NULL || path != NULL);
@@ -733,14 +562,10 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
             return;
         }
         // These are taken care of by fill_stat_generic below if path is NULL
-        if (S_ISDIR(stbuf->st_mode) && config->dir_mode)
-            stbuf->st_mode = S_IFDIR | config->dir_mode;
-        if (S_ISREG(stbuf->st_mode) && config->file_mode)
-            stbuf->st_mode = S_IFREG | config->file_mode;
-        if (config->uid)
-            stbuf->st_uid = config->uid;
-        if (config->gid)
-            stbuf->st_gid = config->gid;
+        if (S_ISDIR(stbuf->st_mode))
+            stbuf->st_mode |= S_IFDIR;
+        if (S_ISREG(stbuf->st_mode))
+            stbuf->st_mode |= S_IFREG;
     }
     else {
         int fd = filecache_fd(info);
@@ -764,7 +589,7 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
 static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
     GError *gerr = NULL;
 
-    BUMP(fgetattr);
+    BUMP(dav_fgetattr);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
     common_getattr(path, stbuf, info, &gerr);
@@ -781,7 +606,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
 static int dav_getattr(const char *path, struct stat *stbuf) {
     GError *gerr = NULL;
 
-    BUMP(getattr);
+    BUMP(dav_getattr);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_getattr(%s)", path);
     common_getattr(path, stbuf, NULL, &gerr);
@@ -803,7 +628,7 @@ static int dav_unlink(const char *path) {
     CURL *session;
     CURLcode res;
 
-    BUMP(unlink);
+    BUMP(dav_unlink);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_unlink(%s)", path);
 
@@ -853,7 +678,7 @@ static int dav_rmdir(const char *path) {
     CURL *session;
     CURLcode res;
 
-    BUMP(rmdir);
+    BUMP(dav_rmdir);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_rmdir(%s)", path);
 
@@ -917,7 +742,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     CURLcode res;
     GError *gerr = NULL;
 
-    BUMP(mkdir);
+    BUMP(dav_mkdir);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
@@ -965,7 +790,7 @@ static int dav_rename(const char *from, const char *to) {
     char *escaped_to;
     struct stat_cache_value *entry = NULL;
 
-    BUMP(rename);
+    BUMP(dav_rename);
 
     assert(from);
     assert(to);
@@ -1087,7 +912,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     GError *gerr = NULL;
     GError *gerr2 = NULL;
 
-    BUMP(release);
+    BUMP(dav_release);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
@@ -1125,7 +950,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     GError *gerr = NULL;
     int fd;
 
-    BUMP(fsync);
+    BUMP(dav_fsync);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -1155,7 +980,7 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
 
-    BUMP(flush);
+    BUMP(dav_flush);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_flush(%s)", path ? path : "null path");
 
@@ -1188,7 +1013,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     struct stat_cache_value value;
     GError *gerr = NULL;
 
-    BUMP(mknod);
+    BUMP(dav_mknod);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -1265,7 +1090,7 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
-    BUMP(open);
+    BUMP(dav_open);
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
@@ -1289,7 +1114,7 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
     ssize_t bytes_read;
     GError *gerr = NULL;
 
-    BUMP(read);
+    BUMP(dav_read);
 
     // We might get a null path if we are reading from a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1314,7 +1139,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     ssize_t bytes_written;
     struct stat_cache_value value;
 
-    BUMP(write);
+    BUMP(dav_write);
 
     // We might get a null path if we are writing to a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1360,7 +1185,7 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     GError *gerr = NULL;
     int fd;
 
-    BUMP(ftruncate);
+    BUMP(dav_ftruncate);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -1391,13 +1216,13 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
 }
 
 static int dav_utimens(__unused const char *path, __unused const struct timespec tv[2]) {
-    BUMP(utimens);
+    BUMP(dav_utimens);
     log_print(LOG_INFO, SECTION_FUSEDAV_DEFAULT, "CALLBACK: dav_utimens(%s)", path);
     return 0;
 }
 
 static int dav_chmod(__unused const char *path, __unused mode_t mode) {
-    BUMP(chmod);
+    BUMP(dav_chmod);
     log_print(LOG_INFO, SECTION_FUSEDAV_DEFAULT, "CALLBACK: dav_chmod(%s, %04o)", path, mode);
     return 0;
 }
@@ -1408,7 +1233,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     GError *gerr = NULL;
     int fd;
 
-    BUMP(create);
+    BUMP(dav_create);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
@@ -1442,17 +1267,10 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     return 0;
 }
 
-static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
+static int dav_chown(__unused const char *path, __unused uid_t u, __unused gid_t g) {
+    BUMP(dav_chown);
 
-    BUMP(chown);
-
-    // If the uid and gid are fixed, there is nothing to chown.
-    if (config->uid && config->gid)
-        return 0;
-
-    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "NOT IMPLEMENTED: chown(%s, %d:%d)", path, u, g);
-    return -EPROTONOSUPPORT;
+    return 0;
 }
 
 /* We need to accommodate the pattern
@@ -1470,7 +1288,7 @@ static int dav_chown(__unused const char *path, uid_t u, gid_t g) {
  * We don't implement releasedir, fsyncdir, and lock.
  */
 
-static struct fuse_operations dav_oper = {
+struct fuse_operations dav_oper = {
     .fgetattr     = dav_fgetattr,
     .getattr     = dav_getattr,
     .readdir     = dav_readdir,
@@ -1492,156 +1310,6 @@ static struct fuse_operations dav_oper = {
     .flush       = dav_flush,
     .flag_nullpath_ok = 1,
 };
-
-static void exit_handler(__unused int sig) {
-    static const char m[] = "*** Caught signal ***\n";
-    if(fuse != NULL)
-        fuse_exit(fuse);
-    write(2, m, strlen(m));
-}
-
-static void empty_handler(__unused int sig) {}
-
-static int setup_signal_handlers(void) {
-    struct sigaction sa;
-    sigset_t m;
-
-    sa.sa_handler = exit_handler;
-    sigemptyset(&(sa.sa_mask));
-    sa.sa_flags = 0;
-
-    if (sigaction(SIGHUP, &sa, NULL) == -1 ||
-        sigaction(SIGINT, &sa, NULL) == -1 ||
-        sigaction(SIGTERM, &sa, NULL) == -1) {
-
-        log_print(LOG_CRIT, SECTION_FUSEDAV_DEFAULT, "Cannot set exit signal handlers: %s", strerror(errno));
-        return -1;
-    }
-
-    sa.sa_handler = SIG_IGN;
-
-    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_DEFAULT, "Cannot set ignored signals: %s", strerror(errno));
-        return -1;
-    }
-
-    /* Used to shut down the locking thread */
-    sa.sa_handler = empty_handler;
-
-    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_DEFAULT, "Cannot set user signals: %s", strerror(errno));
-        return -1;
-    }
-
-    sigemptyset(&m);
-    pthread_sigmask(SIG_BLOCK, &m, &m);
-    sigdelset(&m, SIGHUP);
-    sigdelset(&m, SIGINT);
-    sigdelset(&m, SIGTERM);
-    sigaddset(&m, SIGPIPE);
-    sigaddset(&m, SIGUSR1);
-    pthread_sigmask(SIG_SETMASK, &m, NULL);
-
-    return 0;
-}
-
-static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
-    struct fusedav_config *config = data;
-
-    switch (key) {
-    case FUSE_OPT_KEY_NONOPT:
-        if (!config->uri) {
-            config->uri = strdup(arg);
-            return 0;
-        }
-        break;
-
-    case KEY_HELP:
-        fprintf(stderr,
-                "usage: %s uri mountpoint [options]\n"
-                "\n"
-                "general options:\n"
-                "    -o opt,[opt...]  mount options\n"
-                "    -h   --help      print help\n"
-                "    -V   --version   print version\n"
-                "\n"
-                "fusedav mount options:\n"
-                "    Authenticating with the server:\n"
-                "        -o username=STRING\n"
-                "        -o password=STRING\n"
-                "        -o ca_certificate=PATH\n"
-                "        -o client_certificate=PATH\n"
-                "        -o client_certificate_password=STRING\n"
-                "    File and directory attributes:\n"
-                "        -o uid=STRING (masks file owner)\n"
-                "        -o gid=STRING (masks file group)\n"
-                "        -o file_mode=OCTAL (masks file permissions)\n"
-                "        -o dir_mode=OCTAL (masks directory permissions)\n"
-                "        -o ignoreutimens\n"
-                "    Protocol and performance options:\n"
-                "        -o progressive_propfind\n"
-                "        -o refresh_dir_for_file_stat\n"
-                "        -o singlethread\n"
-                "        -o cache_uri=STRING\n"
-                "    Daemon, logging, and process privilege:\n"
-                "        -o verbosity=NUM (use 7 for debug)\n"
-                "        -o nodaemon\n"
-                "        -o run_as_uid=STRING\n"
-                "        -o run_as_gid=STRING (defaults to primary group for run_as_uid)\n"
-                "        -o cache_path=STRING\n"
-                "\n"
-                , outargs->argv[0]);
-        fuse_opt_add_arg(outargs, "-ho");
-        fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
-        exit(1);
-
-    case KEY_VERSION:
-        fprintf(stderr, "fusedav version %s\n", PACKAGE_VERSION);
-        fprintf(stderr, "LevelDB version %d.%d\n", leveldb_major_version(), leveldb_minor_version());
-        fprintf(stderr, "%s\n", curl_version());
-        //malloc_stats_print(NULL, NULL, "g");
-        fuse_opt_add_arg(outargs, "--version");
-        fuse_main(outargs->argc, outargs->argv, &dav_oper, &config);
-        exit(0);
-    }
-    return 1;
-}
-
-static int config_privileges(struct fusedav_config *config) {
-    if (config->run_as_gid_name != 0) {
-        struct group *g = getgrnam(config->run_as_gid_name);
-        if (setegid(g->gr_gid) < 0) {
-            log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop gid to %d.", g->gr_gid);
-            return -1;
-        }
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Set egid to %d.", g->gr_gid);
-    }
-
-    if (config->run_as_uid_name != 0) {
-        struct passwd *u = getpwnam(config->run_as_uid_name);
-
-        // If there's no explict group set, use the user's primary gid.
-        if (config->run_as_gid_name == 0) {
-            if (setegid(u->pw_gid) < 0) {
-                log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
-                return -1;
-            }
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
-        }
-
-        if (seteuid(u->pw_uid) < 0) {
-            log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop uid to %d.", u->pw_uid);
-            return -1;
-        }
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Set euid to %d.", u->pw_uid);
-    }
-
-    // Ensure the core is still dumpable.
-    prctl(PR_SET_DUMPABLE, 1);
-
-    return 0;
-}
-
 
 // error injection routines
 // This routine is here because it is easier to update if one adds a new call to <>_inject_error() than if it were in util.c
@@ -1674,292 +1342,6 @@ static void *cache_cleanup(void *ptr) {
     return NULL;
 }
 
-static void print_config(struct fusedav_config *config) {
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "CONFIG:");
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "progressive_propfind %d", config->progressive_propfind);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignoreutimens %d", config->ignoreutimens);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ignorexattr %d", config->ignorexattr);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "grace %d", config->grace);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "singlethread %d", config->singlethread);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "dir_mode %#o", config->dir_mode);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "file_mode %#o", config->file_mode);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "uid %ul", config->uid);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "gid %ul", config->gid);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_uid_name %s", config->run_as_uid_name);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "run_as_gid_name %s", config->run_as_gid_name);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache_uri %s", config->cache_uri);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "ca_certificate %s", config->ca_certificate);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate %s", config->client_certificate);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "client_certificate_password %s", config->client_certificate_password);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "verbosity %d", config->verbosity);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "section_verbosity %s", config->section_verbosity);
-
-    // These are not subject to change by the parse config method
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "uri: %s", config->uri);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "cache %p", config->cache);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "config_file %s", config->config_file);
-
-    // We could set these, but they are NULL by default, so don't know how to put that in the config file
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
-}
-
-/* fusedav.conf looks something like:
-    [Fuse]
-    allow_other=true
-    noexec=true
-    atomic_o_trunc=true
-    hard_remove=true
-
-    [Config]
-    progressive_propfind=true
-    refresh_dir_for_file_stat=true
-    ignoreutimens=true
-    ignorexattr=true
-    dir_mode=0770
-    file_mode=0660
-    uid=10061
-    gid=10061
-    run_as_uid=6f7a106722f74cc7bd96d4d06785ed78
-    run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
-    cache_path=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/cache
-
-    [Certificates]
-    cache_uri=http://50.57.148.118:10061/fusedav-peer-cache
-    ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
-    client_certificate=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/certs/binding.p12
-    client_certificate_password=pantheon
-
-    [Log]
-    verbosity=5
-*/
-
-
-static void parse_configs(struct fuse_args *args, struct fusedav_config *config, GError **gerr) {
-    GKeyFile *keyfile;
-    GError *tmpgerr = NULL;
-    const int Fuse = 0;
-    const int Config = 1;
-    const int Certificates = 2;
-    const int Log = 3;
-    /* Groups are: Fuse, Pantheon, Log, Certificates */
-    static const char *groups[] = {"Fuse", "Config", "Certificates", "Log", NULL};
-    static const char *fuse_bkeys[] = {"allow_other", "noexec", "atomic_o_trunc", "hard_remove", NULL};
-    static const char *config_bkeys[] = {"progressive_propfind", "refresh_dir_for_file_stat", "ignoreutimens",
-                                         "ignorexattr", "nodaemon", "grace", "singlethread", NULL};
-    static const char *config_ikeys[] = {"uid", "gid", NULL};
-    static const char *config_skeys[] = {"dir_mode", "file_mode", "run_as_uid", "run_as_gid", "cache_path", "cache_uri", NULL};
-    static const char *cert_skeys[] = {"ca_certificate", "client_certificate", "client_certificate_password", NULL};
-    static const char *log_ikeys[] = {"verbosity", NULL};
-    static const char *log_skeys[] = {"section_verbosity", NULL};
-    gboolean bret;
-    int iret;
-    char *sret;
-
-    print_config(config);
-
-    log_print(LOG_INFO, SECTION_FUSEDAV_CONFIG, "parse_configs: file %s", config->config_file);
-
-    /* Set up the key file stuff */
-
-    keyfile = g_key_file_new();
-
-    bret = g_key_file_load_from_file(keyfile, config->config_file, G_KEY_FILE_NONE, &tmpgerr);
-    // g_key_file_load_from_file does not seem to set error on null file
-    if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on load_from_file");
-        return;
-    } else if (bret == FALSE) {
-        g_set_error(gerr, fusedav_quark(), ENOENT, "parse_configs: Error on load_from_file");
-        return;
-    }
-
-    /* Fuse Args */
-
-    // REVIEW: if an option is present in the mount file, can we turn it off? i.e. the opposite of -o
-    for (int idx = 0; fuse_bkeys[idx] != NULL; idx++) {
-        bret = g_key_file_get_boolean(keyfile, groups[Fuse], fuse_bkeys[idx], &tmpgerr);
-        if ((tmpgerr == NULL) && (bret == true)) {
-            char *fuse_arg = NULL;
-            // If there is a space after "-o", fuse will misparse and fail to start
-            asprintf(&fuse_arg, "-o%s", fuse_bkeys[idx]);
-            fuse_opt_add_arg(args, fuse_arg);
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: fuse_arg %s", fuse_arg);
-
-            free(fuse_arg);
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Config args */
-
-    /* Config boolean args */
-
-    for (int idx = 0; config_bkeys[idx] != NULL; idx++) {
-        bret = g_key_file_get_boolean(keyfile, groups[Config], config_bkeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("progressive_propfind", config_bkeys[idx])) {
-                config->progressive_propfind = bret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: progressive_propfind %d", config->progressive_propfind);
-            }
-            else if (!strcmp("refresh_dir_for_file_stat", config_bkeys[idx])) {
-                config->refresh_dir_for_file_stat = bret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
-            }
-            else if (!strcmp("ignoreutimens", config_bkeys[idx])) {
-                config->ignoreutimens = bret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ignoreutimens %d", config->ignoreutimens);
-            }
-            else if (!strcmp("ignorexattr", config_bkeys[idx])) {
-                config->ignorexattr = bret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ignorexattr %d", config->ignorexattr);
-            }
-            else if (!strcmp("nodaemon", config_bkeys[idx])) {
-                config->nodaemon = bret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: nodaemon %d", config->nodaemon);
-            }
-            else if (!strcmp("grace", config_bkeys[idx])) {
-                config->grace = bret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: grace %d", config->grace);
-            }
-            else if (!strcmp("singlethread", config_bkeys[idx])) {
-                config->singlethread = bret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: singlethread %d", config->singlethread);
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Config integer args */
-
-    // dir_mode and file_mode are normally octal, and key_file doesn't handle them
-    for (int idx = 0; config_ikeys[idx] != NULL; idx++) {
-        iret = g_key_file_get_integer(keyfile, groups[Config], config_ikeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("uid", config_ikeys[idx])) {
-                config->uid = iret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: uid %ul", config->uid);
-            }
-            else if (!strcmp("gid", config_ikeys[idx])) {
-                config->gid = iret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: gid %ul", config->gid);
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Config string args */
-
-    for (int idx = 0; config_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Config], config_skeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("dir_mode", config_skeys[idx])) {
-                config->dir_mode = strtol(sret, NULL, 8);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: dir_mode %#o", config->dir_mode);
-            }
-            else if (!strcmp("file_mode", config_skeys[idx])) {
-                config->file_mode = strtol(sret, NULL, 8);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: file_mode %#o", config->file_mode);
-            }
-            else if (!strcmp("run_as_uid", config_skeys[idx])) {
-                free(config->run_as_uid_name);
-                config->run_as_uid_name = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_uid_name %s", config->run_as_uid_name);
-            }
-            else if (!strcmp("run_as_gid", config_skeys[idx])) {
-                free(config->run_as_gid_name);
-                config->run_as_gid_name = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: run_as_gid_name %s", config->run_as_gid_name);
-            }
-            else if (!strcmp("cache_path", config_skeys[idx])) {
-                free(config->cache_path);
-                config->cache_path = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_path %s", config->cache_path);
-            }
-            else if (!strcmp("cache_uri", config_skeys[idx])) {
-                free(config->cache_uri);
-                config->cache_uri = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: cache_uri %s", config->cache_uri);
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Certificates */
-
-    for (int idx = 0; cert_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Certificates], cert_skeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("ca_certificate", cert_skeys[idx])) {
-                free(config->ca_certificate);
-                config->ca_certificate = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: ca_certificate %s", config->ca_certificate);
-            }
-            else if (!strcmp("client_certificate", cert_skeys[idx])) {
-                free(config->client_certificate);
-                config->client_certificate = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate %s", config->client_certificate);
-            }
-            else if (!strcmp("client_certificate_password", cert_skeys[idx])) {
-                free(config->client_certificate_password);
-                config->client_certificate_password = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: client_certificate_password %s", config->client_certificate_password);
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Log args */
-
-    for (int idx = 0; log_ikeys[idx] != NULL; idx++) {
-        iret = g_key_file_get_integer(keyfile, groups[Log], log_ikeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("verbosity", log_ikeys[idx])) {
-                config->verbosity = iret;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: verbosity %d", config->verbosity);
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    /* Log args string to set different log levels by code section */
-
-    for (int idx = 0; log_skeys[idx] != NULL; idx++) {
-        sret = g_key_file_get_string(keyfile, groups[Log], log_skeys[idx], &tmpgerr);
-        if (tmpgerr == NULL) {
-            if (!strcmp("section_verbosity", log_skeys[idx])) {
-                free(config->section_verbosity);
-                config->section_verbosity = strdup(sret);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_CONFIG, "parse_configs: section_verbosity %s", config->section_verbosity);
-            }
-        }
-        else {
-            g_clear_error(&tmpgerr);
-        }
-    }
-
-    g_key_file_free(keyfile);
-
-    print_config(config);
-
-    return;
-}
-
 int main(int argc, char *argv[]) {
     struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
     struct fusedav_config config;
@@ -1974,60 +1356,14 @@ int main(int argc, char *argv[]) {
     memset(&stats, 0, sizeof(struct statistics));
     memset(&config, 0, sizeof(config));
 
-    signal(SIGSEGV, sigsegv_handler);
-    signal(SIGUSR2, sigusr2_handler);
+    setup_signal_handlers(&gerr);
+    if (gerr) goto finish;
+
+    configure_fusedav(&config, &args, &mountpoint, &gerr);
+    if (gerr) goto finish;
 
     mask = umask(0);
     umask(mask);
-
-    if (setup_signal_handlers() < 0)
-        goto finish;
-
-    // default verbosity: LOG_NOTICE
-    config.verbosity = 5;
-
-    // Parse options.
-    if (fuse_opt_parse(&args, &config, fusedav_opts, fusedav_opt_proc) < 0) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "FUSE could not parse options.");
-        goto finish;
-    }
-
-    parse_configs(&args, &config, &gerr);
-    if (gerr) {
-        processed_gerror("Could not open fusedav config file:", config.config_file, gerr);
-        goto finish;
-    }
-
-    if (session_config_init(config.uri, config.ca_certificate, config.client_certificate) < 0) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to initialize session system.");
-        goto finish;
-    }
-
-    // Set log levels. We use get_base_directory for the log message, so this call needs to follow
-    // session_config_init, where base_directory is set
-    log_init(config.verbosity, config.section_verbosity, get_base_url());
-    debug = (config.verbosity >= 7);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Log verbosity: %d.", config.verbosity);
-
-    if (config.ignoreutimens)
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Ignoring utimens requests.");
-
-    if (fuse_parse_cmdline(&args, &mountpoint, NULL, NULL) < 0) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "FUSE could not parse the command line.");
-        goto finish;
-    }
-
-    // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Parsed command line.");
-
-    if (!config.uri) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Missing the required URI argument.");
-        goto finish;
-    }
-
-    if (config.cache_uri)
-        log_print(LOG_INFO, SECTION_FUSEDAV_MAIN, "Using cache URI: %s", config.cache_uri);
 
     if (!(ch = fuse_mount(mountpoint, &args))) {
         log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to mount FUSE file system.");
@@ -2046,18 +1382,13 @@ int main(int argc, char *argv[]) {
     }
     else {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to daemonize.");
-        if (fuse_daemonize(/* run in foreground */ 0) < 0) {
+        if (fuse_daemonize(/* 0 means daemonize */ 0) < 0) {
             log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to daemonize.");
             goto finish;
         }
     }
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to configure privileges.");
-    if (config_privileges(&config) < 0) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to configure privileges.");
-        goto finish;
-    }
-
+    // REVIEW: moving call to config_privileges from here to configure_fusedav() above. Is this ok?
     // Error injection mechanism. Should only be run during development.
     if (injecting_errors) {
         if (pthread_create(&error_injection_thread, NULL, inject_error_mechanism, NULL)) {
@@ -2110,10 +1441,15 @@ int main(int argc, char *argv[]) {
     ret = 0;
 
 finish:
+    if (gerr) {
+        processed_gerror("main: ", "main", gerr);
+    }
+
     if (ch != NULL) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Unmounting: %s", mountpoint);
         fuse_unmount(mountpoint, ch);
     }
+
     if (mountpoint != NULL)
         free(mountpoint);
 

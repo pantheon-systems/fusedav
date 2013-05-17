@@ -21,7 +21,7 @@
 
 #include <systemd/sd-journal.h>
 
-void log_init(unsigned int verbosity, const char *section_verbosity, const char *base_url);
-int log_print(unsigned int verbosity, unsigned int section_mask, const char *format, ...);
+void log_init(unsigned int verbosity, const char *section_verbosity_str, const char *base_url);
+int log_print(unsigned int verbosity, unsigned int section, const char *format, ...);
 
 #endif

@@ -42,6 +42,7 @@
 #include "log.h"
 #include "log_sections.h"
 #include "util.h"
+#include "signal_handling.h"
 
 #define REFRESH_INTERVAL 3
 #define CACHE_FILE_ENTROPY 20
@@ -72,59 +73,6 @@ struct filecache_pdata {
     time_t last_server_update;
 };
 
-struct statistics {
-    unsigned cache_file;
-    unsigned pdata_set;
-    unsigned create_file;
-    unsigned pdata_get;
-    unsigned fresh_fd;
-    unsigned open;
-    unsigned read;
-    unsigned write;
-    unsigned close;
-    unsigned return_etag;
-    unsigned sync;
-    unsigned truncate;
-    unsigned delete;
-    unsigned pdata_move;
-    unsigned orphans;
-    unsigned cleanup;
-    unsigned get_fd;
-    unsigned init;
-    unsigned path2key;
-    unsigned key2path;
-};
-
-static struct statistics stats;
-
-#define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
-#define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
-
-void filecache_print_stats(void) {
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "Filecache Operations:");
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  cache_file:  %u", FETCH(cache_file));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  pdata_set:   %u", FETCH(pdata_set));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  create_file: %u", FETCH(create_file));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  pdata_get:   %u", FETCH(pdata_get));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  fresh_fd:    %u", FETCH(fresh_fd));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  open:        %u", FETCH(open));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  read:        %u", FETCH(read));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  write:       %u", FETCH(write));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  close:       %u", FETCH(close));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  return_etag: %u", FETCH(return_etag));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  sync:        %u", FETCH(sync));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  truncate:    %u", FETCH(truncate));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  delete:      %u", FETCH(delete));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  pdata_move:  %u", FETCH(pdata_move));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  orphans:     %u", FETCH(orphans));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  cleanup:     %u", FETCH(cleanup));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  get_fd:      %u", FETCH(get_fd));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  init:        %u", FETCH(init));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  path2key:    %u", FETCH(path2key));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  key2path:    %u", FETCH(key2path));
-
-}
-
 // GError mechanisms
 G_DEFINE_QUARK(FC, filecache)
 G_DEFINE_QUARK(SYS, system)
@@ -141,7 +89,7 @@ int filecache_errors(void) {
 void filecache_init(char *cache_path, GError **gerr) {
     char path[PATH_MAX];
 
-    BUMP(init);
+    BUMP(filecache_init);
 
     snprintf(path, PATH_MAX, "%s/files", cache_path);
     if (mkdir(cache_path, 0770) == -1) {
@@ -163,7 +111,7 @@ void filecache_init(char *cache_path, GError **gerr) {
 static char *path2key(const char *path) {
     char *key = NULL;
 
-    BUMP(path2key);
+    BUMP(filecache_path2key);
 
     asprintf(&key, "%s%s", filecache_prefix, path);
     return key;
@@ -173,7 +121,7 @@ static char *path2key(const char *path) {
 static void new_cache_file(const char *cache_path, char *cache_file_path, fd_t *fd, GError **gerr) {
     char entropy[CACHE_FILE_ENTROPY + 1];
 
-    BUMP(cache_file);
+    BUMP(filecache_cache_file);
 
     for (size_t pos = 0; pos <= CACHE_FILE_ENTROPY; ++pos) {
         entropy[pos] = 65 + rand() % 26;
@@ -198,7 +146,7 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
     char *ldberr = NULL;
     char *key;
 
-    BUMP(pdata_set);
+    BUMP(filecache_pdata_set);
 
     if (!pdata || filecache_inject_error(3)) {
         g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_pdata_set NULL pdata");
@@ -230,7 +178,7 @@ static void create_file(struct filecache_sdata *sdata, const char *cache_path,
     struct filecache_pdata *pdata;
     GError *tmpgerr = NULL;
 
-    BUMP(create_file);
+    BUMP(filecache_create_file);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "create_file: on %s", path);
 
@@ -273,7 +221,7 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
     size_t vallen;
     char *ldberr = NULL;
 
-    BUMP(pdata_get);
+    BUMP(filecache_pdata_get);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "Entered filecache_pdata_get: path=%s", path);
 
@@ -366,7 +314,7 @@ static void get_fresh_fd(filecache_t *cache,
     int response_fd = -1;
     bool close_response_fd = true;
 
-    BUMP(fresh_fd);
+    BUMP(filecache_fresh_fd);
 
     assert(pdatap);
     pdata = *pdatap;
@@ -618,7 +566,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
     bool skip_validation = false;
     unsigned retries;
 
-    BUMP(open);
+    BUMP(filecache_open);
     assert(used_grace);
     *used_grace = false;
 
@@ -719,7 +667,7 @@ ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
     ssize_t bytes_read;
 
-    BUMP(read);
+    BUMP(filecache_read);
 
     if (sdata == NULL) {
         g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
@@ -745,7 +693,7 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
     ssize_t bytes_written;
 
-    BUMP(write);
+    BUMP(filecache_write);
 
     if (sdata == NULL) {
         g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
@@ -789,7 +737,7 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
 void filecache_close(struct fuse_file_info *info, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
 
-    BUMP(close);
+    BUMP(filecache_close);
 
     if (sdata == NULL) {
         g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
@@ -823,7 +771,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     struct stat st;
     long response_code;
 
-    BUMP(return_etag);
+    BUMP(filecache_return_etag);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "enter: put_return_etag(,%s,%d,,)", path, fd);
 
@@ -897,7 +845,7 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     struct filecache_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
 
-    BUMP(sync);
+    BUMP(filecache_sync);
 
     if (sdata == NULL) {
         g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_sync: sdata is NULL");
@@ -987,7 +935,7 @@ finish:
 void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
 
-    BUMP(truncate);
+    BUMP(filecache_truncate);
 
     if (sdata == NULL) {
         g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
@@ -1033,7 +981,7 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
 int filecache_fd(struct fuse_file_info *info) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
 
-    BUMP(get_fd);
+    BUMP(filecache_get_fd);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_fd: %d", sdata->fd);
     return sdata->fd;
@@ -1047,7 +995,7 @@ void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefil
     char *key;
     char *ldberr = NULL;
 
-    BUMP(delete);
+    BUMP(filecache_delete);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_delete: path (%s).", path);
 
@@ -1087,7 +1035,7 @@ void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *
     struct filecache_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
 
-    BUMP(pdata_move);
+    BUMP(filecache_pdata_move);
 
     pdata = filecache_pdata_get(cache, old_path, &tmpgerr);
     if (tmpgerr) {
@@ -1128,7 +1076,7 @@ finish:
 static const char *key2path(const char *key) {
     char *prefix;
 
-    BUMP(key2path);
+    BUMP(filecache_key2path);
 
     prefix = strstr(key, filecache_prefix);
     // Looking for "fc:" (filecache_prefix) at the beginning of the key
@@ -1147,7 +1095,7 @@ static int cleanup_orphans(const char *cache_path, time_t stamped_time, GError *
     int visited = 0;
     int unlinked = 0;
 
-    BUMP(orphans);
+    BUMP(filecache_orphans);
 
     cachefile_path[PATH_MAX] = '\0';
     filecache_path[PATH_MAX] = '\0';
@@ -1221,7 +1169,7 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     int issues = 0;
     int pruned_files = 0;
 
-    BUMP(cleanup);
+    BUMP(filecache_cleanup);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "enter: filecache_cleanup(cache %p)", cache);
 

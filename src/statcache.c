@@ -39,6 +39,7 @@
 #include "session.h"
 #include "bloom-filter.h"
 #include "util.h"
+#include "signal_handling.h"
 
 #define CACHE_TIMEOUT 3
 
@@ -48,56 +49,6 @@ struct stat_cache_entry {
     const char *key;
     const struct stat_cache_value *value;
 };
-
-struct statistics {
-    unsigned local_gen;
-    unsigned path2key;
-    unsigned key2path;
-    unsigned open;
-    unsigned close;
-    unsigned value_get;
-    unsigned updated_ch;
-    unsigned read_updated;
-    unsigned value_set;
-    unsigned delete;
-    unsigned del_parent;
-    unsigned iter_free;
-    unsigned iter_init;
-    unsigned iter_current;
-    unsigned iter_next;
-    unsigned enumerate;
-    unsigned has_child;
-    unsigned delete_older;
-    unsigned prune;
-};
-
-static struct statistics stats;
-
-#define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
-#define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
-
-void stat_cache_print_stats(void) {
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "Stat Cache Operations:");
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  local_gen:   %u", FETCH(local_gen));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  path2key:    %u", FETCH(path2key));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  key2path:    %u", FETCH(key2path));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  open:        %u", FETCH(open));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  close:       %u", FETCH(close));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  value_get:   %u", FETCH(value_get));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  updated_ch:  %u", FETCH(updated_ch));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  read_updated:%u", FETCH(read_updated));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  value_set:   %u", FETCH(value_set));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete:      %u", FETCH(delete));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  del_parent:  %u", FETCH(del_parent));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_free:   %u", FETCH(iter_free));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_init:   %u", FETCH(iter_init));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_current:%u", FETCH(iter_current));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_next:   %u", FETCH(iter_next));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  enumerate:   %u", FETCH(enumerate));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  has_child:   %u", FETCH(has_child));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete_older:%u", FETCH(delete_older));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  prune:       %u", FETCH(prune));
-}
 
 // GError mechanism. The only gerrors we return from statcache are leveldb errors
 G_DEFINE_QUARK(LDB, leveldb)
@@ -113,7 +64,7 @@ unsigned long stat_cache_get_local_generation(void) {
     static unsigned long counter = 0;
     unsigned long ret;
 
-    BUMP(local_gen);
+    BUMP(statcache_local_gen);
 
     pthread_mutex_lock(&counter_mutex);
     if (counter == 0) {
@@ -159,7 +110,7 @@ static char *path2key(const char *path, bool prefix) {
     bool slash_found = false;
     size_t last_slash_pos = 0;
 
-    BUMP(path2key);
+    BUMP(statcache_path2key);
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "path2key(%s, %i)", path, prefix);
 
@@ -195,7 +146,7 @@ static char *path2key(const char *path, bool prefix) {
 static const char *key2path(const char *key) {
     size_t pos = 0;
 
-    BUMP(key2path);
+    BUMP(statcache_key2path);
 
     while (key[pos]) {
         if (key[pos] == '/')
@@ -209,7 +160,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     char *errptr = NULL;
     char storage_path[PATH_MAX];
 
-    BUMP(open);
+    BUMP(statcache_open);
 
     // Check that a directory is set.
     if (!cache_path || statcache_inject_error(0)) {
@@ -246,7 +197,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
 
 void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supplemental) {
 
-    BUMP(close);
+    BUMP(statcache_close);
 
     if (cache != NULL)
         leveldb_close(cache);
@@ -268,7 +219,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     char *errptr = NULL;
     time_t current_time;
 
-    BUMP(value_get);
+    BUMP(statcache_value_get);
 
     key = path2key(path, false);
 
@@ -334,7 +285,7 @@ void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t t
     char *key = NULL;
     char *errptr = NULL;
 
-    BUMP(updated_ch);
+    BUMP(statcache_updated_ch);
 
     asprintf(&key, "updated_children:%s", path);
 
@@ -364,7 +315,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
     time_t ret;
     size_t vallen;
 
-    BUMP(read_updated);
+    BUMP(statcache_read_updated);
 
     asprintf(&key, "updated_children:%s", path);
 
@@ -402,7 +353,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
         return;
     }
 
-    BUMP(value_set);
+    BUMP(statcache_value_set);
 
     assert(value);
 
@@ -432,7 +383,7 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
     char *key;
     char *errptr = NULL;
 
-    BUMP(delete);
+    BUMP(statcache_delete);
 
     key = path2key(path, false);
 
@@ -458,7 +409,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
     char *p;
     GError *tmpgerr = NULL;
 
-    BUMP(del_parent);
+    BUMP(statcache_del_parent);
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: %s", path);
     if ((p = path_parent(path))) {
@@ -500,7 +451,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 
 static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
 
-    BUMP(iter_free);
+    BUMP(statcache_iter_free);
 
     leveldb_iter_destroy(iter->ldb_iter);
     leveldb_readoptions_destroy(iter->ldb_options);
@@ -511,7 +462,7 @@ static void stat_cache_iterator_free(struct stat_cache_iterator *iter) {
 static struct stat_cache_iterator *stat_cache_iter_init(stat_cache_t *cache, const char *path_prefix) {
     struct stat_cache_iterator *iter = NULL;
 
-    BUMP(iter_init);
+    BUMP(statcache_iter_init);
 
     iter = malloc(sizeof(struct stat_cache_iterator));
     iter->key_prefix = path2key(path_prefix, true); // Handles allocating the duplicate.
@@ -533,7 +484,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
     const char *key;
     size_t klen, vlen;
 
-    BUMP(iter_current);
+    BUMP(statcache_iter_current);
 
     assert(iter);
 
@@ -563,7 +514,7 @@ static struct stat_cache_entry *stat_cache_iter_current(struct stat_cache_iterat
 
 static void stat_cache_iter_next(struct stat_cache_iterator *iter) {
 
-    BUMP(iter_next);
+    BUMP(statcache_iter_next);
 
     leveldb_iter_next(iter->ldb_iter);
 }
@@ -614,7 +565,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     time_t timestamp;
     time_t current_time;
 
-    BUMP(enumerate);
+    BUMP(statcache_enumerate);
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "stat_cache_enumerate(%s)", path_prefix);
 
@@ -660,7 +611,7 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     struct stat_cache_entry *entry;
     bool has_children = false;
 
-    BUMP(has_child);
+    BUMP(statcache_has_child);
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s)", path);
 
@@ -680,7 +631,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     struct stat_cache_entry *entry;
     GError *tmpgerr = NULL;
 
-    BUMP(delete_older);
+    BUMP(statcache_delete_older);
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
@@ -733,7 +684,7 @@ void stat_cache_prune(stat_cache_t *cache) {
     int issues = 0;
     time_t elapsedtime;
 
-    BUMP(prune);
+    BUMP(statcache_prune);
 
     elapsedtime = time(NULL);
 
