@@ -146,7 +146,7 @@ char *escape_except_slashes(CURL *session, const char *path) {
 
     // Convert all slashes to the non-escaped "0" character.
     for (size_t i = 0; i < path_len; ++i) {
-        if (path[i] == '/') {
+        if (path[i] == '/' || path[i] == '=' || path[i] == '?') {
             mutable_path[i] = '0';
         }
     }
@@ -165,6 +165,12 @@ char *escape_except_slashes(CURL *session, const char *path) {
     for (size_t i = 0; i < path_len; ++i) {
         if (path[i] == '/') {
             escaped_path[escaped_path_pos] = '/';
+        }
+        else if (path[i] == '=') {
+            escaped_path[escaped_path_pos] = '=';
+        }
+        else if (path[i] == '?') {
+            escaped_path[escaped_path_pos] = '?';
         }
         if (escaped_path[escaped_path_pos] == '%') {
             escaped_path_pos += 2;
