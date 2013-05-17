@@ -146,7 +146,7 @@ char *escape_except_slashes(CURL *session, const char *path) {
 
     // Convert all slashes to the non-escaped "0" character.
     for (size_t i = 0; i < path_len; ++i) {
-        if (path[i] == '/' || path[i] == '=' || path[i] == '?') {
+        if (path[i] == '/') {
             mutable_path[i] = '0';
         }
     }
@@ -166,12 +166,6 @@ char *escape_except_slashes(CURL *session, const char *path) {
         if (path[i] == '/') {
             escaped_path[escaped_path_pos] = '/';
         }
-        else if (path[i] == '=') {
-            escaped_path[escaped_path_pos] = '=';
-        }
-        else if (path[i] == '?') {
-            escaped_path[escaped_path_pos] = '?';
-        }
         if (escaped_path[escaped_path_pos] == '%') {
             escaped_path_pos += 2;
         }
@@ -185,7 +179,7 @@ finish:
     return escaped_path;
 }
 
-CURL *session_request_init(const char *path) {
+CURL *session_request_init(const char *path, const char *query_string) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
@@ -201,7 +195,13 @@ CURL *session_request_init(const char *path) {
         log_print(LOG_ERR, "Allocation failed in escape_except_slashes.");
         return NULL;
     }
-    asprintf(&full_url, "%s%s", get_base_url(), escaped_path);
+    
+    if (query_string == NULL) {
+        asprintf(&full_url, "%s%s", get_base_url(), escaped_path);
+    }
+    else {
+        asprintf(&full_url, "%s%s?%s", get_base_url(), escaped_path, query_string);
+    }
     if (full_url == NULL) {
         log_print(LOG_ERR, "Allocation failed in asprintf.");
         return NULL;

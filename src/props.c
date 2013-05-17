@@ -269,12 +269,13 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     return real_size;
 }
 
-int simple_propfind(const char *path, size_t depth, props_result_callback results, void *userdata) {
+int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results, void *userdata) {
     // Local variables for cURL.
-    CURL *session = session_request_init(path);
+    CURL *session;
     struct curl_slist *slist = NULL;
     CURLcode res;
     char *header = NULL;
+    char *query_string = NULL;
     long response_code;
 
     // Local variables for Expat and parsing.
@@ -282,6 +283,13 @@ int simple_propfind(const char *path, size_t depth, props_result_callback result
     struct propfind_state state;
 
     int ret = -1;
+
+    // Set up the request handle.
+    if (last_updated > 0) {
+        asprintf(&query_string, "changes_since=%lu", last_updated);
+    }
+    session = session_request_init(path, query_string);
+    free(query_string);
 
     // Set a blank initial state, except for the callback.
     memset(&state, 0, sizeof(struct propfind_state));
