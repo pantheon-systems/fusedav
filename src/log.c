@@ -37,8 +37,15 @@ static char base_directory_abbrev[9];
 
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
-void log_init(int verbosity, const char *base_dir) {
+void log_init(int verbosity, const char *base_url) {
+    const char *base_dir = NULL;
     maximum_verbosity = verbosity;
+
+    base_dir = strstr(base_url, "/sites");
+    if (base_dir == NULL) {
+        strcpy(base_directory_abbrev, "(null)");
+        return;
+    }
 
     // We assume "/sites/<site id>/environments/..."
     // So get ride of "/sites/", and copy the next 8, which will be an abbreviated version of the site id.

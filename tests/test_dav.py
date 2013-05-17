@@ -44,6 +44,12 @@ FUSEDAV_CONFIG = 'verbosity=6,allow_other,noexec,atomic_o_trunc,' +\
                  'ignoreutimens,ignorexattr,' +\
                  'dir_mode=0770,file_mode=0660,cache_path='
 
+def get_real_file(path):
+    f = open(path, 'r')
+    content = f.read()
+    f.close()
+    log.debug("Reading from '{0}': {1}".format(path, content))
+    return content
 
 class TestDav(unittest.TestCase):
     files_root = None
@@ -88,11 +94,14 @@ class TestDav(unittest.TestCase):
         self.assertEqual(set(os.listdir(self.files_root)), listing)
 
     def test_put(self):
-        self.dav_directory.put_file('test1.txt', 'test 1 content')
+        path = 'test1.txt'
+        content = 'test 1 content'
+        self.dav_directory.put_file(path, content)
         listing = self.dav_directory.get_listing('')
         log.debug(listing)
 
         self.assertEqual(set(os.listdir(self.files_root)), listing)
+        self.assertEqual(get_real_file(self.files_root + path), content)
 
     def test_get(self):
         path = 'test1.txt'
@@ -100,6 +109,7 @@ class TestDav(unittest.TestCase):
 
         self.dav_directory.put_file(path, content)
 
+        self.assertEqual(get_real_file(self.files_root + path), content)
         self.assertEqual(self.dav_directory.get_file(path), content)
 
     def test_mkdir(self):
@@ -120,6 +130,7 @@ class TestDav(unittest.TestCase):
 
         self.assertEqual(self.dav_directory.get_listing('/'), {source, dest})
         self.assertEqual(self.dav_directory.get_file(source), content)
+        self.assertEqual(get_real_file(self.files_root + dest), content)
         self.assertEqual(self.dav_directory.get_file(dest), content)
 
     def test_copy_dir(self):
@@ -171,7 +182,7 @@ class TestDav(unittest.TestCase):
         self.dav_server.stop()
 
         shutil.rmtree(self.cache_dir)
-        shutil.rmtree(self.files_root)
+        #shutil.rmtree(self.files_root)
 
 
 class DavDirectory:

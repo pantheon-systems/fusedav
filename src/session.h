@@ -22,11 +22,10 @@
 #include <curl/curl.h>
 
 int session_config_init(char *base, char *ca_cert, char *client_cert);
-CURL *session_request_init(const char *path);
+CURL *session_request_init(const char *path, const char *query_string);
 CURL *session_get_handle(void);
 void session_config_free(void);
 const char *get_base_url(void);
-const char *get_base_directory(void);
-const char *get_base_host(void);
+char *escape_except_slashes(CURL *session, const char *path);
 
 #endif
