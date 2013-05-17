@@ -337,6 +337,10 @@ char *strip_trailing_slash(char *fn, int *is_dir) {
     assert(is_dir);
     assert(l > 0);
 
+    // If the string is length one, it's just a slash. Don't trim it.
+    if (l == 1)
+        return fn;
+
     if ((*is_dir = (fn[l-1] == '/')))
         fn[l-1] = 0;
 
@@ -956,7 +960,7 @@ static int dav_rename(const char *from, const char *to) {
     int local_ret = -EIO;
     int fd = -1;
     struct stat st;
-    char fn[PATH_MAX], *_from;
+    char fn[PATH_MAX];
     char *escaped_to;
     struct stat_cache_value *entry = NULL;
 
@@ -964,7 +968,6 @@ static int dav_rename(const char *from, const char *to) {
 
     assert(from);
     assert(to);
-    _from = strdup(from);
 
     log_print(LOG_INFO, "CALLBACK: dav_rename(%s, %s)", from, to);
 
@@ -1069,7 +1072,6 @@ finish:
 
     free(entry);
     free(slist);
-    free(_from);
 
     // if either the server move or the local move succeed, we return
     if (server_ret == 0 || local_ret == 0)
