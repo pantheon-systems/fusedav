@@ -203,16 +203,17 @@ static void print_config(struct fusedav_config *config) {
 progressive_propfind=true
 refresh_dir_for_file_stat=true
 grace=true
-cache_uri=http://<%= @interface %>:<%= Etc.getpwnam(@id).gid %>/fusedav-peer-cache
+cache_uri=http://50.57.148.118:10061/fusedav-peer-cache
 
 ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
-client_certificate=<%= @base %>/certs/binding.pem
+client_certificate=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/certs/binding.pem
 
-cache_path=<%= @base %>/cache
-run_as_uid=<%= @id %>
-run_as_gid=<%= @id %>
+cache_path=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/cache
+run_as_uid=6f7a106722f74cc7bd96d4d06785ed78
+run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
 log_level=5
 log_level_by_section=0
+log_prefix=6f7a106722f74cc7bd96d4d06785ed78
 */
 
 static void parse_configs(struct fusedav_config *config, GError **gerr) {
@@ -245,6 +246,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, run_as_gid, STRING),
         keytuple(fusedav, log_level, INT),
         keytuple(fusedav, log_level_by_section, STRING),
+        keytuple(fusedav, log_prefix, STRING),
         {NULL, NULL, 0, 0}
         };
 
