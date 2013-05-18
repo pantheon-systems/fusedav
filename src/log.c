@@ -100,7 +100,7 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
 
     if (log_level <= local_log_level) {
         va_start(ap, format);
-        asprintf(&formatwithtid, "[%s] [tid=%lu] [sid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), log_prefix_abbrev, errlevel[log_level], format);
+        asprintf(&formatwithtid, "[%s] [tid=%lu] [bid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), log_prefix_abbrev, errlevel[log_level], format);
         assert(formatwithtid);
         ret = sd_journal_printv(log_level, formatwithtid, ap);
         free(formatwithtid);
