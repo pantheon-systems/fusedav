@@ -188,8 +188,9 @@ static void print_config(struct fusedav_config *config) {
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "cache_path %s", config->cache_path);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "run_as_uid %s", config->run_as_uid);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "run_as_gid %s", config->run_as_gid);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "verbosity %d", config->log_level);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "section_verbosity %s", config->log_level_by_section);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level %d", config->log_level);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level_by_section %s", config->log_level_by_section);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_prefix %s", config->log_prefix);
 
     // These are not subject to change by the parse config method
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "uri: %s", config->uri);
