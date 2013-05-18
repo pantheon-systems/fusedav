@@ -91,6 +91,7 @@ static int processed_gerror(const char *prefix, const char *path, GError *gerr) 
 static int simple_propfind_with_redirect(
         const char *path,
         int depth,
+        time_t last_updated,
         props_result_callback result_callback,
         void *userdata) {
 
@@ -98,7 +99,7 @@ static int simple_propfind_with_redirect(
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Performing PROPFIND of depth %d on path %s.", depth, path);
 
-    ret = simple_propfind(path, depth, result_callback, userdata);
+    ret = simple_propfind(path, depth, last_updated, result_callback, userdata);
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done with PROPFIND.");
 
@@ -192,7 +193,6 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
     bool needs_update = true;
     time_t last_updated;
     time_t timestamp;
-    char *update_path = NULL;
     int propfind_result;
 
     // Attempt to freshen the cache.
@@ -203,12 +203,9 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
             return;
         }
-        asprintf(&update_path, "%s?changes_since=%lu", path, last_updated - CLOCK_SKEW);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshening directory data: %s", path);
 
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshening directory data: %s", update_path);
-
-        propfind_result = simple_propfind_with_redirect(update_path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
-        free(update_path);
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, getdir_propfind_callback, NULL);
         // On true error, we set an error and return, avoiding the complete PROPFIND.
         // On sucess we avoid the complete PROPFIND
         // On ESTALE, we do a complete PROPFIND
@@ -230,10 +227,10 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         unsigned int min_generation;
 
         // Up log level to NOTICE temporarily to get reports in the logs
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Doing complete PROPFIND: %s", path);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
-        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, getdir_propfind_callback, NULL);
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL);
         if (propfind_result < 0 || fusedav_inject_error(1)) {
             g_set_error(gerr, fusedav_quark(), EIO, "update_directory: Complete PROPFIND failed on %s", path);
             return;
@@ -447,7 +444,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         GError *subgerr = NULL;
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
         // @TODO: Armor this better if the server returns unexpected data.
-        if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, getattr_propfind_callback, NULL) < 0) {
+        if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL) < 0) {
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
@@ -605,7 +602,7 @@ static int dav_unlink(const char *path) {
     if (!S_ISREG(st.st_mode))
         return -EISDIR;
 
-    if (!(session = session_request_init(path))) {
+    if (!(session = session_request_init(path, NULL))) {
         log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_unlink(%s): failed to get request session", path);
         return -EIO;
     }
@@ -670,7 +667,7 @@ static int dav_rmdir(const char *path) {
         return -ENOTEMPTY;
     }
 
-    if (!(session = session_request_init(fn))) {
+    if (!(session = session_request_init(fn, NULL))) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
         return -EIO;
     }
@@ -713,7 +710,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     snprintf(fn, sizeof(fn), "%s/", path);
 
-    if (!(session = session_request_init(fn))) {
+    if (!(session = session_request_init(fn, NULL))) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
         return -EIO;
     }
@@ -751,7 +748,7 @@ static int dav_rename(const char *from, const char *to) {
     int local_ret = -EIO;
     int fd = -1;
     struct stat st;
-    char fn[PATH_MAX], *_from;
+    char fn[PATH_MAX];
     char *escaped_to;
     struct stat_cache_value *entry = NULL;
 
@@ -759,7 +756,6 @@ static int dav_rename(const char *from, const char *to) {
 
     assert(from);
     assert(to);
-    _from = strdup(from);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_rename(%s, %s)", from, to);
 
@@ -774,7 +770,7 @@ static int dav_rename(const char *from, const char *to) {
         from = fn;
     }
 
-    if (!(session = session_request_init(from))) {
+    if (!(session = session_request_init(from, NULL))) {
         log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
         goto finish;
     }
@@ -864,7 +860,6 @@ finish:
 
     free(entry);
     free(slist);
-    free(_from);
 
     // if either the server move or the local move succeed, we return
     if (server_ret == 0 || local_ret == 0)

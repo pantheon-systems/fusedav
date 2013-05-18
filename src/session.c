@@ -175,7 +175,7 @@ finish:
     return escaped_path;
 }
 
-CURL *session_request_init(const char *path) {
+CURL *session_request_init(const char *path, const char *query_string) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
@@ -191,7 +191,13 @@ CURL *session_request_init(const char *path) {
         log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Allocation failed in escape_except_slashes.");
         return NULL;
     }
-    asprintf(&full_url, "%s%s", get_base_url(), escaped_path);
+    
+    if (query_string == NULL) {
+        asprintf(&full_url, "%s%s", get_base_url(), escaped_path);
+    }
+    else {
+        asprintf(&full_url, "%s%s?%s", get_base_url(), escaped_path, query_string);
+    }
     if (full_url == NULL) {
         log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Allocation failed in asprintf.");
         return NULL;
