@@ -20,11 +20,11 @@
 #include <config.h>
 #endif
 
+#include <stdio.h>
 #include <limits.h>
 #include <time.h>
 #include <zlib.h>
-#include <malloc.h>
-#include <stdio.h>
+#include <jemalloc/jemalloc.h>
 
 #include "bloom-filter.h"
 #include "log.h"

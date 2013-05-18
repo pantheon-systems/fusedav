@@ -20,13 +20,9 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
 #include <assert.h>
 #include <pthread.h>
-#include <string.h>
 #include <stdlib.h>
-#include <termios.h>
-#include <unistd.h>
 
 #include <curl/curl.h>
 
@@ -39,7 +35,6 @@
 #include "log_sections.h"
 #include "util.h"
 #include "session.h"
-#include "fusedav.h"
 
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
@@ -203,7 +198,7 @@ CURL *session_request_init(const char *path) {
     }
     curl_free(escaped_path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Initializing request to URL: %s", full_url);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Initialized request to URL: %s", full_url);
     free(full_url);
 
     //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);

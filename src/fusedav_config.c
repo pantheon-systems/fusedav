@@ -20,13 +20,12 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <grp.h>
 #include <pwd.h>
 #include <glib.h>
 #include <sys/prctl.h>
-#include <curl/curl.h>
+#include <unistd.h>
 
 #include "fusedav.h"
 #include "fusedav_config.h"
@@ -34,6 +33,14 @@
 #include "log_sections.h"
 #include "util.h"
 #include "session.h"
+
+// REVIEW: These changes assume that we will ensure that there is a new fusedav
+// available before the corresponding changes to titan go into effect. We can
+// tolerate this new fusedav running on old titan, but we cannot tolerate updating
+// to a new titan while still remounting the old fusedav.
+// After we update to new fusedav and new titan, we will need to make another
+// pass to cleanup these transition elements.
+
 
 // GError mechanisms
 G_DEFINE_QUARK(FUSEDAV_CONFIG, fusedav_config)
@@ -45,27 +52,46 @@ enum {
 
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
 
+// REVIEW: The fusedav_opts are only necessary while we have an old version of titan
+// where the .mount file's Options line includes all of these items.
+// Once we have a new titan with the short list of Options, all of which are
+// recognized internally by fusedav, we will no longer need the FUSEDAV_OPT
+// entries here. We will still need the FUSE_OPT_KEY items.
+// We can redirect ignoreutimens and ignorexattr to dummy, since we no longer
+// keep track of them in the config structure.
+// We can redirect dir_mode and file_mode to dummy, since we pass umask to fuse
+// itself. We have to 'manually' pass it to fuse in the meantime, but it will
+// be part of the Options line when the new titan lays down a new .mount file.
+// client_certificate_password is now irrelevant since we use pem not p12, so
+// it can be redirected to dummy.
+// The old titan will not lay down a new fusedav.conf file, so we still need
+// these other entries to populate the config structure correctly. With the
+// new titan, we can do away with all of them.
+// HOWEVER, we still need 'conf=' as long as we want to specify it via the Options
+// line in the .mount file
+
 static struct fuse_opt fusedav_opts[] = {
-    // [ProtocolAndPerformance]
+    // ProtocolAndPerformance
     FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
     FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
     FUSEDAV_OPT("grace",                          grace, true),
     FUSEDAV_OPT("singlethread",                   singlethread, true),
     FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
-    // [Authenticate]
+    // Authenticate
     FUSEDAV_OPT("username=%s",                    username, 0),
     FUSEDAV_OPT("password=%s",                    password, 0),
     FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
     FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
-    // [LogAndProcess]
+    // LogAndProcess
     FUSEDAV_OPT("nodaemon",                       nodaemon, true),
     FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
     FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid, 0),
     FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid, 0),
-    FUSEDAV_OPT("verbosity=%d",                   verbosity, 5),
-    FUSEDAV_OPT("section_verbosity=%s",           section_verbosity, 0),
+    FUSEDAV_OPT("verbosity=%d",                   log_level, 5),
+    FUSEDAV_OPT("section_verbosity=%s",           log_level_by_section, 0),
+    FUSEDAV_OPT("log_prefix=%s",                  log_prefix, 0),
     // Config
-    FUSEDAV_OPT("config_file=%s",                 config_file, 0),
+    FUSEDAV_OPT("conf=%s",                        conf, 0),
 
     // If we have an old version of titan and a new version of fusedav when it
     // gets restarted, we need to handle these old variables to prevent fuse startup error
@@ -83,6 +109,7 @@ static struct fuse_opt fusedav_opts[] = {
     FUSE_OPT_END
 };
 
+// We need to access dav_oper since it is accessed globally in fusedav_opt_proc
 extern struct fuse_operations dav_oper;
 
 static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
@@ -121,10 +148,10 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o nodaemon\n"
                 "        -o run_as_uid=STRING\n"
                 "        -o run_as_gid=STRING (defaults to primary group for run_as_uid)\n"
-                "        -o verbosity=NUM (use 7 for debug)\n"
-                "        -o section_verbosity=STRING (0 means use global verbosity)\n"
+                "        -o log_level=NUM (use 7 for debug)\n"
+                "        -o log_level_by_section=STRING (0 means use global verbosity)\n"
                 "    Other:\n"
-                "        -o config_file=STRING\n"
+                "        -o conf=STRING\n"
                 "\n"
                 , outargs->argv[0]);
         fuse_opt_add_arg(outargs, "-ho");
@@ -143,88 +170,48 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
     return 1;
 }
 
-static int config_privileges(struct fusedav_config *config) {
-    if (config->run_as_gid != 0) {
-        struct group *g = getgrnam(config->run_as_gid);
-        if (setegid(g->gr_gid) < 0) {
-            log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop gid to %d.", g->gr_gid);
-            return -1;
-        }
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Set egid to %d.", g->gr_gid);
-    }
-
-    if (config->run_as_uid != 0) {
-        struct passwd *u = getpwnam(config->run_as_uid);
-
-        // If there's no explict group set, use the user's primary gid.
-        if (config->run_as_gid == 0) {
-            if (setegid(u->pw_gid) < 0) {
-                log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
-                return -1;
-            }
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
-        }
-
-        if (seteuid(u->pw_uid) < 0) {
-            log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "Can't drop uid to %d.", u->pw_uid);
-            return -1;
-        }
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Set euid to %d.", u->pw_uid);
-    }
-
-    // Ensure the core is still dumpable.
-    prctl(PR_SET_DUMPABLE, 1);
-
-    return 0;
-}
-
 static void print_config(struct fusedav_config *config) {
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "CONFIG:");
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "progressive_propfind %d", config->progressive_propfind);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "grace %d", config->grace);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "singlethread %d", config->singlethread);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache_uri %s", config->cache_uri);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "CONFIG:");
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "progressive_propfind %d", config->progressive_propfind);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "grace %d", config->grace);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "singlethread %d", config->singlethread);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "cache_uri %s", config->cache_uri);
 
     // We could set these two, but they are NULL by default, so don't know how to put that in the config file
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "username %s", config->username);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "password %s", config->password);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "username %s", config->username);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "password %s", config->password);
 
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "ca_certificate %s", config->ca_certificate);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "client_certificate %s", config->client_certificate);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "nodaemon %d", config->nodaemon);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache_path %s", config->cache_path);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "run_as_uid %s", config->run_as_uid);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "run_as_gid %s", config->run_as_gid);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "verbosity %d", config->verbosity);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "section_verbosity %s", config->section_verbosity);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "ca_certificate %s", config->ca_certificate);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "client_certificate %s", config->client_certificate);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "nodaemon %d", config->nodaemon);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "cache_path %s", config->cache_path);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "run_as_uid %s", config->run_as_uid);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "run_as_gid %s", config->run_as_gid);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "verbosity %d", config->log_level);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "section_verbosity %s", config->log_level_by_section);
 
     // These are not subject to change by the parse config method
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "uri: %s", config->uri);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "cache %p", config->cache);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "config_file %s", config->config_file);
-
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "uri: %s", config->uri);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "cache %p", config->cache);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "conf %s", config->conf);
 }
 
 /* fusedav.conf looks something like:
-    [ProtocolAndPerformance]
-    progressive_propfind=true
-    refresh_dir_for_file_stat=true
-    grace=true
-    singlethread=false
-    cache_uri=http://50.57.148.118:10061/fusedav-peer-cache
+[fusedav]
+progressive_propfind=true
+refresh_dir_for_file_stat=true
+grace=true
+cache_uri=http://<%= @interface %>:<%= Etc.getpwnam(@id).gid %>/fusedav-peer-cache
 
-    [Authenticate]
-    ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
-    client_certificate=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/certs/binding.pem
+ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
+client_certificate=<%= @base %>/certs/binding.pem
 
-    [LogAndProcess]
-    nodaemon=false
-    cache_path=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/cache
-    run_as_uid=6f7a106722f74cc7bd96d4d06785ed78
-    run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
-    verbosity=5
-    section_verbosity=0
+cache_path=<%= @base %>/cache
+run_as_uid=<%= @id %>
+run_as_gid=<%= @id %>
+log_level=5
+log_level_by_section=0
 */
 
 static void parse_configs(struct fusedav_config *config, GError **gerr) {
@@ -249,16 +236,14 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, progressive_propfind, BOOL),
         keytuple(fusedav, refresh_dir_for_file_stat, BOOL),
         keytuple(fusedav, grace, BOOL),
-        keytuple(fusedav, singlethread, BOOL),
         keytuple(fusedav, cache_uri, STRING),
         keytuple(fusedav, ca_certificate, STRING),
         keytuple(fusedav, client_certificate, STRING),
-        keytuple(fusedav, nodaemon, BOOL),
         keytuple(fusedav, cache_path, STRING),
         keytuple(fusedav, run_as_uid, STRING),
         keytuple(fusedav, run_as_gid, STRING),
-        keytuple(fusedav, verbosity, INT),
-        keytuple(fusedav, section_verbosity, STRING),
+        keytuple(fusedav, log_level, INT),
+        keytuple(fusedav, log_level_by_section, STRING),
         {NULL, NULL, 0, 0}
         };
 
@@ -267,7 +252,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     // JB FIX ME!
     // Step one: make sure this new version of fusedav is running on all mounts before merging
     //           changes to titan and the mount file. If the mount file is updated to include
-    //           config_file as an option, the version of fusedav before this one will barf
+    //           conf as an option, the version of fusedav before this one will barf
     //           since it's not a known option.
     // Step two: merge changes to titan including config file
     // Proviso:  ultimately, we want to ensure there is a config file, and err if one is not present
@@ -275,19 +260,20 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     //           from non-existant config files
 
     // Bail for now if we don't have a config file
-    if (config->config_file == NULL) {
-        config->grace = true; // set default if we don't yet have a config file
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_configs: config_file is null");
+    // @TODO make this an error once the new titan rolls out
+    if (config->conf == NULL) {
+        config->grace = true; // set default if we don't yet have a config file @TODO get rid of this
+        log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "parse_configs: conf was not specified");
         return;
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_CONFIG, "parse_configs: file %s", config->config_file);
+    log_print(LOG_INFO, SECTION_CONFIG_DEFAULT, "parse_configs: file %s", config->conf);
 
     /* Set up the key file stuff */
 
     keyfile = g_key_file_new();
 
-    bret = g_key_file_load_from_file(keyfile, config->config_file, G_KEY_FILE_NONE, &tmpgerr);
+    bret = g_key_file_load_from_file(keyfile, config->conf, G_KEY_FILE_NONE, &tmpgerr);
     // g_key_file_load_from_file does not seem to set error on null file
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on load_from_file");
@@ -296,8 +282,6 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         g_set_error(gerr, fusedav_config_quark(), ENOENT, "parse_configs: Error on load_from_file");
         return;
     }
-
-    /* Config, Certificate, and Log args */
 
     /* These populate the config structure */
 
@@ -330,16 +314,15 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         // fusedav_opts above. The bools never specify a specifier (e.g. %d), but it seems are given
         // values via *(int *), which seems like it would break a lot of stuff, since bools only take 1 byte.
         // Since scanf is barely more type-safe than memcpy, and it can't accommodate a bool,
-        // let's leave it as it is for now. We currently only have strings and bools, and even with ints,
+        // let's leave it as it is for now. We currently only have strings, ints, and bools, and
         // this would be preferable for dealing with bools.
         if (tmpgerr == NULL) {
             memcpy(field, &uvalue.vvalue, size);
         }
         else {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_CONFIG, "parse_config: error on %s : %s", config_entries[idx].key, tmpgerr->message);
+            log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "parse_config: error on %s : %s", config_entries[idx].key, tmpgerr->message);
             g_clear_error(&tmpgerr);
         }
-
     }
 
     g_key_file_free(keyfile);
@@ -349,11 +332,47 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     return;
 }
 
+static int config_privileges(struct fusedav_config *config) {
+    if (config->run_as_gid != 0) {
+        struct group *g = getgrnam(config->run_as_gid);
+        if (setegid(g->gr_gid) < 0) {
+            log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop gid to %d.", g->gr_gid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set egid to %d.", g->gr_gid);
+    }
+
+    if (config->run_as_uid != 0) {
+        struct passwd *u = getpwnam(config->run_as_uid);
+
+        // If there's no explict group set, use the user's primary gid.
+        if (config->run_as_gid == 0) {
+            if (setegid(u->pw_gid) < 0) {
+                log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+                return -1;
+            }
+            log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+        }
+
+        if (seteuid(u->pw_uid) < 0) {
+            log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop uid to %d.", u->pw_uid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set euid to %d.", u->pw_uid);
+    }
+
+    // Ensure the core is still dumpable.
+    prctl(PR_SET_DUMPABLE, 1);
+
+    return 0;
+}
+
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr) {
     GError *tmpgerr = NULL;
+    const char *log_prefix;
 
-    // default verbosity: LOG_NOTICE
-    config->verbosity = 5;
+    // default log_level: LOG_NOTICE
+    config->log_level = 5;
 
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0) {
@@ -363,7 +382,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
 
     parse_configs(config, &tmpgerr);
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "Could not open fusedav config file: %s", config->config_file);
+        g_propagate_prefixed_error(gerr, tmpgerr, "Could not open fusedav config file: %s", config->conf);
         return;
     }
 
@@ -372,22 +391,26 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    // Set log levels. We use get_base_directory for the log message, so this call needs to follow
-    // session_config_init, where base_directory is set
-    log_init(config->verbosity, config->section_verbosity, get_base_url());
-    debug = (config->verbosity >= 7);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Log verbosity: %d.", config->verbosity);
+    // Set log levels. We use get_base_url for the log message, so this call needs to follow
+    // session_config_init, where base_url is set
+    // @TODO when new titan rolls out, just pass in config->log_prefix
+    if (config->log_prefix) log_prefix = config->log_prefix;
+    else log_prefix = get_base_url();
+    log_init(config->log_level, config->log_level_by_section, log_prefix);
+    debug = (config->log_level >= 7);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
     if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse the command line.");
         return;
     }
 
+    // REVIEW: is there a best place for fuse_opt_add_arg? Does it need to follow fuse_parse_cmdline?
     // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
     // @TODO temporary to make new fusedav work with old titan, until everyone is up to date
     fuse_opt_add_arg(args, "-oumask=0007");
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Parsed command line.");
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Parsed command line.");
 
     if (!config->uri) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "Missing the required URI argument.");
@@ -395,9 +418,9 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     }
 
     if (config->cache_uri)
-        log_print(LOG_INFO, SECTION_FUSEDAV_MAIN, "Using cache URI: %s", config->cache_uri);
+        log_print(LOG_INFO, SECTION_CONFIG_DEFAULT, "Using cache URI: %s", config->cache_uri);
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to configure privileges.");
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Attempting to configure privileges.");
     if (config_privileges(config) < 0) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "Failed to configure privileges.");
         return;

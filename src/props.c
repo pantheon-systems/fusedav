@@ -20,12 +20,11 @@
 #include <config.h>
 #endif
 
-#include <stdlib.h>
+#include <unistd.h>
 #include <expat.h>
 #include <curl/curl.h>
-#include <time.h>
-#include <unistd.h> // For getuid/getgid.
 #include <errno.h>
+#include <sys/stat.h>
 #include <uriparser/Uri.h>
 
 #include "log.h"

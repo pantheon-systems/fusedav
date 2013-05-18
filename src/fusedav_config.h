@@ -25,29 +25,41 @@
 
 #include "statcache.h"
 
+// REVIEW: the following is not precisely true anymore
+
 // Access with struct fusedav_config *config = fuse_get_context()->private_data;
+
+// We have separated all fusedav options (below) from fuse options (gid, uid, umask...)
+// All fusedav options are configured by our mechanism; all fuse options by fuse
+// via the Options line in the .mount file. 'conf' is the exception.
+// We can still access config via the above mechanism, but it might be more logical just
+// to expose it in some other way now.
+
+// REVIEW: do we need username and password?
+// REVIEW: decide whether to keep singlethread and nodaemon or just make developers do a code change
+// if they need to run in one of these modes. For now they need to be here for old titan's
+// .mount Options line
+
+// We populate these entries during configuration, and use them in our fusedav code
 struct fusedav_config {
     char *uri;
-    // [ProtocolAndPerformance]
     bool progressive_propfind;
     bool refresh_dir_for_file_stat;
     bool grace;
     bool singlethread;
+    bool nodaemon;
     char *cache_uri;
-    // [Authenticate]
     char *username;
     char *password;
     char *ca_certificate;
     char *client_certificate;
-    // [LogAndProcess]
-    bool nodaemon;
     char *cache_path;
     char *run_as_uid;
     char *run_as_gid;
-    int  verbosity;
-    char *section_verbosity;
-    // Other
-    char *config_file;
+    int  log_level;
+    char *log_level_by_section;
+    char *log_prefix;
+    char *conf;
     stat_cache_t *cache;
     struct stat_cache_supplemental cache_supplemental;
     // To be removed when titan and fusedav are in sync

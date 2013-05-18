@@ -20,29 +20,24 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
-#include <inttypes.h>
-#include <time.h>
-#include <utime.h>
+#include <unistd.h>
 #include <dirent.h>
-#include <string.h>
-#include <malloc.h>
-#include <pthread.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <sys/stat.h>
 #include <sys/file.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <curl/curl.h>
+#include <jemalloc/jemalloc.h>
 
 #include "filecache.h"
 #include "statcache.h"
-#include "fusedav.h"
 #include "log.h"
 #include "log_sections.h"
 #include "util.h"
-#include "signal_handling.h"
+#include "stats.h"
+#include "session.h"
 
 #define REFRESH_INTERVAL 3
 #define CACHE_FILE_ENTROPY 20

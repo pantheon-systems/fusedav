@@ -21,84 +21,88 @@
 #endif
 
 #include <systemd/sd-journal.h>
-#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-#include <limits.h>
-
 #include <unistd.h>
 #include <syscall.h>
 #include <assert.h>
+#include <jemalloc/jemalloc.h>
 
 #include "log.h"
 #include "log_sections.h"
 
-static unsigned int maximum_verbosity = 5;
-static unsigned int section_verbosity[SECTIONS] = {0};
-static char base_directory_abbrev[9] = {0};
+static unsigned int global_log_level = 5;
+static unsigned int section_log_levels[SECTIONS] = {0};
+static char log_prefix_abbrev[9] = {0};
 
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
-void log_init(unsigned int verbosity, const char *section_verbosity_str, const char *base_url) {
-    const char *base_dir = NULL;
+void log_init(unsigned int log_level, const char *log_level_by_section, const char *log_prefix) {
     unsigned int vlen;
+    const char *base_dir = NULL;
 
-    maximum_verbosity = verbosity;
+    global_log_level = log_level;
 
-    base_dir = strstr(base_url, "/sites");
-    if (base_dir == NULL) {
-        strcpy(base_directory_abbrev, "(null)");
-        return;
-    }
+    // @TODO once we have the new titan with log_prefix, remove base_dir code
+    base_dir = strstr(log_prefix, "/sites");
 
-    // We assume "/sites/<site id>/environments/..."
-    // So get ride of "/sites/", and copy the next 8, which will be an abbreviated version of the site id.
-    // If base_dir does not follow this pattern, we don't know what to do, so just copy bytes 8-15 and
-    // we'll get what we get.
-    if (strlen(base_dir) > 15) {
-        strncpy(base_directory_abbrev, base_dir + 7, 8);
+    if (log_prefix == NULL) {
+        strncpy(log_prefix_abbrev, "(null)", 8);
     }
-    // But of course, if base_dir is too short, but at least 8, copy the first 8. We have no idea
-    // what this will look like.
-    else if (strlen(base_dir) > 8) {
-        strncpy(base_directory_abbrev, base_dir, 8);
+    else if(base_dir != NULL) {
+        if (strlen(base_dir) > 15) {
+            strncpy(log_prefix_abbrev, base_dir + 7, 8);
+         }
+        // But of course, if base_dir is too short, but at least 8, copy the first 8. We have no idea
+        // what this will look like.
+        else if (strlen(base_dir) > 8) {
+            strncpy(log_prefix_abbrev, base_dir, 8);
+        }
+        // But of course, if it doesn't have 8 chars, just copy in what it does have
+        else if (strlen(base_dir) > 0) {
+            strcpy(log_prefix_abbrev, base_dir);
+        }
+        else {
+            strncpy(log_prefix_abbrev, "(null)", 8);
+        }
     }
-    // But of course, if it doesn't have 8 chars, just copy in what it does have
-    else if (strlen(base_dir) > 0) {
-        strcpy(base_directory_abbrev, base_dir);
+    else if (strlen(log_prefix) > 0) {
+        strncpy(log_prefix_abbrev, log_prefix, 8);
     }
     // But of course, if it's an empty string, just set site id to (null)
     else {
-        strcpy(base_directory_abbrev, "(null)");
+        strncpy(log_prefix_abbrev, "(null)", 8);
     }
 
     // JB @TODO Until both fusedav and titan are on the new versions reading the config file,
     // vstr will be NULL, so check and take evasive measures. Later, we should be able to
     // remove this check
-    if (section_verbosity_str == NULL) return;
-    vlen = strlen(section_verbosity_str);
+    if (log_level_by_section == NULL) return;
+
+    // If we see a section whose value is greater than vlen, its value will be 0 by default.
+    // Zero means use the global log level
+    vlen = strlen(log_level_by_section);
     for (unsigned int idx = 0; idx < vlen; idx++) {
-        section_verbosity[idx] = section_verbosity_str[idx] - '0'; // Looking for an integer 0-7
+        section_log_levels[idx] = log_level_by_section[idx] - '0'; // Looking for an integer 0-7
     }
 }
 
-int log_print(unsigned int verbosity, unsigned int section, const char *format, ...) {
+int log_print(unsigned int log_level, unsigned int section, const char *format, ...) {
     int ret = 0;
     va_list ap;
     char *formatwithtid;
-    unsigned int local_verbosity = maximum_verbosity;
+    unsigned int local_log_level = global_log_level;
 
     // If the section verbosity is not 0 for this section, use it as the verbosity level;
-    // otherwise, just use the global maximum_verbosity
-    if (section < SECTIONS && section_verbosity[section]) {
-        local_verbosity = section_verbosity[section];
+    // otherwise, just use the global_log_level
+    if (section < SECTIONS && section_log_levels[section]) {
+        local_log_level = section_log_levels[section];
     }
 
-    if (verbosity <= local_verbosity) {
+    if (log_level <= local_log_level) {
         va_start(ap, format);
-        asprintf(&formatwithtid, "[%s] [tid=%lu] [sid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), base_directory_abbrev, errlevel[verbosity], format);
+        asprintf(&formatwithtid, "[%s] [tid=%lu] [sid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), log_prefix_abbrev, errlevel[log_level], format);
         assert(formatwithtid);
-        ret = sd_journal_printv(verbosity, formatwithtid, ap);
+        ret = sd_journal_printv(log_level, formatwithtid, ap);
         free(formatwithtid);
         va_end(ap);
     }

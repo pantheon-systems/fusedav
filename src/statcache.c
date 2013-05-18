@@ -22,24 +22,17 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <inttypes.h>
-#include <time.h>
-#include <string.h>
-#include <malloc.h>
-#include <pthread.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <sys/stat.h>
-#include <limits.h>
+#include <jemalloc/jemalloc.h>
 
 #include "statcache.h"
 #include "fusedav.h"
 #include "log.h"
 #include "log_sections.h"
-#include "session.h"
 #include "bloom-filter.h"
 #include "util.h"
-#include "signal_handling.h"
+#include "stats.h"
 
 #define CACHE_TIMEOUT 3
 

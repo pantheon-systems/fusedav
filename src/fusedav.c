@@ -20,35 +20,11 @@
 #include <config.h>
 #endif
 
-#include <signal.h>
 #include <pthread.h>
-#include <time.h>
 #include <assert.h>
-#include <stdio.h>
-#include <stddef.h>
 #include <stdbool.h>
-#include <string.h>
-#include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <dirent.h>
-#include <errno.h>
-#include <sys/statfs.h>
-#include <sys/file.h>
-#include <getopt.h>
-#include <sys/types.h>
-#include <syscall.h>
-#include <sys/prctl.h>
-
-#include <grp.h>
-#include <pwd.h>
-
-#include <curl/curl.h>
-
-#include <fuse.h>
 #include <jemalloc/jemalloc.h>
-
-#include <yaml.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -60,6 +36,7 @@
 #include "util.h"
 #include "fusedav_config.h"
 #include "signal_handling.h"
+#include "stats.h"
 
 mode_t mask = 0;
 int debug = 1;
@@ -164,18 +141,6 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done with fill_stat_generic.");
-}
-
-char *strip_trailing_slash(char *fn, int *is_dir) {
-    size_t l = strlen(fn);
-    assert(fn);
-    assert(is_dir);
-    assert(l > 0);
-
-    if ((*is_dir = (fn[l-1] == '/')))
-        fn[l-1] = 0;
-
-    return fn;
 }
 
 static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st, unsigned long status_code) {
@@ -1377,19 +1342,19 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Created the FUSE object.");
 
-    if (config.nodaemon) {
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Running in foreground (skipping daemonization).");
-    }
-    else {
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to daemonize.");
-        if (fuse_daemonize(/* 0 means daemonize */ 0) < 0) {
-            log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to daemonize.");
-            goto finish;
-        }
+    // If in development you need to run in the foreground for debugging, just
+    // pass 1 to fuse_daemonize
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to daemonize.");
+    if (fuse_daemonize(/* 0 means daemonize */ 0) < 0) {
+        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to daemonize.");
+        goto finish;
     }
 
     // REVIEW: moving call to config_privileges from here to configure_fusedav() above. Is this ok?
+
     // Error injection mechanism. Should only be run during development.
+    // It should only be triggered by running make INJECT_ERRORS=1. So under
+    // normal circumstances, injecting_errors is #define'd to 'false'
     if (injecting_errors) {
         if (pthread_create(&error_injection_thread, NULL, inject_error_mechanism, NULL)) {
             log_print(LOG_INFO, SECTION_FUSEDAV_MAIN, "Failed to create error injection thread.");
