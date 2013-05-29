@@ -41,7 +41,7 @@ else:
 
 DAV_CLIENT = 'fusedav'
 
-FUSEDAV_CONFIG = 'noexec,atomic_o_trunc,' +\
+FUSEDAV_CONFIG = 'nodaemon,noexec,atomic_o_trunc,' +\
                  'hard_remove,umask=0007,cache_path='
 
 
@@ -72,15 +72,13 @@ class TestDav(unittest.TestCase):
         log.debug('Cache dir: {0}'.format(self.cache_dir))
         config = FUSEDAV_CONFIG + self.cache_dir
 
-        #command = ['mount', dav_url, self.mount_point, '-t', DAV_CLIENT, '-o', config]
         # The current working directory is <dir we started in>/_trial_temp,
-        # so use ".." find "src/fusedav"
-        log.debug("pwd: " + os.getcwd())
+        # so use ".." to find "src/fusedav"
         command = [ '../src/fusedav', dav_url, self.mount_point, '-o', config]
         log.debug('Executing: ' + ' '.join(command))
-        # subprocess.call(command)
+        # open such that we can get the process id
         self.fuseprocess = subprocess.Popen(command, shell=False)
-        log.debug('pid is ' + str(self.fuseprocess.pid) + ':' + str(os.getpgid(self.fuseprocess.pid)))
+        log.debug('pid is ' + str(self.fuseprocess.pid))
 
         self.dav_directory = DavDirectory(self.mount_point, self.files_root)
 
