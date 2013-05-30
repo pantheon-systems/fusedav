@@ -60,6 +60,11 @@ struct stat_cache_value {
     char remote_generation[RGEN_LEN];
 };
 
+struct timestamps {
+    time_t timestamp;
+    time_t prev_timestamp;
+};
+
 void stat_cache_print_stats(void);
 int print_stat(struct stat *stbuf, const char *title);
 
@@ -70,7 +75,7 @@ void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supple
 
 struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *path, bool skip_freshness_check, GError **gerr);
 void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp, GError **gerr);
-time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, GError **gerr);
+struct timestamps stat_cache_read_updated_children(stat_cache_t *cache, const char *path, GError **gerr);
 void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr);
 void stat_cache_value_free(struct stat_cache_value *value);
 
