@@ -303,7 +303,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         //log_print(LOG_DEBUG, "Current time: %lu", current_time);
         if (current_time - value->updated > CACHE_TIMEOUT) {
             char *directory;
-            time_t directory_updated;
+            struct timestamps directory_updated;
             int is_dir;
 
             log_print(LOG_DEBUG, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
@@ -317,7 +317,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
             }
             //log_print(LOG_DEBUG, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
             free(directory);
-            if (current_time - directory_updated > CACHE_TIMEOUT) {
+            if (current_time - directory_updated.timestamp > CACHE_TIMEOUT) {
                 log_print(LOG_DEBUG, "%s is too old.", path);
                 free(value);
                 return NULL;
@@ -328,20 +328,73 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     return value;
 }
 
+struct timestamps stat_cache_read_updated_children(stat_cache_t *cache, const char *path, GError **gerr) {
+    leveldb_readoptions_t *options;
+    char *key = NULL;
+    char *errptr = NULL;
+    struct timestamps *value = NULL;
+    struct timestamps ret;
+    size_t vallen;
+
+    BUMP(read_updated);
+
+    asprintf(&key, "updated_children:%s", path);
+
+    options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
+    value = (struct timestamps *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
+    leveldb_readoptions_destroy(options);
+
+    free(key);
+
+    if (errptr != NULL || statcache_inject_error(4)) {
+        struct timestamps ts;
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_read_updated_children: leveldb_get error: %s", errptr);
+        free(errptr);
+        free(value);
+        ts.timestamp = 0;
+        ts.prev_timestamp = 0;
+        return ts;
+    }
+
+    if (value == NULL) {
+        struct timestamps ts;
+        ts.timestamp = 0;
+        ts.prev_timestamp = 0;
+        return ts;
+    }
+
+    ret = *value;
+
+    log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, ret);
+
+    free(value);
+    return ret;
+}
+
 void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t timestamp, GError **gerr) {
     leveldb_writeoptions_t *options;
     char *key = NULL;
     char *errptr = NULL;
+    struct timestamps *setvalue;
+    struct timestamps value;
 
     BUMP(updated_ch);
 
     asprintf(&key, "updated_children:%s", path);
 
     options = leveldb_writeoptions_create();
-    if (timestamp == 0)
+    if (timestamp == 0) {
         leveldb_delete(cache, options, key, strlen(key) + 1, &errptr);
-    else
-        leveldb_put(cache, options, key, strlen(key) + 1, (char *) &timestamp, sizeof(time_t), &errptr);
+    }
+    else {
+        value = stat_cache_read_updated_children(cache, path, NULL);
+        setvalue = calloc(1, sizeof(struct timestamps));
+        setvalue->timestamp = timestamp;
+        setvalue->prev_timestamp = value.timestamp;
+        leveldb_put(cache, options, key, strlen(key) + 1, (char *) setvalue, sizeof(time_t), &errptr);
+        log_print(LOG_DEBUG, "stat_cache_updated_children: Updated timestamp %ul", setvalue->timestamp);
+    }
     leveldb_writeoptions_destroy(options);
 
     free(key);
@@ -353,42 +406,6 @@ void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t t
     }
 
     return;
-}
-
-time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, GError **gerr) {
-    leveldb_readoptions_t *options;
-    char *key = NULL;
-    char *errptr = NULL;
-    time_t *value = NULL;
-    time_t ret;
-    size_t vallen;
-
-    BUMP(read_updated);
-
-    asprintf(&key, "updated_children:%s", path);
-
-    options = leveldb_readoptions_create();
-    leveldb_readoptions_set_fill_cache(options, false);
-    value = (time_t *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
-    leveldb_readoptions_destroy(options);
-
-    free(key);
-
-    if (errptr != NULL || statcache_inject_error(4)) {
-        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_read_updated_children: leveldb_get error: %s", errptr);
-        free(errptr);
-        free(value);
-        return 0;
-    }
-
-    if (value == NULL) return 0;
-
-    ret = *value;
-
-    log_print(LOG_DEBUG, "Children for directory %s were updated at timestamp %lu.", path, ret);
-
-    free(value);
-    return ret;
 }
 
 void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr) {
@@ -610,7 +627,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     unsigned found_entries = 0;
-    time_t timestamp;
+    struct timestamps timestamp;
     time_t current_time;
 
     BUMP(enumerate);
@@ -622,14 +639,14 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
         // Pass NULL for gerr; not tracking error, just zero return
         timestamp = stat_cache_read_updated_children(cache, path_prefix, NULL);
 
-        if (timestamp == 0) {
+        if (timestamp.timestamp == 0) {
             return -STAT_CACHE_NO_DATA;
         }
 
         // Check for cache values which are too old; but timestamp = 0 needs to trigger below
         current_time = time(NULL);
-        if (current_time - timestamp > CACHE_TIMEOUT) {
-            log_print(LOG_DEBUG, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
+        if (current_time - timestamp.timestamp > CACHE_TIMEOUT) {
+            log_print(LOG_DEBUG, "cache value too old: %s %u", path_prefix, (unsigned)timestamp.timestamp);
             return -STAT_CACHE_OLD_DATA;
         }
     }

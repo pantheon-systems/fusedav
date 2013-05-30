@@ -391,11 +391,23 @@ static void getdir_cache_callback(__unused const char *path_prefix, const char *
     }
 }
 
+// Return the timestamp accounting for CLOCK_SKEW. But to avoid returning the same
+// event on successive propfinds, only return events since the previous timestamp.
+static time_t clock_skew(struct timestamps timestamp) {
+    // Since we've already seen events up to and including those at
+    // prev_timestamp, only get those starting with the next tick
+    time_t skew = (timestamp.timestamp - timestamp.prev_timestamp) - 1;
+    // But if the difference between timestamp and prev_timestamp is large,
+    // just use CLOCK_SKEW
+    if (skew > CLOCK_SKEW) skew = CLOCK_SKEW;
+    return timestamp.timestamp - skew;
+}
+
 static void update_directory(const char *path, bool attempt_progessive_update, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
     bool needs_update = true;
-    time_t last_updated;
+    struct timestamps last_updated;
     time_t timestamp;
     int propfind_result;
 
@@ -409,7 +421,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         }
         log_print(LOG_DEBUG, "Freshening directory data: %s", path);
 
-        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, getdir_propfind_callback, NULL);
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, clock_skew(last_updated), getdir_propfind_callback, NULL);
         // On true error, we set an error and return, avoiding the complete PROPFIND.
         // On sucess we avoid the complete PROPFIND
         // On ESTALE, we do a complete PROPFIND
@@ -600,7 +612,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     char *nepp = NULL;
     GError *tmpgerr = NULL;
     int is_dir = 0;
-    time_t parent_children_update_ts;
+    struct timestamps parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
     bool skip_freshness_check = false;
@@ -680,14 +692,14 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         goto fail;
     }
-    log_print(LOG_DEBUG, "Parent was updated: %s %lu", parent_path, parent_children_update_ts);
+    log_print(LOG_DEBUG, "Parent was updated: %s %lu", parent_path, parent_children_update_ts.timestamp);
 
     // If the parent directory is out of date, update it.
-    if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
+    if (parent_children_update_ts.timestamp < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         GError *subgerr = NULL;
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
         // In that case, skip the progressive propfind and go straight to complete propfind
-        update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
+        update_directory(parent_path, (parent_children_update_ts.timestamp > 0), &subgerr);
         if (subgerr) {
             // If the error is non-EIO or grace is off, fail.
             if (subgerr->code != EIO || !config->grace) {
