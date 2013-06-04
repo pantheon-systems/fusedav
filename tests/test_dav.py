@@ -160,25 +160,20 @@ class TestDav(unittest.TestCase):
 
     def tearDown(self):
         time.sleep(1)
-        log.debug("Trying to remove directory {0}".format(self.mount_point))
-        for x in xrange(5):
-            try:
-                command = [ 'fusermount', '-uz', self.mount_point ]
-                subprocess.Popen(command, shell=False)
-                os.kill(self.fuseprocess.pid, signal.SIGTERM)
-                shutil.rmtree(self.mount_point)
-                log.debug("Process ({0}) terminated; Directory removed {1}".format(self.fuseprocess.pid, self.mount_point))
-                break
-            except Exception as e:
-                print e
-                time.sleep(1)
-        else:
-            log.error("Unable to safely remove: {0}".format(self.mount_point))
+        log.debug("Trying to unmount directory {0}".format(self.mount_point))
+        try:
+            command = [ 'fusermount', '-uz', self.mount_point ]
+            subprocess.Popen(command, shell=False)
+        except Exception as e:
+            print "Exception: ", e
 
         self.dav_server.stop()
 
+        shutil.rmtree(self.mount_point)
         shutil.rmtree(self.cache_dir)
         shutil.rmtree(self.files_root)
+        subprocess.Popen.kill(self.fuseprocess)
+        log.debug("Process ({0}) terminated; Directory removed {1}".format(self.fuseprocess.pid, self.mount_point))
 
 
 class DavDirectory:
