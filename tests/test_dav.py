@@ -41,6 +41,8 @@ else:
 
 DAV_CLIENT = 'fusedav'
 
+# if we set nodaemon, we can use the pid we get on open to cleanup on close
+# REVIEW: would this affect basic functionality?
 FUSEDAV_CONFIG = 'nodaemon,noexec,atomic_o_trunc,' +\
                  'hard_remove,umask=0007,cache_path='
 
@@ -72,7 +74,7 @@ class TestDav(unittest.TestCase):
         log.debug('Cache dir: {0}'.format(self.cache_dir))
         config = FUSEDAV_CONFIG + self.cache_dir
 
-        # The current working directory is <dir we started in>/_trial_temp,
+        # The current working directory is <dir we started in>/_trial_temp<_something>,
         # so use ".." to find "src/fusedav"
         command = [ '../src/fusedav', dav_url, self.mount_point, '-o', config]
         log.debug('Executing: ' + ' '.join(command))
@@ -161,13 +163,11 @@ class TestDav(unittest.TestCase):
         log.debug("Trying to remove directory {0}".format(self.mount_point))
         for x in xrange(5):
             try:
-                #subprocess.call(['umount', self.mount_point])
                 command = [ 'fusermount', '-uz', self.mount_point ]
                 subprocess.Popen(command, shell=False)
                 os.kill(self.fuseprocess.pid, signal.SIGTERM)
-                #log.debug("Process ({0}) terminated; Directory removed {1}".format(self.fuseprocess.pid, self.mount_point))
-                # os.rmdir(self.mount_point)
                 shutil.rmtree(self.mount_point)
+                log.debug("Process ({0}) terminated; Directory removed {1}".format(self.fuseprocess.pid, self.mount_point))
                 break
             except Exception as e:
                 print e
