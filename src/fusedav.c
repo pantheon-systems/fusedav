@@ -361,6 +361,24 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     log_print(LOG_INFO, "getdir_propfind_callback: %s (%lu)", path, status_code);
 
     if (status_code == 410) {
+        struct stat_cache_value *existing;
+
+        // @TODO Figure out a cleaner way to avoid overwriting newer entrie.
+        existing = stat_cache_value_get(config->cache, path, true, &gerr);
+        if (gerr) {
+            processed_gerror("getdir_propfind_callback: ", path, gerr);
+            return;
+        }
+
+        // If there is an existing cache item, and it matches or post-dates
+        // the deletion event, ignore it.
+        if (existing && existing->updated >= st.st_ctime) {
+            log_print(LOG_DEBUG, "Ignoring outdated removal of path: %s", path);
+            free(existing);
+            return;
+        }
+
+        free(existing);
         log_print(LOG_DEBUG, "Removing path: %s", path);
         stat_cache_delete(config->cache, path, &gerr);
         // @TODO call processed_gerror here because gerr begins here, and is not passed back.
