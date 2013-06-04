@@ -372,7 +372,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
 
         // If there is an existing cache item, and it matches or post-dates
         // the deletion event, ignore it.
-        if (existing && st.st_ctime >= existing->updated) {
+        if (existing && existing->updated >= st.st_ctime) {
             log_print(LOG_DEBUG, "Ignoring outdated removal of path: %s", path);
             free(existing);
             return;
