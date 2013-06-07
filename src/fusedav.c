@@ -284,7 +284,7 @@ static int simple_propfind_with_redirect(
     return ret;
 }
 
-static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd) {
+static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
 
     // initialize to 0
@@ -323,12 +323,9 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
         st->st_size = lseek(fd, 0, SEEK_END);
         st->st_blocks = (st->st_size+511)/512;
         log_print(LOG_DEBUG, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", fd, st->st_size, errno, strerror(errno));
-        // Silently overlook error
         if (st->st_size < 0) {
-            log_print(LOG_ERR, "fill_stat_generic: failed to lseek: fd = %d", fd);
-            st->st_size = 0;
-            st->st_blocks = 1;
-            st->st_blksize = 1;
+            g_set_error(gerr, fusedav_quark(), errno, "fill_stat_generic failed lseek");
+            return;
         }
     }
 
@@ -638,7 +635,11 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (is_base_directory && config->dir_mode && config->uid && config->gid) {
 
         // mode = 0 (unspecified), is_dir = true; fd = -1, irrelevant for dir
-        fill_stat_generic(stbuf, 0, true, -1);
+        fill_stat_generic(stbuf, 0, true, -1, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
+            return;
+        }
 
         log_print(LOG_DEBUG, "Used constructed stat data for base directory.");
         return;
@@ -653,7 +654,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // Propagate the error but let the rest of the logic determine return value
     // Unless we change the logic in get_stat_from_cache, it will return ENONENT
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "get _stat: ");
+        g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         return;
     }
     else if (ret == 0) {
@@ -766,7 +767,11 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
         // Fill in generic values
         // We can't be a directory if we have a null path
         // mode = 0 (unspecified), is_dir = false; fd to get size
-        fill_stat_generic(stbuf, 0, false, fd);
+        fill_stat_generic(stbuf, 0, false, fd, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "common_getattr: ");
+            return;
+        }
     }
 
     // Zero-out unused nanosecond fields.
@@ -959,8 +964,10 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     // Populate stat cache.
     // is_dir = true; fd = -1 (not a regular file)
-    fill_stat_generic(&(value.st), mode, true, -1);
-    stat_cache_value_set(config->cache, path, &value, &gerr);
+    fill_stat_generic(&(value.st), mode, true, -1, &gerr);
+    if (!gerr) {
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+    }
     if (gerr) {
         return processed_gerror("dav_mkdir: ", path, gerr);
     }
@@ -1117,8 +1124,10 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
             memset(&value, 0, sizeof(struct stat_cache_value));
             // mode = 0 (unspecified), is_dir = false; fd to get size
-            fill_stat_generic(&(value.st), 0, false, fd);
-            stat_cache_value_set(config->cache, path, &value, &gerr);
+            fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+            if (!gerr) {
+                stat_cache_value_set(config->cache, path, &value, &gerr);
+            }
         }
     }
 
@@ -1161,8 +1170,10 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     if (wrote_data) {
         fd = filecache_fd(info);
         // mode = 0 (unspecified), is_dir = false; fd to get size
-        fill_stat_generic(&(value.st), 0, false, fd);
-        stat_cache_value_set(config->cache, path, &value, &gerr);
+        fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+        if (!gerr) {
+            stat_cache_value_set(config->cache, path, &value, &gerr);
+        }
         if (gerr) {
             return processed_gerror("dav_fsync: ", path, gerr);
         }
@@ -1195,8 +1206,10 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
         if (wrote_data) {
             fd = filecache_fd(info);
             // mode = 0 (unspecified), is_dir = false; fd to get size
-            fill_stat_generic(&(value.st), 0, false, fd);
-            stat_cache_value_set(config->cache, path, &value, &gerr);
+            fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+            if (!gerr) {
+                stat_cache_value_set(config->cache, path, &value, &gerr);
+            }
             if (gerr) {
                 return processed_gerror("dav_flush: ", path, gerr);
             }
@@ -1220,8 +1233,10 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
     // Prepopulate stat cache.
     // is_dir = false, fd = -1, can't set size
-    fill_stat_generic(&(value.st), mode, false, -1);
-    stat_cache_value_set(config->cache, path, &value, &gerr);
+    fill_stat_generic(&(value.st), mode, false, -1, &gerr);
+    if (!gerr) {
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+    }
     if (gerr) {
         return processed_gerror("dav_mknod: ", path, gerr);
     }
@@ -1270,8 +1285,10 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
         struct stat_cache_value nvalue;
         memset(&nvalue, 0, sizeof(struct stat_cache_value));
         // mode = 0 (unspecified), is_dir = false; fd = -1, no need to get size on new file
-        fill_stat_generic(&(nvalue.st), 0, false, -1);
-        stat_cache_value_set(config->cache, path, &nvalue, &tmpgerr);
+        fill_stat_generic(&(nvalue.st), 0, false, -1, &tmpgerr);
+        if (!tmpgerr) {
+            stat_cache_value_set(config->cache, path, &nvalue, &tmpgerr);
+        }
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
             return;
@@ -1367,8 +1384,10 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 
         fd = filecache_fd(info);
         // mode = 0 (unspecified), is_dir = false; fd to get size
-        fill_stat_generic(&(value.st), 0, false, fd);
-        stat_cache_value_set(config->cache, path, &value, &gerr);
+        fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+        if (!gerr) {
+            stat_cache_value_set(config->cache, path, &value, &gerr);
+        }
         if (gerr) {
             return processed_gerror("dav_write: ", path, gerr);
         }
@@ -1403,8 +1422,10 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
 
     fd = filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
-    fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value, &gerr);
+    fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+    if (!gerr) {
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+    }
     if (gerr) {
         return processed_gerror("dav_ftruncate: ", path, gerr);
     }
@@ -1454,8 +1475,10 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
     fd = filecache_fd(info);
     // mode = 0 (unspecified), is_dir = false; fd to get size
-    fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value, &gerr);
+    fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+    if (!gerr) {
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+    }
     if (gerr) {
         return processed_gerror("dav_create: ", path, gerr);
     }
