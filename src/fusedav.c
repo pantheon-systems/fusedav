@@ -1105,8 +1105,9 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 
     // path might be NULL if we are accessing a bare file descriptor.
     if (path != NULL) {
-        filecache_sync(config->cache, path, info, true, &gerr);
-        if (!gerr) {
+        bool wrote_data;
+        wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+        if (!gerr && wrote_data) {
             struct stat_cache_value value;
             int fd = filecache_fd(info);
             // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1136,6 +1137,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     struct stat_cache_value value;
     GError *gerr = NULL;
     int fd;
+    bool wrote_data;
 
     BUMP(fsync);
 
@@ -1147,17 +1149,19 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     // If path is NULL because we are accessing a bare file descriptor,
     // let filecache_sync handle it since we need to get the file
     // descriptor there
-    filecache_sync(config->cache, path, info, true, &gerr);
+    wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
     if (gerr) {
         return processed_gerror("dav_fsync: ", path, gerr);
     }
 
-    fd = filecache_fd(info);
-    // mode = 0 (unspecified), is_dir = false; fd to get size
-    fill_stat_generic(&(value.st), 0, false, fd);
-    stat_cache_value_set(config->cache, path, &value, &gerr);
-    if (gerr) {
-        return processed_gerror("dav_fsync: ", path, gerr);
+    if (wrote_data) {
+        fd = filecache_fd(info);
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(&(value.st), 0, false, fd);
+        stat_cache_value_set(config->cache, path, &value, &gerr);
+        if (gerr) {
+            return processed_gerror("dav_fsync: ", path, gerr);
+        }
     }
 
     return 0;
@@ -1174,21 +1178,24 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     // path might be NULL because we are accessing a bare file descriptor,
     if (path != NULL) {
         int fd;
+        bool wrote_data;
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
         struct stat_cache_value value;
         memset(&value, 0, sizeof(struct stat_cache_value));
 
-        filecache_sync(config->cache, path, info, true, &gerr);
+        wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
         if (gerr) {
             return processed_gerror("dav_flush: ", path, gerr);
         }
 
-        fd = filecache_fd(info);
-        // mode = 0 (unspecified), is_dir = false; fd to get size
-        fill_stat_generic(&(value.st), 0, false, fd);
-        stat_cache_value_set(config->cache, path, &value, &gerr);
-        if (gerr) {
-            return processed_gerror("dav_flush: ", path, gerr);
+        if (wrote_data) {
+            fd = filecache_fd(info);
+            // mode = 0 (unspecified), is_dir = false; fd to get size
+            fill_stat_generic(&(value.st), 0, false, fd);
+            stat_cache_value_set(config->cache, path, &value, &gerr);
+            if (gerr) {
+                return processed_gerror("dav_flush: ", path, gerr);
+            }
         }
     }
 
