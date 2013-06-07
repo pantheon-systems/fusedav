@@ -321,12 +321,16 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd)
 
     if (fd >= 0) {
         st->st_size = lseek(fd, 0, SEEK_END);
+        st->st_blocks = (st->st_size+511)/512;
         log_print(LOG_DEBUG, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", fd, st->st_size, errno, strerror(errno));
         // Silently overlook error
-        if (st->st_size < 0) st->st_size = 0;
+        if (st->st_size < 0) {
+            log_print(LOG_ERR, "fill_stat_generic: failed to lseek: fd = %d", fd);
+            st->st_size = 0;
+            st->st_blocks = 1;
+            st->st_blksize = 1;
+        }
     }
-
-    st->st_blocks = (st->st_size+511)/512;
 
     log_print(LOG_DEBUG, "fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
     log_print(LOG_DEBUG, "Done with fill_stat_generic.");
