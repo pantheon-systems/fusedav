@@ -1267,23 +1267,6 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
     if (used_grace)
         set_saint_mode();
 
-    // If the truncation flag is set, as it is for new files too, insert
-    // an empty regular file into the stat cache.
-    if (info->flags & O_TRUNC) {
-        // Use a stack variable since that's how we do it everywhere else
-        struct stat_cache_value nvalue;
-        memset(&nvalue, 0, sizeof(struct stat_cache_value));
-        // mode = 0 (unspecified), is_dir = false; fd = -1, no need to get size on new file
-        fill_stat_generic(&(nvalue.st), 0, false, -1, &tmpgerr);
-        if (!tmpgerr) {
-            stat_cache_value_set(config->cache, path, &nvalue, &tmpgerr);
-        }
-        if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
-            return;
-        }
-    }
-
     log_print(LOG_DEBUG, "do_open: after filecache_open");
 
     return;
