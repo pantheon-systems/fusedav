@@ -1246,7 +1246,6 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 
 static void do_open(const char *path, struct fuse_file_info *info, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    struct stat_cache_value *value;
     GError *tmpgerr = NULL;
     bool used_grace;
     unsigned grace_level = 0;
@@ -1268,19 +1267,9 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
     if (used_grace)
         set_saint_mode();
 
-    /* If we create a new file, fill in a stat and put it in the stat cache.
-     * If we aren't creating a new file, perhaps we should be updating some
-     * values, but since we haven't been doing it up to now, I leave that
-     * as a question for the future.
-     */
-    // @TODO: Before public release: Lock for concurrency.
-    value = stat_cache_value_get(config->cache, path, false, &tmpgerr);
-    if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
-        return;
-    }
-
-    if (value == NULL) {
+    // If the truncation flag is set, as it is for new files too, insert
+    // an empty regular file into the stat cache.
+    if (info->flags & O_TRUNC) {
         // Use a stack variable since that's how we do it everywhere else
         struct stat_cache_value nvalue;
         memset(&nvalue, 0, sizeof(struct stat_cache_value));
@@ -1293,8 +1282,6 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
             g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
             return;
         }
-    } else {
-        free(value);
     }
 
     log_print(LOG_DEBUG, "do_open: after filecache_open");
