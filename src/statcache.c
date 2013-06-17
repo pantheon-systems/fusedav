@@ -401,6 +401,10 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
         return;
     }
 
+    //if (value->st.st_size == 0 && value->st.st_mode & S_IFREG) {
+    //    log_print(LOG_NOTICE, "stat_cache_value_set: Setting file %s to zero length.", path);
+    //}
+
     BUMP(value_set);
 
     assert(value);
@@ -606,7 +610,7 @@ static void stat_cache_list_all(stat_cache_t *cache, const char *path) {
 }
 */
 
-int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f) (const char *path, const char *child_path, void *user), void *user, bool force) {
+int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f) (const char *path_prefix, const char *filename, void *user), void *user, bool force) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     unsigned found_entries = 0;
@@ -724,8 +728,7 @@ void stat_cache_prune(stat_cache_t *cache) {
     int passes = 1; // passes will grow as we detect larger depths
     int depth;
     int max_depth = 0;
-    const char *base_directory = get_base_directory();
-    size_t base_directory_len = strlen(base_directory);
+    const char *base_directory = "";
 
     // Statistics
     int visited_entries = 0;
@@ -853,11 +856,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
 
                 // By putting a null in place of the last slash, path is now dirname(path).
-                // The condition is to preserve base directories of just "/"
-                if (base_directory_len > 1)
-                    slash[0] = '\0';
-                else
-                    slash[1] = '\0';
+                slash[0] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
                     log_print(LOG_DEBUG, "stat_cache_prune: exists in bloom filter\'%s\'", path);

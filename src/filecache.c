@@ -438,7 +438,7 @@ static void get_fresh_fd(filecache_t *cache,
         goto finish;
     }
 
-    session = session_request_init(path);
+    session = session_request_init(path, NULL);
     if (!session || filecache_inject_error(11)) {
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET");
         goto finish;
@@ -550,15 +550,18 @@ static void get_fresh_fd(filecache_t *cache,
             // Point the persistent cache to the new file content.
             pdata->last_server_update = time(NULL);
             strncpy(pdata->filename, response_filename, PATH_MAX);
+
             sdata->fd = response_fd;
-            close_response_fd = false;
 
             log_print(LOG_DEBUG, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
+                memset(sdata, 0, sizeof(struct filecache_sdata));
                 g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 200: ");
                 goto finish;
             }
+
+            close_response_fd = false;
 
             // Unlink the old cache file, which the persistent cache
             // no longer references. This will cause the file to be
@@ -839,10 +842,11 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     log_print(LOG_DEBUG, "put_return_etag: file size %d", st.st_size);
 
-    session = session_request_init(path);
+    session = session_request_init(path, NULL);
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
     curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
+    curl_easy_setopt(session, CURLOPT_INFILESIZE, st.st_size);
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fdopen(fd, "r"));
 
     // Set a header capture path.
@@ -887,10 +891,11 @@ finish:
 }
 
 // top-level sync call
-void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr) {
+bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
     struct filecache_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
+    bool wrote_data = false;
 
     BUMP(sync);
 
@@ -904,7 +909,7 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     // path will be NULL, so just return without doing anything
     if (path == NULL) {
         log_print(LOG_DEBUG, "filecache_sync(NULL path, returning, fd=%d)", sdata->fd);
-        return;
+        goto finish;
     }
     else {
         log_print(LOG_DEBUG, "filecache_sync(%s, fd=%d)", path, sdata->fd);
@@ -958,8 +963,10 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // The local copy currently trumps the server one, no matter how old.
             pdata->last_server_update = 0;
         }
+        wrote_data = true;
     }
 
+    // @TODO: Should we run the following if sdata->modified is false?
     // Point the persistent cache to the new file content.
     filecache_pdata_set(cache, path, pdata, &tmpgerr);
     if (tmpgerr) {
@@ -975,7 +982,7 @@ finish:
 
     log_print(LOG_DEBUG, "filecache_sync: Done syncing file (%s, fd=%d).", path, sdata ? sdata->fd : -1);
 
-    return;
+    return wrote_data;
 }
 
 // top-level truncate call

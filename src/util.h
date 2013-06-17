@@ -29,7 +29,6 @@
 #endif
 
 char *path_parent(const char *uri);
-char *path_escape(const char *path);
 
 // Error injection routines
 int fusedav_errors(void);

@@ -121,11 +121,14 @@ class TestDav(unittest.TestCase):
         self.assertEqual(set(os.listdir(self.files_root)), listing)
 
     def test_put(self):
-        self.dav_directory.put_file('test1.txt', 'test 1 content')
+        path = 'test1.txt'
+        content = 'test 1 content'
+        self.dav_directory.put_file(path, content)
         listing = self.dav_directory.get_listing('')
         log.debug(listing)
 
         self.assertEqual(set(os.listdir(self.files_root)), listing)
+        self.assertEqual(self.dav_directory.get_real_file(path), content)
 
     def test_get(self):
         path = 'test1.txt'
@@ -133,6 +136,7 @@ class TestDav(unittest.TestCase):
 
         self.dav_directory.put_file(path, content)
 
+        self.assertEqual(self.dav_directory.get_real_file(path), content)
         self.assertEqual(self.dav_directory.get_file(path), content)
 
     def test_mkdir(self):
@@ -153,6 +157,7 @@ class TestDav(unittest.TestCase):
 
         self.assertEqual(self.dav_directory.get_listing('/'), {source, dest})
         self.assertEqual(self.dav_directory.get_file(source), content)
+        self.assertEqual(self.dav_directory.get_real_file(dest), content)
         self.assertEqual(self.dav_directory.get_file(dest), content)
 
     def test_copy_dir(self):
@@ -256,6 +261,14 @@ class DavDirectory:
 
     def get_file(self, path):
         p = self.mount_point + path
+        f = open(p, 'r')
+        content = f.read()
+        f.close()
+        log.debug("Reading from '{0}': {1}".format(p, content))
+        return content
+
+    def get_real_file(self, path):
+        p = self.files_root + path
         f = open(p, 'r')
         content = f.read()
         f.close()
