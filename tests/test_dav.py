@@ -21,11 +21,17 @@ import os
 import shutil
 import logging
 import time
-import signal
+import sys
 
 from sh import cp, mv
 
 from titan.pantheon.tests.lib.dav_server import DavServer, PYWEBDAV_HOST, PYWEBDAV_PORT
+
+# You can execute this test by executing:
+#   cd to your /opt/<fusedav> directory and execute 'trial ./tests/test_dav.py'
+#   cd to any directory and execute 'FUSEDAV_PATH=<path to fusedav binary> trial <path to test_dav.py>
+# You can add 'LOG_LEVEL=<level, e.g. debug> at the beginning of the line, e.g.
+#   LOG_LEVEL=debug [FUSEDAV_PATH=<path to fusedav binary>] trial <path to test_dav.py>
 
 log = logging.getLogger('test_dav')
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'error')
@@ -39,13 +45,34 @@ elif LOG_LEVEL == 'warning':
 else:
     log.setLevel(logging.ERROR)
 
+# if FUSEDAV_PATH is specified, use it. It must point to an executable file. (If the file
+# is executable but is not a fusedav binary, weird things will happen);
+# otherwise, assume we are in an /opt/fusedav{version} directory where
+# we want to find the binary <cwd>/src/fusedav
+if 'FUSEDAV_PATH' in os.environ:
+    fusedav_binary = os.environ.get('FUSEDAV_PATH')
+    if os.path.isfile(fusedav_binary) and os.access(fusedav_binary, os.X_OK):
+        print "Using FUSEDAV_PATH's ", fusedav_binary
+    else:
+        exitstring = 'FUSEDAV_PATH specified but ' + fusedav_binary + ' is not executable'
+        sys.exit(exitstring)
+else:
+    fusedav_binary = os.path.join(os.getcwd(), 'src', 'fusedav')
+    if os.path.isfile(fusedav_binary) and os.access(fusedav_binary, os.X_OK):
+        # As soon as 'setUp' is called, the cwd will be, e.g., /opt/fusedav/_trial_temp, so
+        # './src/fusedav' will no longer work. Get the cwd at this point in order to have the
+        # correct path
+        print "Using current directory's ", fusedav_binary
+    else:
+        exitstring = fusedav_binary + ' is not executable'
+        sys.exit(exitstring)
+
 DAV_CLIENT = 'fusedav'
 
 # if we set nodaemon, we can use the pid we get on open to cleanup on close
 # REVIEW: would this affect basic functionality?
-FUSEDAV_CONFIG = 'nodaemon,noexec,atomic_o_trunc,' +\
-                 'hard_remove,umask=0007,cache_path='
-
+# NB: this config is really for the upcoming new version of fusedav with a config file
+FUSEDAV_CONFIG = 'nodaemon,noexec,atomic_o_trunc,hard_remove,umask=0007,cache_path='
 
 class TestDav(unittest.TestCase):
     files_root = None
@@ -76,7 +103,7 @@ class TestDav(unittest.TestCase):
 
         # The current working directory is <dir we started in>/_trial_temp<_something>,
         # so use ".." to find "src/fusedav"
-        command = [ '../src/fusedav', dav_url, self.mount_point, '-o', config]
+        command = [ fusedav_binary, dav_url, self.mount_point, '-o', config]
         log.debug('Executing: ' + ' '.join(command))
         # open such that we can get the process id
         self.fuseprocess = subprocess.Popen(command, shell=False)
@@ -160,18 +187,20 @@ class TestDav(unittest.TestCase):
 
     def tearDown(self):
         time.sleep(1)
-        log.debug("Trying to unmount directory {0}".format(self.mount_point))
+        log.debug("Trying to remove mount directory {0}".format(self.mount_point))
         try:
             command = [ 'fusermount', '-uz', self.mount_point ]
             subprocess.Popen(command, shell=False)
         except Exception as e:
             print "Exception: ", e
 
-        self.dav_server.stop()
-
-        shutil.rmtree(self.mount_point)
         shutil.rmtree(self.cache_dir)
         shutil.rmtree(self.files_root)
+
+        self.dav_server.stop()
+        # ignore errors on removing files in directory
+        shutil.rmtree(self.mount_point, True)
+
         subprocess.Popen.kill(self.fuseprocess)
         log.debug("Process ({0}) terminated; Directory removed {1}".format(self.fuseprocess.pid, self.mount_point))
 
