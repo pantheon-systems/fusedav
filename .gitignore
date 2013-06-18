@@ -22,6 +22,7 @@ config.h.in
 _trial_temp
 /tests/readrecursive
 /tests/readwhatwaswritten
+/tests/trunc
 /src/*.plist
 _trial_temp*
 
