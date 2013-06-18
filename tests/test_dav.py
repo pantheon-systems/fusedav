@@ -101,8 +101,6 @@ class TestDav(unittest.TestCase):
         log.debug('Cache dir: {0}'.format(self.cache_dir))
         config = FUSEDAV_CONFIG + self.cache_dir
 
-        # The current working directory is <dir we started in>/_trial_temp<_something>,
-        # so use ".." to find "src/fusedav"
         command = [ fusedav_binary, dav_url, self.mount_point, '-o', config]
         log.debug('Executing: ' + ' '.join(command))
         # open such that we can get the process id
