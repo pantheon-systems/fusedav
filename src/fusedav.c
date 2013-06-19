@@ -329,8 +329,7 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
         }
     }
 
-    log_print(LOG_DEBUG, "fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
-    log_print(LOG_DEBUG, "Done with fill_stat_generic.");
+    log_print(LOG_DEBUG, "Done with fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
 }
 
 char *strip_trailing_slash(char *fn, int *is_dir) {
@@ -1292,6 +1291,27 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         log_print(LOG_DEBUG, "CALLBACK: dav_open: returns %d", ret);
         return ret;
     }
+
+    // Update stat cache value to reset the file size to 0 on trunc.
+    if (info->flags & O_TRUNC) {
+        struct stat_cache_value value;
+        struct fusedav_config *config = fuse_get_context()->private_data;
+        int fd = filecache_fd(info);
+
+        // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+        memset(&value, 0, sizeof(struct stat_cache_value));
+
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+        if (!gerr) {
+            stat_cache_value_set(config->cache, path, &value, &gerr);
+        }
+        if (gerr) {
+            return processed_gerror("dav_open: ", path, gerr);
+        }
+        log_print(LOG_DEBUG, "dav_open: fill_stat_generic on O_TRUNC: %d--%s", value.st.st_size, path);
+    }
+
     return 0;
 }
 
