@@ -835,10 +835,11 @@ finish:
 }
 
 // top-level sync call
-void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr) {
+bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
     struct filecache_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
+    bool wrote_data = false;
 
     BUMP(filecache_sync);
 
@@ -852,7 +853,7 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     // path will be NULL, so just return without doing anything
     if (path == NULL) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync(NULL path, returning, fd=%d)", sdata->fd);
-        return;
+        goto finish;
     }
     else {
         log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync(%s, fd=%d)", path, sdata->fd);
@@ -906,8 +907,10 @@ void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // The local copy currently trumps the server one, no matter how old.
             pdata->last_server_update = 0;
         }
+        wrote_data = true;
     }
 
+    // @TODO: Should we run the following if sdata->modified is false?
     // Point the persistent cache to the new file content.
     filecache_pdata_set(cache, path, pdata, &tmpgerr);
     if (tmpgerr) {
@@ -923,7 +926,7 @@ finish:
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Done syncing file (%s, fd=%d).", path, sdata ? sdata->fd : -1);
 
-    return;
+    return wrote_data;
 }
 
 // top-level truncate call

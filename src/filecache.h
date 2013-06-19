@@ -45,7 +45,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
 ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_t offset, GError **gerr);
 ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t size, off_t offset, GError **gerr);
 void filecache_close(struct fuse_file_info *info, GError **gerr);
-void filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr);
+bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr);
 void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr);
 int filecache_fd(struct fuse_file_info *info);
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr);
