@@ -19,7 +19,6 @@ config.h.in
 /stamp-h1
 *~
 *.pyc
-_trial_temp
 /tests/readrecursive
 /tests/readwhatwaswritten
 /tests/trunc

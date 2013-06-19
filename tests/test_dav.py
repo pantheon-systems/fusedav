@@ -25,7 +25,10 @@ import sys
 
 from sh import cp, mv
 
-from titan.pantheon.tests.lib.dav_server import DavServer, PYWEBDAV_HOST, PYWEBDAV_PORT
+try:
+    from tests.dav_server import DavServer, PYWEBDAV_HOST, PYWEBDAV_PORT
+except:
+    from titan.pantheon.tests.lib.dav_server import DavServer, PYWEBDAV_HOST, PYWEBDAV_PORT
 
 # You can execute this test by executing:
 #   cd to your /opt/<fusedav> directory and execute 'trial ./tests/test_dav.py'
