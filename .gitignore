@@ -9,6 +9,7 @@ config.status
 /Makefile
 config.h
 config.h.in
+/compile
 /depcomp
 /doc
 /install-sh
