@@ -24,7 +24,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <jemalloc/jemalloc.h>
+#include <stdlib.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -1396,7 +1396,7 @@ int main(int argc, char *argv[]) {
     // REVIEW: moving call to config_privileges from here to configure_fusedav() above. Is this ok?
 
     // Error injection mechanism. Should only be run during development.
-    // It should only be triggered by running make INJECT_ERRORS=1. So under
+    // It should only be triggered by running 'make INJECT_ERRORS=1' during build. So under
     // normal circumstances, injecting_errors is #define'd to 'false'
     if (injecting_errors) {
         if (pthread_create(&error_injection_thread, NULL, inject_error_mechanism, NULL)) {

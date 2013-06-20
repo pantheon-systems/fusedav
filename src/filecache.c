@@ -29,7 +29,6 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <curl/curl.h>
-#include <jemalloc/jemalloc.h>
 
 #include "filecache.h"
 #include "statcache.h"

@@ -24,7 +24,6 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <jemalloc/jemalloc.h>
 
 #include "statcache.h"
 #include "fusedav.h"

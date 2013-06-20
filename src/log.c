@@ -25,7 +25,7 @@
 #include <unistd.h>
 #include <syscall.h>
 #include <assert.h>
-#include <jemalloc/jemalloc.h>
+#include <stdlib.h>
 
 #include "log.h"
 #include "log_sections.h"

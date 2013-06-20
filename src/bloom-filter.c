@@ -24,7 +24,7 @@
 #include <limits.h>
 #include <time.h>
 #include <zlib.h>
-#include <jemalloc/jemalloc.h>
+#include <stdlib.h>
 
 #include "bloom-filter.h"
 #include "log.h"
