@@ -19,17 +19,31 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
-#include <time.h>
-#include <unistd.h>
-
 #ifdef __GNUC__
 #define __unused __attribute__ ((unused))
 #else
 #define __unused
 #endif
 
-char *path_parent(const char *uri);
+#include <glib.h>
 
+char *path_parent(const char *uri);
+char *strip_trailing_slash(char *fn, int *is_dir);
+
+// For GError
+#ifndef G_DEFINE_QUARK
+
+#define             G_DEFINE_QUARK(QN, q_n)\
+static GQuark \
+q_n##_quark (void) \
+{ \
+  static GQuark g_define_quark = 0; \
+  if (G_UNLIKELY (g_define_quark == 0)) \
+    g_define_quark = g_quark_from_string (#QN); \
+  return g_define_quark; \
+}
+
+#endif
 // Error injection routines
 int fusedav_errors(void);
 int filecache_errors(void);

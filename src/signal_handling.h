@@ -1,5 +1,5 @@
-#ifndef foofusedevhfoo
-#define foofusedevhfoo
+#ifndef foosignal_handlinghfoo
+#define foosignal_handlinghfoo
 
 /***
   This file is part of fusedav.
@@ -18,7 +18,8 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
+#include <glib.h>
 
-extern int debug;
+void setup_signal_handlers(GError **gerr);
 
 #endif
