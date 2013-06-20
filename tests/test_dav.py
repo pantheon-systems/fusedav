@@ -21,10 +21,19 @@ import os
 import shutil
 import logging
 import time
+import sys
 
 from sh import cp, mv
 
-from titan.pantheon.tests.lib.dav_server import DavServer, PYWEBDAV_HOST, PYWEBDAV_PORT
+from multiprocessing import Process
+from pywebdav.server import server
+from pywebdav.server.fileauth import DAVAuthHandler
+
+# You can execute this test by executing:
+#   cd to your /opt/<fusedav> directory and execute 'trial ./tests/test_dav.py'
+#   cd to any directory and execute 'FUSEDAV_PATH=<path to fusedav binary> trial <path to test_dav.py>
+# You can add 'LOG_LEVEL=<level, e.g. debug> at the beginning of the line, e.g.
+#   LOG_LEVEL=debug [FUSEDAV_PATH=<path to fusedav binary>] trial <path to test_dav.py>
 
 log = logging.getLogger('test_dav')
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'error')
@@ -38,24 +47,82 @@ elif LOG_LEVEL == 'warning':
 else:
     log.setLevel(logging.ERROR)
 
+# if FUSEDAV_PATH is specified, use it. It must point to an executable file. (If the file
+# is executable but is not a fusedav binary, weird things will happen);
+# otherwise, assume we are in an /opt/fusedav{version} directory where
+# we want to find the binary <cwd>/src/fusedav
+if 'FUSEDAV_PATH' in os.environ:
+    fusedav_binary = os.environ.get('FUSEDAV_PATH')
+    if os.path.isfile(fusedav_binary) and os.access(fusedav_binary, os.X_OK):
+        print "Using FUSEDAV_PATH's ", fusedav_binary
+    else:
+        exitstring = 'FUSEDAV_PATH specified but ' + fusedav_binary + ' is not executable'
+        sys.exit(exitstring)
+else:
+    fusedav_binary = os.path.join(os.getcwd(), 'src', 'fusedav')
+    if os.path.isfile(fusedav_binary) and os.access(fusedav_binary, os.X_OK):
+        # As soon as 'setUp' is called, the cwd will be, e.g., /opt/fusedav/_trial_temp, so
+        # './src/fusedav' will no longer work. Get the cwd at this point in order to have the
+        # correct path
+        print "Using current directory's ", fusedav_binary
+    else:
+        exitstring = fusedav_binary + ' is not executable'
+        sys.exit(exitstring)
+
 DAV_CLIENT = 'fusedav'
 
-FUSEDAV_CONFIG = 'verbosity=6,allow_other,noexec,atomic_o_trunc,' +\
-                 'ignoreutimens,ignorexattr,' +\
-                 'dir_mode=0770,file_mode=0660,cache_path='
+# if we set nodaemon, we can use the pid we get on open to cleanup on close
+# REVIEW: would this affect basic functionality?
+# NB: this config is really for the upcoming new version of fusedav with a config file
+FUSEDAV_CONFIG = 'nodaemon,noexec,atomic_o_trunc,hard_remove,umask=0007,cache_path='
 
-def get_real_file(path):
-    f = open(path, 'r')
-    content = f.read()
-    f.close()
-    log.debug("Reading from '{0}': {1}".format(path, content))
-    return content
+PYWEBDAV_HOST = '127.0.0.1'
+PYWEBDAV_PORT = '8008'
+
+class DavServer:
+    def __init__(self, path):
+        self.path = path
+
+    def start(self):
+        self.t = Process(target=self.run)
+        self.t.start()
+
+    def stop(self):
+        self.t.terminate()
+        self.t.join()
+
+    def run(self):
+        sys.stdout = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'w')
+        conf = server.setupDummyConfig(**{
+            'verbose': False,
+            'directory': self.path,
+            'port': PYWEBDAV_PORT,
+            'host': PYWEBDAV_HOST,
+            'noauth': True,
+            'user': '',
+            'password': '',
+            'daemonize': False,
+            'daemonaction': 'start',
+            'counter': 0,
+            'lockemulation': False,
+            'mimecheck': True,
+            'chunked_http_response': True,
+            'http_request_use_iterator': 0,
+            'http_response_use_iterator': True,
+            'baseurl': 0
+        })
+        handler = DAVAuthHandler
+        handler._config = conf
+        logging.getLogger().setLevel(logging.ERROR)
+        server.runserver(directory=self.path, noauth=True, handler=handler)
 
 class TestDav(unittest.TestCase):
     files_root = None
     config_file = None
     mount_point = None
     dav_directory = None
+    fuseprocess = None
 
     def setUp(self):
         log.debug('Testing client: {0}'.format(DAV_CLIENT))
@@ -77,13 +144,14 @@ class TestDav(unittest.TestCase):
         log.debug('Cache dir: {0}'.format(self.cache_dir))
         config = FUSEDAV_CONFIG + self.cache_dir
 
-        command = ['mount', dav_url, self.mount_point, '-t', DAV_CLIENT, '-o',
-                   config]
+        command = [ fusedav_binary, dav_url, self.mount_point, '-o', config]
         log.debug('Executing: ' + ' '.join(command))
-        subprocess.call(command)
+        # open such that we can get the process id
+        self.fuseprocess = subprocess.Popen(command, shell=False)
+        log.debug('pid is ' + str(self.fuseprocess.pid))
 
         self.dav_directory = DavDirectory(self.mount_point, self.files_root)
-        
+
         time.sleep(3)
 
     def test_propfind(self):
@@ -101,7 +169,7 @@ class TestDav(unittest.TestCase):
         log.debug(listing)
 
         self.assertEqual(set(os.listdir(self.files_root)), listing)
-        self.assertEqual(get_real_file(self.files_root + path), content)
+        self.assertEqual(self.dav_directory.get_real_file(path), content)
 
     def test_get(self):
         path = 'test1.txt'
@@ -109,7 +177,7 @@ class TestDav(unittest.TestCase):
 
         self.dav_directory.put_file(path, content)
 
-        self.assertEqual(get_real_file(self.files_root + path), content)
+        self.assertEqual(self.dav_directory.get_real_file(path), content)
         self.assertEqual(self.dav_directory.get_file(path), content)
 
     def test_mkdir(self):
@@ -130,7 +198,7 @@ class TestDav(unittest.TestCase):
 
         self.assertEqual(self.dav_directory.get_listing('/'), {source, dest})
         self.assertEqual(self.dav_directory.get_file(source), content)
-        self.assertEqual(get_real_file(self.files_root + dest), content)
+        self.assertEqual(self.dav_directory.get_real_file(dest), content)
         self.assertEqual(self.dav_directory.get_file(dest), content)
 
     def test_copy_dir(self):
@@ -165,24 +233,22 @@ class TestDav(unittest.TestCase):
 
     def tearDown(self):
         time.sleep(1)
-        log.debug("Trying to unmount directory {0}".format(self.mount_point))
-        for x in xrange(5):
-            try:
-                subprocess.call(['umount', self.mount_point])
-                log.debug("Directory unmounted {0}".format(self.mount_point))
-                os.rmdir(self.mount_point)
-                break
-            except Exception as e:
-                print e
-                time.sleep(1)
-        else:
-            log.error("Unable to safely unmount: {0}"\
-                      "".format(self.mount_point))
-
-        self.dav_server.stop()
+        log.debug("Trying to remove mount directory {0}".format(self.mount_point))
+        try:
+            command = [ 'fusermount', '-uz', self.mount_point ]
+            subprocess.Popen(command, shell=False)
+        except Exception as e:
+            print "Exception: ", e
 
         shutil.rmtree(self.cache_dir)
-        #shutil.rmtree(self.files_root)
+        shutil.rmtree(self.files_root)
+
+        self.dav_server.stop()
+        # ignore errors on removing files in directory
+        shutil.rmtree(self.mount_point, True)
+
+        subprocess.Popen.kill(self.fuseprocess)
+        log.debug("Process ({0}) terminated; Directory removed {1}".format(self.fuseprocess.pid, self.mount_point))
 
 
 class DavDirectory:
@@ -236,6 +302,14 @@ class DavDirectory:
 
     def get_file(self, path):
         p = self.mount_point + path
+        f = open(p, 'r')
+        content = f.read()
+        f.close()
+        log.debug("Reading from '{0}': {1}".format(p, content))
+        return content
+
+    def get_real_file(self, path):
+        p = self.files_root + path
         f = open(p, 'r')
         content = f.read()
         f.close()
