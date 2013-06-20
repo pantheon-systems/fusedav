@@ -1380,12 +1380,17 @@ int main(int argc, char *argv[]) {
     }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Created the FUSE object.");
 
-    // If in development you need to run in the foreground for debugging, just
-    // pass 1 to fuse_daemonize
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to daemonize.");
-    if (fuse_daemonize(/* 0 means daemonize */ 0) < 0) {
-        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to daemonize.");
-        goto finish;
+    // If in development you need to run in the foreground for debugging, set nodaemon
+    // We also do this for our test_dav, so we can auto-clean up processes after we run the tests
+    if (config.nodaemon) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Running in foreground (skipping daemonization).");
+    }
+    else {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to daemonize.");
+        if (fuse_daemonize(/* 0 means daemonize */ 0) < 0) {
+            log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to daemonize.");
+            goto finish;
+        }
     }
 
     // REVIEW: moving call to config_privileges from here to configure_fusedav() above. Is this ok?
