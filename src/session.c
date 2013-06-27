@@ -5,12 +5,12 @@
   modify it under the terms of the GNU General Public License
   as published by the Free Software Foundation; either version 2
   of the License, or (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -20,13 +20,9 @@
 #include <config.h>
 #endif
 
-#include <stdio.h>
 #include <assert.h>
 #include <pthread.h>
-#include <string.h>
 #include <stdlib.h>
-#include <termios.h>
-#include <unistd.h>
 
 #include <curl/curl.h>
 
@@ -36,9 +32,9 @@
 #include <resolv.h>
 
 #include "log.h"
+#include "log_sections.h"
 #include "util.h"
 #include "session.h"
-#include "fusedav.h"
 
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
@@ -57,7 +53,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     assert(base);
 
     if (curl_global_init(CURL_GLOBAL_ALL)) {
-        log_print(LOG_CRIT, "Failed to initialize libcurl.");
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Failed to initialize libcurl.");
         return -1;
     }
 
@@ -75,11 +71,11 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
 
         // Repair p12 to point to pem for now.
         if (strcmp(client_certificate + strlen(client_certificate) - 4, ".p12") == 0) {
-            log_print(LOG_WARNING, "Remapping deprecated certificate path: %s", client_certificate);
+            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "Remapping deprecated certificate path: %s", client_certificate);
             strncpy(client_certificate + strlen(client_certificate) - 4, ".pem", 4);
         }
 
-        log_print(LOG_INFO, "Using client certificate at path: %s", client_certificate);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using client certificate at path: %s", client_certificate);
     }
 
     return 0;
@@ -93,13 +89,13 @@ void session_config_free(void) {
 
 static void session_destroy(void *s) {
     CURL *session = s;
-    log_print(LOG_NOTICE, "Destroying cURL session.");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL session.");
     assert(s);
     curl_easy_cleanup(session);
 }
 
 static void session_tsd_key_init(void) {
-    log_print(LOG_DEBUG, "session_tsd_key_init()");
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_tsd_key_init()");
     pthread_key_create(&session_tsd_key, session_destroy);
 }
 
@@ -110,7 +106,7 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
             strncpy(msg, data, size);
             msg[size] = '\0';
             if (msg[size - 1] == '\n') msg[size - 1] = '\0';
-            log_print(LOG_INFO, "cURL: %s", msg);
+            log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
             free(msg);
         }
     }
@@ -125,7 +121,7 @@ CURL *session_get_handle(void) {
     if ((session = pthread_getspecific(session_tsd_key)))
         return session;
 
-    log_print(LOG_NOTICE, "Opening cURL session.");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session.");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
@@ -140,7 +136,7 @@ char *escape_except_slashes(CURL *session, const char *path) {
     size_t escaped_path_pos;
 
     if (mutable_path == NULL) {
-        log_print(LOG_ERR, "Could not allocate memory in strndup for escape_except_slashes.");
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Could not allocate memory in strndup for escape_except_slashes.");
         goto finish;
     }
 
@@ -154,11 +150,11 @@ char *escape_except_slashes(CURL *session, const char *path) {
     escaped_path = curl_easy_escape(session, mutable_path, path_len);
 
     if (escaped_path == NULL) {
-        log_print(LOG_ERR, "Could not allocate memory in curl_easy_escape for escape_except_slashes.");
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Could not allocate memory in curl_easy_escape for escape_except_slashes.");
         goto finish;
     }
 
-    log_print(LOG_DEBUG, "escape_except_slashes: escaped_path: %s", escaped_path);
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "escape_except_slashes: escaped_path: %s", escaped_path);
 
     // Restore all slashes.
     escaped_path_pos = 0;
@@ -172,7 +168,7 @@ char *escape_except_slashes(CURL *session, const char *path) {
         ++escaped_path_pos;
     }
 
-    log_print(LOG_DEBUG, "escape_except_slashes: final escaped_path: %s", escaped_path);
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "escape_except_slashes: final escaped_path: %s", escaped_path);
 
 finish:
     free(mutable_path);
@@ -192,7 +188,7 @@ CURL *session_request_init(const char *path, const char *query_string) {
 
     escaped_path = escape_except_slashes(session, path);
     if (escaped_path == NULL) {
-        log_print(LOG_ERR, "Allocation failed in escape_except_slashes.");
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Allocation failed in escape_except_slashes.");
         return NULL;
     }
     
@@ -203,12 +199,12 @@ CURL *session_request_init(const char *path, const char *query_string) {
         asprintf(&full_url, "%s%s?%s", get_base_url(), escaped_path, query_string);
     }
     if (full_url == NULL) {
-        log_print(LOG_ERR, "Allocation failed in asprintf.");
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Allocation failed in asprintf.");
         return NULL;
     }
     curl_free(escaped_path);
     curl_easy_setopt(session, CURLOPT_URL, full_url);
-    log_print(LOG_INFO, "Initialized request to URL: %s", full_url);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Initialized request to URL: %s", full_url);
     free(full_url);
 
     //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
