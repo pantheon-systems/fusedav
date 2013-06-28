@@ -944,7 +944,6 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     GError *gerr = NULL;
-    int fd;
     bool wrote_data;
 
     BUMP(dav_fsync);
@@ -963,6 +962,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     }
 
     if (wrote_data) {
+        int fd;
         fd = filecache_fd(info);
         // mode = 0 (unspecified), is_dir = false; fd to get size
         fill_stat_generic(&(value.st), 0, false, fd, &gerr);
@@ -987,7 +987,6 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
 
     // path might be NULL because we are accessing a bare file descriptor,
     if (path != NULL) {
-        int fd;
         bool wrote_data;
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
         struct stat_cache_value value;
@@ -999,6 +998,7 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
         }
 
         if (wrote_data) {
+            int fd;
             fd = filecache_fd(info);
             // mode = 0 (unspecified), is_dir = false; fd to get size
             fill_stat_generic(&(value.st), 0, false, fd, &gerr);
