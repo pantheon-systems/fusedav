@@ -25,6 +25,10 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <grp.h>
+#include <pwd.h>
+#include <sys/prctl.h>
+#include <glib.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -1321,6 +1325,41 @@ int fusedav_errors(void) {
     return inject_errors;
 }
 
+static int config_privileges(struct fusedav_config *config) {
+    if (config->run_as_gid != 0) {
+        struct group *g = getgrnam(config->run_as_gid);
+        if (setegid(g->gr_gid) < 0) {
+            log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop gid to %d.", g->gr_gid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set egid to %d.", g->gr_gid);
+    }
+
+    if (config->run_as_uid != 0) {
+        struct passwd *u = getpwnam(config->run_as_uid);
+
+        // If there's no explict group set, use the user's primary gid.
+        if (config->run_as_gid == 0) {
+            if (setegid(u->pw_gid) < 0) {
+                log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+                return -1;
+            }
+            log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
+        }
+
+        if (seteuid(u->pw_uid) < 0) {
+            log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop uid to %d.", u->pw_uid);
+            return -1;
+        }
+        log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set euid to %d.", u->pw_uid);
+    }
+
+    // Ensure the core is still dumpable.
+    prctl(PR_SET_DUMPABLE, 1);
+
+    return 0;
+}
+
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
     GError *gerr = NULL;
@@ -1393,7 +1432,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // REVIEW: moving call to config_privileges from here to configure_fusedav() above. Is this ok?
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Attempting to configure privileges.");
+    if (config_privileges(&config) < 0) {
+        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to configure privileges.");
+        goto finish;
+    }
 
     // Error injection mechanism. Should only be run during development.
     // It should only be triggered by running 'make INJECT_ERRORS=1' during build. So under
