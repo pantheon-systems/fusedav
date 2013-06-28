@@ -21,10 +21,6 @@
 #endif
 
 #include <stdlib.h>
-#include <grp.h>
-#include <pwd.h>
-#include <glib.h>
-#include <sys/prctl.h>
 #include <unistd.h>
 
 #include "fusedav.h"
@@ -335,41 +331,6 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     return;
 }
 
-static int config_privileges(struct fusedav_config *config) {
-    if (config->run_as_gid != 0) {
-        struct group *g = getgrnam(config->run_as_gid);
-        if (setegid(g->gr_gid) < 0) {
-            log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop gid to %d.", g->gr_gid);
-            return -1;
-        }
-        log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set egid to %d.", g->gr_gid);
-    }
-
-    if (config->run_as_uid != 0) {
-        struct passwd *u = getpwnam(config->run_as_uid);
-
-        // If there's no explict group set, use the user's primary gid.
-        if (config->run_as_gid == 0) {
-            if (setegid(u->pw_gid) < 0) {
-                log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop git to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
-                return -1;
-            }
-            log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set egid to %d (which is uid %d's primary gid).", u->pw_gid, u->pw_uid);
-        }
-
-        if (seteuid(u->pw_uid) < 0) {
-            log_print(LOG_ERR, SECTION_CONFIG_DEFAULT, "Can't drop uid to %d.", u->pw_uid);
-            return -1;
-        }
-        log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Set euid to %d.", u->pw_uid);
-    }
-
-    // Ensure the core is still dumpable.
-    prctl(PR_SET_DUMPABLE, 1);
-
-    return 0;
-}
-
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr) {
     GError *tmpgerr = NULL;
     const char *log_prefix;
@@ -420,13 +381,8 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    if (config->cache_uri)
+    if (config->cache_uri) {
         log_print(LOG_INFO, SECTION_CONFIG_DEFAULT, "Using cache URI: %s", config->cache_uri);
-
-    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Attempting to configure privileges.");
-    if (config_privileges(config) < 0) {
-        g_set_error(gerr, fusedav_config_quark(), EINVAL, "Failed to configure privileges.");
-        return;
     }
 }
 
