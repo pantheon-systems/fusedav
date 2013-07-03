@@ -148,6 +148,8 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
+static stat_cache_t *gcache; // Save off pointer to cache for stat_cache_walk
+
 void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path, GError **gerr) {
     char *errptr = NULL;
     char storage_path[PATH_MAX];
@@ -178,6 +180,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     leveldb_options_set_info_log(supplemental->options, NULL);
 
     *cache = leveldb_open(supplemental->options, storage_path, &errptr);
+    gcache = *cache; // save off pointer to cache for stat_cache_walk
     if (errptr || statcache_inject_error(1)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_open: Error opening db; %s.", errptr);
         free(errptr);
@@ -596,6 +599,26 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
         return -STAT_CACHE_NO_DATA;
 
     return E_SC_SUCCESS;
+}
+
+void stat_cache_walk(void) {
+    leveldb_readoptions_t *roptions;
+    struct leveldb_iterator_t *iter;
+
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: starting: %p", gcache);
+
+    roptions = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(roptions, false);
+    iter = leveldb_create_iterator(gcache, roptions); // We've kept a pointer to cache for just this call
+    leveldb_iter_seek_to_first(iter);
+    for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
+        size_t klen;
+        const char *iterkey = leveldb_iter_key(iter, &klen);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: iterkey = %s", iterkey);
+    }
+    leveldb_iter_destroy(iter);
+    leveldb_readoptions_destroy(roptions);
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: exiting");
 }
 
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {

@@ -31,6 +31,7 @@
 #include "log_sections.h"
 #include "signal_handling.h"
 #include "stats.h"
+#include "statcache.h"
 
 // GError mechanisms
 G_DEFINE_QUARK(SIGNAL_HANDLING, signal_handling)
@@ -39,6 +40,7 @@ extern struct fuse *fuse;
 
 static void sigusr2_handler(__unused int signum) {
     print_stats();
+    stat_cache_walk();
 }
 
 static void sigsegv_handler(int signum) {
