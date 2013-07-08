@@ -43,13 +43,18 @@ char *path_parent(const char *uri) {
 }
 
 char *strip_trailing_slash(char *fn, int *is_dir) {
-    size_t l = strlen(fn);
-    assert(fn);
-    assert(is_dir);
-    assert(l > 0);
+    //size_t l = strlen(fn);
+    //assert(fn);
+    //assert(is_dir);
+    //assert(l > 0);
 
-    if ((*is_dir = (fn[l-1] == '/')))
-        fn[l-1] = 0;
+    //// If slash is all you got, keep it. We want the base_directory to be '/', not ''
+    //if (l == 1 && fn[l - 1] == '/') {
+        //return fn;
+    //}
+
+    //if ((*is_dir = (fn[l-1] == '/')))
+        //fn[l-1] = 0;
 
     return fn;
 }
