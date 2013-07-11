@@ -692,17 +692,19 @@ void stat_cache_prune(stat_cache_t *cache) {
     int passes = 1; // passes will grow as we detect larger depths
     int depth;
     int max_depth = 0;
-    const char *base_directory = "";
+    const char *base_directory = "/";
 
     // Statistics
     int visited_entries = 0;
     int deleted_entries = 0;
     int issues = 0;
-    time_t elapsedtime;
+    clock_t elapsedtime;
+    static unsigned int numcalls = 0;
+    static unsigned long totaltime = 0; // 
 
     BUMP(statcache_prune);
 
-    elapsedtime = time(NULL);
+    elapsedtime = clock();
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: enter");
 
@@ -799,12 +801,26 @@ void stat_cache_prune(stat_cache_t *cache) {
             if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) ||
                 (pass == 2 && (depth >= 100 && depth <= 999)) || (pass == 3 && depth >= 1000)) {
 
+				/* REVIEW:
+				 * Previously we were replacing the last slash with a null char, then restoring.
+				 * Here, we do the same, but with modifications when the file is in the
+				 * root directory. This requires some hokey code.
+				 * The reasonable way to do this would be to copy the string, then
+				 * do the futzing on the copy (aka just call our own function path_parent).
+				 * But this would add a strdup and free. We call this function a lot,
+				 * and if we have a large number of files in the statcache, will this
+				 * effect performance enough to not want to do it?
+				 */
+				int slashdx = 0;
+				char replaced_char = '/';
+
                 log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: Pass %d (%d)", pass, passes);
                 ++visited_entries;
 
                 // If base_directory is in the stat cache, we don't want to compare it
                 // to its parent directory, find it absent in the filter, and remove base_directory
                 if (strcmp(path, base_directory) == 0) {
+	                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: path == base_directory");
                     continue;
                 }
 
@@ -820,7 +836,20 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
 
                 // By putting a null in place of the last slash, path is now dirname(path).
-                slash[0] = '\0';
+                // However, deal with files in the base_directory differently, since we need
+                // to preserve the '/'.
+                // If we are dealing with files outside the base_directory, null-out position 0
+                // Otherwise null out position 1
+                // Then remember which position we nulled-out and the char there
+                // so we can restore later
+                if (slash == path) {
+	                slashdx = 1;
+				}
+				else {
+	                slashdx = 0;
+				}
+                replaced_char = slash[slashdx];
+                slash[slashdx] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", path);
@@ -828,7 +857,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
-                        if (slash) slash[0] = '/';
+                        slash[slashdx] = replaced_char;
 
                         log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
@@ -841,7 +870,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", path);
                     ++deleted_entries;
                     // Reset to original, complete path
-                    if (slash) slash[0] = '/';
+                    slash[slashdx] = replaced_char;
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path, NULL);
                 }
@@ -904,8 +933,12 @@ void stat_cache_prune(stat_cache_t *cache) {
     leveldb_iter_destroy(iter);
     leveldb_readoptions_destroy(roptions);
 
-    elapsedtime = time(NULL) - elapsedtime;
-    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: visited %d cache entries; deleted %d; had %d issues; elapsedtime %lu", visited_entries, deleted_entries, issues, elapsedtime);
+    elapsedtime = clock() - elapsedtime;
+    elapsedtime *= 1000;
+    elapsedtime /= CLOCKS_PER_SEC;
+    ++numcalls;
+    totaltime += elapsedtime;
+    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: visited %d cache entries; deleted %d; had %d issues; elapsedtime %lu (%lu)", visited_entries, deleted_entries, issues, elapsedtime, totaltime / numcalls);
 
     bloomfilter_destroy(boptions);
 
