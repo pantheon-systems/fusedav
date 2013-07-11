@@ -646,6 +646,8 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     GError *tmpgerr = NULL;
+    unsigned int entries = 0;
+    unsigned int deletedentries = 0;
 
     BUMP(statcache_delete_older);
 
@@ -654,6 +656,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
             stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
+            ++deletedentries;
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
                 free(entry);
@@ -662,11 +665,12 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
             }
         }
         free(entry);
+        ++entries;
         stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
 
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s", path_prefix);
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : entries %u, deletedentries %u", path_prefix, entries, deletedentries);
     stat_cache_prune(cache);
 
     return;
@@ -811,8 +815,9 @@ void stat_cache_prune(stat_cache_t *cache) {
 				 * and if we have a large number of files in the statcache, will this
 				 * effect performance enough to not want to do it?
 				 */
-				int slashdx = 0;
-				char replaced_char = '/';
+				// int slashdx = 0;
+				// char replaced_char = '/';
+				char *parentpath;
 
                 log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: Pass %d (%d)", pass, passes);
                 ++visited_entries;
@@ -824,16 +829,22 @@ void stat_cache_prune(stat_cache_t *cache) {
                     continue;
                 }
 
+				parentpath = path_parent(path);
                 // Find the trailing slash
-                slash = strrchr(path, '/');
+                ////slash = strrchr(path, '/');
 
                 // If there's no slash, there's no parent directory to compare against.
                 // Effectively, we are ignorning this entry. Since base_directory is already
                 // in the stat cache, this must be an errant entry. We should error instead?
-                if (slash == NULL) {
+                //if (slash == NULL) {
+                    //log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
+                    //continue;
+                //}
+                
+                if (parentpath == NULL) {
                     log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
                     continue;
-                }
+				}
 
                 // By putting a null in place of the last slash, path is now dirname(path).
                 // However, deal with files in the base_directory differently, since we need
@@ -842,14 +853,14 @@ void stat_cache_prune(stat_cache_t *cache) {
                 // Otherwise null out position 1
                 // Then remember which position we nulled-out and the char there
                 // so we can restore later
-                if (slash == path) {
-	                slashdx = 1;
-				}
-				else {
-	                slashdx = 0;
-				}
-                replaced_char = slash[slashdx];
-                slash[slashdx] = '\0';
+                //if (slash == path) {
+	                //slashdx = 1;
+				//}
+				//else {
+	                //slashdx = 0;
+				//}
+                //replaced_char = slash[slashdx];
+                //slash[slashdx] = '\0';
 
                 if (bloomfilter_exists(boptions, path, strlen(path))) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", path);
@@ -857,7 +868,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
                         // Reset to original, complete path
-                        slash[slashdx] = replaced_char;
+                        // slash[slashdx] = replaced_char;
 
                         log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
@@ -870,10 +881,11 @@ void stat_cache_prune(stat_cache_t *cache) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", path);
                     ++deleted_entries;
                     // Reset to original, complete path
-                    slash[slashdx] = replaced_char;
+                    // slash[slashdx] = replaced_char;
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path, NULL);
                 }
+                free(parentpath);
             }
         }
         ++pass;
