@@ -99,8 +99,6 @@ static char *path2key(const char *path, bool prefix) {
     char *key = NULL;
     unsigned int depth = 0;
     size_t pos = 0;
-    // JB bool slash_found = false;
-    // JB size_t last_slash_pos = 0;
 
     BUMP(statcache_path2key);
 
@@ -110,20 +108,11 @@ static char *path2key(const char *path, bool prefix) {
     while (path[pos]) {
         if (path[pos] == '/') {
             ++depth;
-            // JB last_slash_pos = pos;
-            // JB slash_found = true;
         }
         ++pos;
     }
 
-    // If the given path ended with a slash and a prefix was requested,
-    // ignore the trailing slash for depth purposes and avoid adding a
-    // second trailing slash.
-    /*if (prefix && slash_found && last_slash_pos == pos - 1) {
-        depth--;
-        asprintf(&key, "%u%s", depth, path);
-    }
-    else */ if (prefix) {
+    if (prefix) {
         asprintf(&key, "%u%s/", depth, path);
     }
     else {
