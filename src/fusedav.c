@@ -415,10 +415,8 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
 
 static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    char *parent_path;
-    char *nepp = NULL;
+    char *parent_path = NULL;
     GError *tmpgerr = NULL;
-    int is_dir = 0;
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
@@ -494,8 +492,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // If we're here, refresh_dir_for_file_stat is set, so we're updating
     // directory stat data to, in turn, update the desired file stat data.
 
-    nepp = path_parent(path);
-    parent_path = strip_trailing_slash(nepp, &is_dir);
+    parent_path = path_parent(path);
+    if (parent_path == NULL) goto fail;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Getting parent path entry: %s", parent_path);
     parent_children_update_ts = stat_cache_read_updated_children(config->cache, parent_path, &tmpgerr);
@@ -535,7 +533,7 @@ fail:
     memset(stbuf, 0, sizeof(struct stat));
 
 finish:
-    free(nepp);
+    free(parent_path);
     return;
 }
 

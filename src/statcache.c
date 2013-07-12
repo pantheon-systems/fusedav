@@ -219,7 +219,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
     key = path2key(path, false);
 
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "CGET: %s", key);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: key %s", key);
 
     options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(options, false);
@@ -235,13 +235,13 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (value == NULL) {
-        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get miss on path: %s", path);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
         return NULL;
     }
 
     // @TODO this should be a gerror
     if (vallen != sizeof(struct stat_cache_value)) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
     if (!skip_freshness_check) {
@@ -252,21 +252,25 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         if (current_time - value->updated > CACHE_TIMEOUT) {
             char *directory;
             time_t directory_updated;
-            int is_dir;
 
-            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
 
             // If that's too old, check the last update of the directory.
-            directory = strip_trailing_slash(path_parent(path), &is_dir);
+            directory = path_parent(path);
+            if (directory == NULL) {
+	            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+				return NULL;
+			}
+            
             directory_updated = stat_cache_read_updated_children(cache, directory, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_value_get: ");
                 return NULL;
             }
-            //log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
             free(directory);
             if (current_time - directory_updated > CACHE_TIMEOUT) {
-                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s is too old.", path);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: %s is too old.", path);
                 free(value);
                 return NULL;
             }
@@ -409,13 +413,8 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: %s", path);
     if ((p = path_parent(path))) {
-        int l = strlen(p);
 
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: deleting parent %s", p);
-        if (strcmp(p, "/") && l) {
-            if (p[l-1] == '/')
-                p[l-1] = 0;
-        }
 
         stat_cache_delete(cache, p, &tmpgerr);
         if (tmpgerr) {
@@ -646,8 +645,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     GError *tmpgerr = NULL;
-    unsigned int entries = 0;
-    unsigned int deletedentries = 0;
+    unsigned int deleted_entries = 0;
 
     BUMP(statcache_delete_older);
 
@@ -656,7 +654,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
             stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
-            ++deletedentries;
+            ++deleted_entries;
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
                 free(entry);
@@ -665,13 +663,15 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
             }
         }
         free(entry);
-        ++entries;
         stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
 
-    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : entries %u, deletedentries %u", path_prefix, entries, deletedentries);
-    stat_cache_prune(cache);
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : deletedentries %u", path_prefix, deleted_entries);
+    // Only prune if there are deleted entries; otherwise there's no work to do
+    if (deleted_entries > 0) {
+	    stat_cache_prune(cache);
+	}
 
     return;
 }
@@ -684,7 +684,7 @@ void stat_cache_prune(stat_cache_t *cache) {
     const char *iterkey;
     const char *key;
     char path[PATH_MAX];
-    char *slash;
+    // char *slash;
     const struct stat_cache_value *itervalue;
     size_t klen, vlen;
 
@@ -805,18 +805,6 @@ void stat_cache_prune(stat_cache_t *cache) {
             if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) ||
                 (pass == 2 && (depth >= 100 && depth <= 999)) || (pass == 3 && depth >= 1000)) {
 
-				/* REVIEW:
-				 * Previously we were replacing the last slash with a null char, then restoring.
-				 * Here, we do the same, but with modifications when the file is in the
-				 * root directory. This requires some hokey code.
-				 * The reasonable way to do this would be to copy the string, then
-				 * do the futzing on the copy (aka just call our own function path_parent).
-				 * But this would add a strdup and free. We call this function a lot,
-				 * and if we have a large number of files in the statcache, will this
-				 * effect performance enough to not want to do it?
-				 */
-				// int slashdx = 0;
-				// char replaced_char = '/';
 				char *parentpath;
 
                 log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: Pass %d (%d)", pass, passes);
@@ -830,46 +818,18 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
 
 				parentpath = path_parent(path);
-                // Find the trailing slash
-                ////slash = strrchr(path, '/');
+                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: path %s parent_path %s", path, parentpath);
 
-                // If there's no slash, there's no parent directory to compare against.
-                // Effectively, we are ignorning this entry. Since base_directory is already
-                // in the stat cache, this must be an errant entry. We should error instead?
-                //if (slash == NULL) {
-                    //log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
-                    //continue;
-                //}
-                
                 if (parentpath == NULL) {
-                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
+                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
                     continue;
 				}
 
-                // By putting a null in place of the last slash, path is now dirname(path).
-                // However, deal with files in the base_directory differently, since we need
-                // to preserve the '/'.
-                // If we are dealing with files outside the base_directory, null-out position 0
-                // Otherwise null out position 1
-                // Then remember which position we nulled-out and the char there
-                // so we can restore later
-                //if (slash == path) {
-	                //slashdx = 1;
-				//}
-				//else {
-	                //slashdx = 0;
-				//}
-                //replaced_char = slash[slashdx];
-                //slash[slashdx] = '\0';
-
-                if (bloomfilter_exists(boptions, path, strlen(path))) {
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", path);
+                if (bloomfilter_exists(boptions, parentpath, strlen(parentpath))) {
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", parentpath);
                     // If the parent is in the filter, and this child is a directory, add it to
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
-                        // Reset to original, complete path
-                        // slash[slashdx] = replaced_char;
-
                         log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
                             log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: error on bloomfilter_add: \'%s\')", path);
@@ -878,10 +838,8 @@ void stat_cache_prune(stat_cache_t *cache) {
                     }
                 }
                 else {
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", path);
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
-                    // Reset to original, complete path
-                    // slash[slashdx] = replaced_char;
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path, NULL);
                 }
