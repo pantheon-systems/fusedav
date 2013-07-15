@@ -21,6 +21,7 @@
 #endif
 
 #include <stdlib.h>
+#include <stdbool.h>
 #include <expat.h>
 #include <curl/curl.h>
 #include <time.h>

@@ -24,7 +24,7 @@ extern int debug;
 #ifndef G_DEFINE_QUARK
 
 #define             G_DEFINE_QUARK(QN, q_n)\
-static GQuark \
+GQuark \
 q_n##_quark (void) \
 { \
   static GQuark g_define_quark = 0; \
