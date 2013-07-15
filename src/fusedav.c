@@ -82,7 +82,7 @@ static void set_saint_mode(void) {
 }
 
 // GError mechanisms
-G_DEFINE_QUARK(FUSEDAV, fusedav)
+static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
 static int processed_gerror(const char *prefix, const char *path, GError *gerr) {
     int ret;

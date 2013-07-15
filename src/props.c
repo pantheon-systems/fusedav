@@ -21,6 +21,7 @@
 #endif
 
 #include <unistd.h>
+#include <stdbool.h>
 #include <expat.h>
 #include <curl/curl.h>
 #include <errno.h>

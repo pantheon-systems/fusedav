@@ -43,7 +43,7 @@ struct stat_cache_entry {
 };
 
 // GError mechanism. The only gerrors we return from statcache are leveldb errors
-G_DEFINE_QUARK(LDB, leveldb)
+static G_DEFINE_QUARK(LDB, leveldb)
 
 // error injection routines
 // This routine is here because it is easier to update if one adds a new call to <>_inject_error() than if it were in util.c

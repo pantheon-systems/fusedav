@@ -33,7 +33,7 @@
 #include "stats.h"
 
 // GError mechanisms
-G_DEFINE_QUARK(SIGNAL_HANDLING, signal_handling)
+static G_DEFINE_QUARK(SIGNAL_HANDLING, signal_handling)
 
 extern struct fuse *fuse;
 

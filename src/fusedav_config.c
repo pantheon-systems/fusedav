@@ -39,7 +39,7 @@
 
 
 // GError mechanisms
-G_DEFINE_QUARK(FUSEDAV_CONFIG, fusedav_config)
+static G_DEFINE_QUARK(FUSEDAV_CONFIG, fusedav_config)
 
 enum {
      KEY_HELP,
