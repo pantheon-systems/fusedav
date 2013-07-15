@@ -21,4 +21,20 @@
 
 extern int debug;
 
+#ifndef G_DEFINE_QUARK
+
+#define             G_DEFINE_QUARK(QN, q_n)\
+GQuark \
+q_n##_quark (void) \
+{ \
+  static GQuark g_define_quark = 0; \
+  if (G_UNLIKELY (g_define_quark == 0)) \
+    g_define_quark = g_quark_from_string (#QN); \
+  return g_define_quark; \
+}
+
+// @TODO: Move this elsewhere.
+char *strip_trailing_slash(char *fn, int *is_dir);
+
+#endif
 #endif
