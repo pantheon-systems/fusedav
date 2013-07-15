@@ -673,7 +673,6 @@ void stat_cache_prune(stat_cache_t *cache) {
     const char *iterkey;
     const char *key;
     char path[PATH_MAX];
-    // char *slash;
     const struct stat_cache_value *itervalue;
     size_t klen, vlen;
 
