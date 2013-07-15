@@ -125,10 +125,10 @@ void filecache_print_stats(void) {
 }
 
 // GError mechanisms
-G_DEFINE_QUARK(FC, filecache)
-G_DEFINE_QUARK(SYS, system)
-G_DEFINE_QUARK(LDB, leveldb)
-G_DEFINE_QUARK(CURL, curl)
+static G_DEFINE_QUARK(FC, filecache)
+static G_DEFINE_QUARK(SYS, system)
+static G_DEFINE_QUARK(LDB, leveldb)
+static G_DEFINE_QUARK(CURL, curl)
 
 // error injection routines
 // This routine is here because it is easier to update if one adds a new call to <>_inject_error() than if it were in util.c
