@@ -401,6 +401,10 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
         return;
     }
 
+    //if (value->st.st_size == 0 && value->st.st_mode & S_IFREG) {
+    //    log_print(LOG_NOTICE, "stat_cache_value_set: Setting file %s to zero length.", path);
+    //}
+
     BUMP(value_set);
 
     assert(value);
