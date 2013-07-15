@@ -192,7 +192,7 @@ static struct fuse_opt fusedav_opts[] = {
 };
 
 // GError mechanisms
-G_DEFINE_QUARK(FUSEDAV, fusedav)
+static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
 static void sigsegv_handler(int signum) {
     assert(signum == 11);
