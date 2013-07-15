@@ -33,8 +33,5 @@ q_n##_quark (void) \
   return g_define_quark; \
 }
 
-// @TODO: Move this elsewhere.
-char *strip_trailing_slash(char *fn, int *is_dir);
-
 #endif
 #endif

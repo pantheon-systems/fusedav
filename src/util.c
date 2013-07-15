@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #include "util.h"
 #include "log.h"
@@ -42,6 +43,22 @@ char *path_parent(const char *uri) {
     if (pnt < uri || (pnt == uri && *pnt != '/'))
         return NULL;
     return strndup(uri, pnt - uri + 1);
+}
+
+char *strip_trailing_slash(char *fn, int *is_dir) {
+    size_t l = strlen(fn);
+    assert(fn);
+    assert(is_dir);
+    assert(l > 0);
+
+    // If the string is length one, it's just a slash. Don't trim it.
+    if (l == 1)
+        return fn;
+
+    if ((*is_dir = (fn[l-1] == '/')))
+        fn[l-1] = 0;
+
+    return fn;
 }
 
 #if INJECT_ERRORS

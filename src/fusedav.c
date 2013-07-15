@@ -332,22 +332,6 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
     log_print(LOG_DEBUG, "Done with fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
 }
 
-char *strip_trailing_slash(char *fn, int *is_dir) {
-    size_t l = strlen(fn);
-    assert(fn);
-    assert(is_dir);
-    assert(l > 0);
-
-    // If the string is length one, it's just a slash. Don't trim it.
-    if (l == 1)
-        return fn;
-
-    if ((*is_dir = (fn[l-1] == '/')))
-        fn[l-1] = 0;
-
-    return fn;
-}
-
 static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st, unsigned long status_code) {
     //int is_dir = 0;
     struct fusedav_config *config = fuse_get_context()->private_data;

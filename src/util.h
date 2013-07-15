@@ -29,6 +29,7 @@
 #endif
 
 char *path_parent(const char *uri);
+char *strip_trailing_slash(char *fn, int *is_dir);
 
 // Error injection routines
 int fusedav_errors(void);
