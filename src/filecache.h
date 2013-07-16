@@ -19,13 +19,8 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
-#include <unistd.h>
-#include <limits.h>
-#include <fcntl.h>
-#include <sys/stat.h>
 #include <leveldb/c.h>
 #include <glib.h>
-#include "session.h"
 #include "fuse.h"
 
 /* Ultimately, it will be a dav_* function returning the value, so set it up for appropriate
