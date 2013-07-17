@@ -866,7 +866,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
                 free(errptr);
             }
-            break;
+            continue;
         }
 
         if (bloomfilter_exists(boptions, basepath, strlen(basepath))) {
