@@ -810,6 +810,7 @@ void stat_cache_prune(stat_cache_t *cache) {
 
                 if (parentpath == NULL) {
                     log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
+                    ++issues;
                     continue;
                 }
 
@@ -821,6 +822,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                         log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
                             log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: error on bloomfilter_add: \'%s\')", path);
+                            ++issues;
                             break;
                         }
                     }
@@ -866,6 +868,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
                 free(errptr);
             }
+            ++issues;
             continue;
         }
 
@@ -883,6 +886,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             if (errptr != NULL) {
                 log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
                 free(errptr);
+                ++issues;
             }
         }
         leveldb_iter_next(iter);
