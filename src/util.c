@@ -31,27 +31,29 @@
 char *path_parent(const char *uri) {
     size_t len = strlen(uri);
     const char *pnt = uri + len - 1;
-    // skip trailing slash (parent of "/foo/" is "/")
-    if (pnt >= uri && *pnt == '/')
-        pnt--;
+    
     // find previous slash
-    while (pnt > uri && *pnt != '/')
+    while (pnt > uri && *pnt != '/') {
         pnt--;
-    if (pnt < uri || (pnt == uri && *pnt != '/'))
+	}
+	
+	// Move up past the trailing slash. But if we are already at the 
+	// beginning of uri (aka at the root directory's slash), don't move
+	// past it.
+	if (pnt > uri) {
+		pnt--;
+	}
+	
+	// If there are no slashes in the string and we get to the front of the 
+	// string and the first character is not a slash, then we don't have a 
+	// legitimate directory to return
+    if (pnt == uri && *pnt != '/') {
         return NULL;
-    return strndup(uri, pnt - uri + 1);
-}
+	}
 
-char *strip_trailing_slash(char *fn, int *is_dir) {
-    size_t l = strlen(fn);
-    assert(fn);
-    assert(is_dir);
-    assert(l > 0);
-
-    if ((*is_dir = (fn[l-1] == '/')))
-        fn[l-1] = 0;
-
-    return fn;
+	// Returns everything up to but not including the last slash in the string
+	// But if the slash is the first character, return it.
+    return strndup(uri, (pnt - uri) + 1);
 }
 
 #if INJECT_ERRORS

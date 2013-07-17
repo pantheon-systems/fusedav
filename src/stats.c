@@ -27,14 +27,7 @@
 #include "log.h"
 #include "log_sections.h"
 #include "stats.h"
-
-extern struct fuse *fuse;
-
-// REVIEW: 1. stats is a separate entity, assigned to handling all stats; filecache
-// and statcache code should be limited to core activities
-// Or 2. filecache and statcache should be reponsible for themselves, including
-// stats, merely using stats facilities provided
-// Currently, #1
+#include "statcache.h"
 
 struct statistics stats;
 

@@ -47,7 +47,7 @@ run-cltest:
 	$(cltest) $(cltest-flags)
 
 run-statcacheprune:
-	$(statcacheprune) $(statcacheprune-dirs) $(statcacheprune-files) $(statcacheprune-verbose)
+	$(statcacheprune) $(statcacheprune-dirs) $(statcacheprune-flags) $(statcacheprune-verbose)
 
 run-iozone-unit:
 	$(iozone) -Ra $(iozone-unit-flags)

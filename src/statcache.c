@@ -99,12 +99,8 @@ static char *path2key(const char *path, bool prefix) {
     char *key = NULL;
     unsigned int depth = 0;
     size_t pos = 0;
-    bool slash_found = false;
-    size_t last_slash_pos = 0;
 
     BUMP(statcache_path2key);
-
-    log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "path2key(%s, %i)", path, prefix);
 
     if (prefix)
         ++depth;
@@ -112,25 +108,19 @@ static char *path2key(const char *path, bool prefix) {
     while (path[pos]) {
         if (path[pos] == '/') {
             ++depth;
-            last_slash_pos = pos;
-            slash_found = true;
         }
         ++pos;
     }
 
-    // If the given path ended with a slash and a prefix was requested,
-    // ignore the trailing slash for depth purposes and avoid adding a
-    // second trailing slash.
-    if (prefix && slash_found && last_slash_pos == pos - 1) {
-        depth--;
-        asprintf(&key, "%u%s", depth, path);
-    }
-    else if (prefix) {
+    if (prefix) {
         asprintf(&key, "%u%s/", depth, path);
     }
     else {
         asprintf(&key, "%u%s", depth, path);
     }
+
+    log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "path2key: %s, %i, %s", path, prefix, key);
+
     return key;
 }
 
@@ -147,6 +137,8 @@ static const char *key2path(const char *key) {
     }
     return NULL;
 }
+
+static stat_cache_t *gcache; // Save off pointer to cache for stat_cache_walk
 
 void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path, GError **gerr) {
     char *errptr = NULL;
@@ -178,6 +170,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     leveldb_options_set_info_log(supplemental->options, NULL);
 
     *cache = leveldb_open(supplemental->options, storage_path, &errptr);
+    gcache = *cache; // save off pointer to cache for stat_cache_walk
     if (errptr || statcache_inject_error(1)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_open: Error opening db; %s.", errptr);
         free(errptr);
@@ -215,7 +208,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
     key = path2key(path, false);
 
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "CGET: %s", key);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: key %s", key);
 
     options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(options, false);
@@ -231,13 +224,13 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (value == NULL) {
-        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get miss on path: %s", path);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
         return NULL;
     }
 
     // @TODO this should be a gerror
     if (vallen != sizeof(struct stat_cache_value)) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
     }
 
     if (!skip_freshness_check) {
@@ -248,21 +241,25 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         if (current_time - value->updated > CACHE_TIMEOUT) {
             char *directory;
             time_t directory_updated;
-            int is_dir;
 
-            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
 
             // If that's too old, check the last update of the directory.
-            directory = strip_trailing_slash(path_parent(path), &is_dir);
+            directory = path_parent(path);
+            if (directory == NULL) {
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+                return NULL;
+            }
+            
             directory_updated = stat_cache_read_updated_children(cache, directory, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_value_get: ");
                 return NULL;
             }
-            //log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
             free(directory);
             if (current_time - directory_updated > CACHE_TIMEOUT) {
-                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s is too old.", path);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: %s is too old.", path);
                 free(value);
                 return NULL;
             }
@@ -405,13 +402,8 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: %s", path);
     if ((p = path_parent(path))) {
-        int l = strlen(p);
 
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: deleting parent %s", p);
-        if (strcmp(p, "/") && l) {
-            if (p[l-1] == '/')
-                p[l-1] = 0;
-        }
 
         stat_cache_delete(cache, p, &tmpgerr);
         if (tmpgerr) {
@@ -598,6 +590,26 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     return E_SC_SUCCESS;
 }
 
+void stat_cache_walk(void) {
+    leveldb_readoptions_t *roptions;
+    struct leveldb_iterator_t *iter;
+
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: starting: %p", gcache);
+
+    roptions = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(roptions, false);
+    iter = leveldb_create_iterator(gcache, roptions); // We've kept a pointer to cache for just this call
+    leveldb_iter_seek_to_first(iter);
+    for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
+        size_t klen;
+        const char *iterkey = leveldb_iter_key(iter, &klen);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: iterkey = %s", iterkey);
+    }
+    leveldb_iter_destroy(iter);
+    leveldb_readoptions_destroy(roptions);
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: exiting");
+}
+
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
@@ -622,6 +634,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     GError *tmpgerr = NULL;
+    unsigned int deleted_entries = 0;
 
     BUMP(statcache_delete_older);
 
@@ -630,6 +643,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     while ((entry = stat_cache_iter_current(iter))) {
         if (entry->value->local_generation < minimum_local_generation) {
             stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
+            ++deleted_entries;
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
                 free(entry);
@@ -642,8 +656,11 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     }
     stat_cache_iterator_free(iter);
 
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s", path_prefix);
-    stat_cache_prune(cache);
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : deletedentries %u", path_prefix, deleted_entries);
+    // Only prune if there are deleted entries; otherwise there's no work to do
+    if (deleted_entries > 0) {
+        stat_cache_prune(cache);
+    }
 
     return;
 }
@@ -656,7 +673,6 @@ void stat_cache_prune(stat_cache_t *cache) {
     const char *iterkey;
     const char *key;
     char path[PATH_MAX];
-    char *slash;
     const struct stat_cache_value *itervalue;
     size_t klen, vlen;
 
@@ -668,17 +684,19 @@ void stat_cache_prune(stat_cache_t *cache) {
     int passes = 1; // passes will grow as we detect larger depths
     int depth;
     int max_depth = 0;
-    const char *base_directory = "";
+    const char *base_directory = "/";
 
     // Statistics
     int visited_entries = 0;
     int deleted_entries = 0;
     int issues = 0;
-    time_t elapsedtime;
+    clock_t elapsedtime;
+    static unsigned int numcalls = 0;
+    static unsigned long totaltime = 0; // 
 
     BUMP(statcache_prune);
 
-    elapsedtime = time(NULL);
+    elapsedtime = clock();
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: enter");
 
@@ -775,37 +793,31 @@ void stat_cache_prune(stat_cache_t *cache) {
             if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) ||
                 (pass == 2 && (depth >= 100 && depth <= 999)) || (pass == 3 && depth >= 1000)) {
 
+                char *parentpath;
+
                 log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: Pass %d (%d)", pass, passes);
                 ++visited_entries;
 
                 // If base_directory is in the stat cache, we don't want to compare it
                 // to its parent directory, find it absent in the filter, and remove base_directory
                 if (strcmp(path, base_directory) == 0) {
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: path == base_directory");
                     continue;
                 }
 
-                // Find the trailing slash
-                slash = strrchr(path, '/');
+                parentpath = path_parent(path);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: path %s parent_path %s", path, parentpath);
 
-                // If there's no slash, there's no parent directory to compare against.
-                // Effectively, we are ignorning this entry. Since base_directory is already
-                // in the stat cache, this must be an errant entry. We should error instead?
-                if (slash == NULL) {
-                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
+                if (parentpath == NULL) {
+                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
                     continue;
                 }
 
-                // By putting a null in place of the last slash, path is now dirname(path).
-                slash[0] = '\0';
-
-                if (bloomfilter_exists(boptions, path, strlen(path))) {
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", path);
+                if (bloomfilter_exists(boptions, parentpath, strlen(parentpath))) {
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", parentpath);
                     // If the parent is in the filter, and this child is a directory, add it to
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
-                        // Reset to original, complete path
-                        if (slash) slash[0] = '/';
-
                         log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: add path to filter \'%s\')", path);
                         if (bloomfilter_add(boptions, path, strlen(path)) < 0) {
                             log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: error on bloomfilter_add: \'%s\')", path);
@@ -814,13 +826,12 @@ void stat_cache_prune(stat_cache_t *cache) {
                     }
                 }
                 else {
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", path);
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
-                    // Reset to original, complete path
-                    if (slash) slash[0] = '/';
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path, NULL);
                 }
+                free(parentpath);
             }
         }
         ++pass;
@@ -880,8 +891,12 @@ void stat_cache_prune(stat_cache_t *cache) {
     leveldb_iter_destroy(iter);
     leveldb_readoptions_destroy(roptions);
 
-    elapsedtime = time(NULL) - elapsedtime;
-    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: visited %d cache entries; deleted %d; had %d issues; elapsedtime %lu", visited_entries, deleted_entries, issues, elapsedtime);
+    elapsedtime = clock() - elapsedtime;
+    elapsedtime *= 1000;
+    elapsedtime /= CLOCKS_PER_SEC;
+    ++numcalls;
+    totaltime += elapsedtime;
+    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: visited %d cache entries; deleted %d; had %d issues; elapsedtime %lu (%lu)", visited_entries, deleted_entries, issues, elapsedtime, totaltime / numcalls);
 
     bloomfilter_destroy(boptions);
 
