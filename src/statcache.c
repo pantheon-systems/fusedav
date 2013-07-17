@@ -843,7 +843,7 @@ void stat_cache_prune(stat_cache_t *cache) {
     // Handle updated_children entries
     leveldb_iter_seek(iter, "updated_children:", strlen("updated_children:") + 1);
 
-    while (leveldb_iter_valid(iter)) {
+    for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
         const char *basepath = NULL;
         iterkey = leveldb_iter_key(iter, &klen);
 
@@ -889,7 +889,6 @@ void stat_cache_prune(stat_cache_t *cache) {
                 ++issues;
             }
         }
-        leveldb_iter_next(iter);
     }
 
     leveldb_iter_destroy(iter);
