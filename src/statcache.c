@@ -247,9 +247,9 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
             // If that's too old, check the last update of the directory.
             directory = path_parent(path);
             if (directory == NULL) {
-	            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
-				return NULL;
-			}
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+                return NULL;
+            }
             
             directory_updated = stat_cache_read_updated_children(cache, directory, &tmpgerr);
             if (tmpgerr) {
@@ -659,8 +659,8 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : deletedentries %u", path_prefix, deleted_entries);
     // Only prune if there are deleted entries; otherwise there's no work to do
     if (deleted_entries > 0) {
-	    stat_cache_prune(cache);
-	}
+        stat_cache_prune(cache);
+    }
 
     return;
 }
@@ -793,7 +793,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             if ((pass == 0 && depth <= 9) || (pass == 1 && (depth >= 10 && depth <= 99)) ||
                 (pass == 2 && (depth >= 100 && depth <= 999)) || (pass == 3 && depth >= 1000)) {
 
-				char *parentpath;
+                char *parentpath;
 
                 log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: Pass %d (%d)", pass, passes);
                 ++visited_entries;
@@ -801,17 +801,17 @@ void stat_cache_prune(stat_cache_t *cache) {
                 // If base_directory is in the stat cache, we don't want to compare it
                 // to its parent directory, find it absent in the filter, and remove base_directory
                 if (strcmp(path, base_directory) == 0) {
-	                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: path == base_directory");
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: path == base_directory");
                     continue;
                 }
 
-				parentpath = path_parent(path);
+                parentpath = path_parent(path);
                 log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: path %s parent_path %s", path, parentpath);
 
                 if (parentpath == NULL) {
                     log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring errant entry \'%s\'", path);
                     continue;
-				}
+                }
 
                 if (bloomfilter_exists(boptions, parentpath, strlen(parentpath))) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", parentpath);
