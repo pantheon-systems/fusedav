@@ -112,7 +112,7 @@ static char *path2key(const char *path, bool prefix) {
         ++pos;
     }
 
-    if (prefix) {
+    if (prefix && (path[pos -1] != '/')) {
         asprintf(&key, "%u%s/", depth, path);
     }
     else {
