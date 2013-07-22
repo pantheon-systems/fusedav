@@ -99,7 +99,9 @@ static char *path2key(const char *path, bool prefix) {
     char *key = NULL;
     unsigned int depth = 0;
     size_t pos = 0;
-
+    bool slash_found = false;
+    size_t last_slash_pos = 0;
+    
     BUMP(statcache_path2key);
 
     if (prefix)
@@ -108,17 +110,28 @@ static char *path2key(const char *path, bool prefix) {
     while (path[pos]) {
         if (path[pos] == '/') {
             ++depth;
+            last_slash_pos = pos;
+            slash_found = true;
         }
         ++pos;
     }
-
-    if (prefix && (path[pos -1] != '/')) {
+    
+    // If we indicated a prefix, and found a slash in the trailing position,
+    // we counted it for depth, but shouldn't have. So decrement the depth.
+    // Also, since we already have a slash on the end, don't add another one.
+    // This should only be the case for the root directory
+    if (prefix && slash_found && last_slash_pos == pos - 1) {
+        depth--;
+        asprintf(&key, "%u%s", depth, path);
+    }
+    // If we have a prefix and the string doesn't already end in a slash, add one
+    else if (prefix) {
         asprintf(&key, "%u%s/", depth, path);
     }
     else {
         asprintf(&key, "%u%s", depth, path);
     }
-
+    
     log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "path2key: %s, %i, %s", path, prefix, key);
 
     return key;
