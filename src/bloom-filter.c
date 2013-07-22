@@ -157,7 +157,7 @@ bloomfilter_options_t *bloomfilter_init(unsigned long maxkeys,
         goto fail;
     }
 
-    options->bitfield = calloc(options->filtersize, sizeof(unsigned char *));
+    options->bitfield = calloc(options->filtersize, sizeof(unsigned char));
     if (options->bitfield == NULL) {
         if (asprintf(errptr, "Can't create filter; failed to allocate bitfield") < 0) *errptr = NULL;
         goto fail;
