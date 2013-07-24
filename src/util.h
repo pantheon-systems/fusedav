@@ -28,7 +28,6 @@
 #include <glib.h>
 
 char *path_parent(const char *uri);
-char *strip_trailing_slash(char *fn, int *is_dir);
 
 // For GError
 #ifndef G_DEFINE_QUARK

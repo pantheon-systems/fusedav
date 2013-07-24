@@ -92,8 +92,10 @@ static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
             path = segment;
         }
         else {
-            asprintf(&path, "%s/%s", path, segment);
+            char *oldpath = path;
+            asprintf(&path, "%s/%s", oldpath, segment);
             free(segment);
+            free(oldpath);
         }
         cur = cur->next;
     }
