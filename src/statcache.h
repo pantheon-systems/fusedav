@@ -23,6 +23,7 @@
 #include <leveldb/c.h>
 #include <glib.h>
 #include <errno.h>
+#include <stdbool.h>
 
 #define RGEN_LEN 128
 #define STAT_CACHE_OLD_DATA 2
@@ -78,6 +79,7 @@ void stat_cache_delete(stat_cache_t *cache, const char* path, GError **gerr);
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr);
 void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation, GError **gerr);
 
+void stat_cache_walk(void);
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path_prefix, const char *filename, void *user), void *user, bool force);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 void stat_cache_prune(stat_cache_t *cache);
