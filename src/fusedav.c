@@ -991,7 +991,32 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
         memset(&value, 0, sizeof(struct stat_cache_value));
 
         wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+        // REVIEW: the idea here is that if we fail the PUT, we want to clean up the detritus
+        // left in the filecache and statcache.
+        // However, we will also do this cleanup on other gErrors in filecache_sync, which include:
+        // no sdata
+        // ldb error on pdata_get, or null return (not in filecache)
+        // error on lseek prior to PUT (why do we do the lseek?)
+        // error on PUT
+        // ldb error on pdata_set
         if (gerr) {
+            GError *gerr2 = NULL;
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_flush: error, removing from filecache and statcache %s", path);
+            filecache_delete(config->cache, path, true, &gerr2);
+            if (gerr2) {
+                // report error, but do not return on it
+                processed_gerror("dav_flush: ", path, gerr2);
+            }
+
+            if (gerr2) g_clear_error(&gerr2);
+
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_flush: calling stat_cache_delete on %s", path);
+            stat_cache_delete(config->cache, path, &gerr2);
+            if (gerr2) {
+                // report error, but do not return on it
+                processed_gerror("dav_flush: ", path, gerr2);
+            }
+            // Return the original error
             return processed_gerror("dav_flush: ", path, gerr);
         }
 
@@ -1169,11 +1194,33 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
         fd = filecache_fd(info);
         // mode = 0 (unspecified), is_dir = false; fd to get size
         fill_stat_generic(&(value.st), 0, false, fd, &gerr);
-        if (!gerr) {
-            stat_cache_value_set(config->cache, path, &value, &gerr);
-        }
         if (gerr) {
             return processed_gerror("dav_write: ", path, gerr);
+        }
+        else {
+            // REVIEW:
+            // NB. During tests transferring a file that was too large, the command line sftp
+            // client recognized the write error, and the subsequent flush error, with the
+            // following messages:
+            // Couldn't write to remote file "/srv/bindings/df2b48681f46459ba91ddb48077f7a89/files/f_000c84": Failure
+            // Couldn't close file: Failure
+            //
+            // filezilla recognized the errors, but went into a seemingly infinite loop retrying the file.
+            // If killed at the filezilla client, if in the middle of a transfer, a partial file was
+            // left on the server.
+
+            // convert maxsz to bytes so we can get a precise comparison
+            // We need to know the difference between a file which is exactly,
+            // e.g. 256MB, and one that is some bytes larger than that.
+            int fsz = value.st.st_size;
+            int maxsz = config->max_file_size * (1024 * 1024);
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_IO, "dav_write: fsz (%d); maxsz (%d)", fsz, maxsz);
+            if (fsz > maxsz) {
+                log_print(LOG_ERR, SECTION_FUSEDAV_IO, "dav_write: file size (%d) is greater than max allowed (%d)", 
+                    fsz, maxsz);
+                return (-EFBIG);
+            }
+            stat_cache_value_set(config->cache, path, &value, &gerr);
         }
     }
 

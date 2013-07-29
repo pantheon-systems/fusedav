@@ -86,6 +86,12 @@ static struct fuse_opt fusedav_opts[] = {
     FUSEDAV_OPT("verbosity=%d",                   log_level, 5),
     FUSEDAV_OPT("section_verbosity=%s",           log_level_by_section, 0),
     FUSEDAV_OPT("log_prefix=%s",                  log_prefix, 0),
+    // Misc
+    // We limit the size of files we accept. This is because we terminate
+    // ssl in nginx, all files uploaded come via this path, and nginx has
+    // a max file size limit, which we have configured on valhalla to be
+    // 256MB
+    FUSEDAV_OPT("max_file_size=%d",               max_file_size, 256),
     // Config
     FUSEDAV_OPT("conf=%s",                        conf, 0),
 
@@ -147,6 +153,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o log_level=NUM (use 7 for debug)\n"
                 "        -o log_level_by_section=STRING (0 means use global verbosity)\n"
                 "    Other:\n"
+                "        -o max_file_size=NUM (in MB)\n"
                 "        -o conf=STRING\n"
                 "\n"
                 , outargs->argv[0]);
@@ -187,6 +194,7 @@ static void print_config(struct fusedav_config *config) {
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level %d", config->log_level);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level_by_section %s", config->log_level_by_section);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_prefix %s", config->log_prefix);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "max_file_size %d", config->max_file_size);
 
     // These are not subject to change by the parse config method
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "uri: %s", config->uri);
@@ -210,6 +218,7 @@ run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
 log_level=5
 log_level_by_section=0
 log_prefix=6f7a106722f74cc7bd96d4d06785ed78
+max_file_size=256
 */
 
 static void parse_configs(struct fusedav_config *config, GError **gerr) {
@@ -243,6 +252,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, log_level, INT),
         keytuple(fusedav, log_level_by_section, STRING),
         keytuple(fusedav, log_prefix, STRING),
+        keytuple(fusedav, max_file_size, INT),
         {NULL, NULL, 0, 0}
         };
 

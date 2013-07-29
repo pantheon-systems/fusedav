@@ -810,8 +810,11 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
         log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: Request got HTTP status code %lu", response_code);
         if (!(response_code >= 200 && response_code < 300) || filecache_inject_error(27)) {
-            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: curl_easy_perform error response %ld: %s: ",
-                response_code, curl_easy_strerror(res));
+            // Opening up into the abyss...adding a separate code for a specific error return. Where will it end?
+            int curlerr = E_FC_CURLERR;
+            if (response_code == 413) curlerr = E_FC_FILETOOLARGE;
+            g_set_error(gerr, curl_quark(), curlerr, "put_return_etag: curl_easy_perform error response %ld: ",
+                response_code);
             goto finish;
         }
     }
@@ -880,6 +883,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     if (sdata->modified) {
         if (do_put) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Seeking fd=%d", sdata->fd);
+            // REVIEW: why do we do the lseek? Do we need to be at the beginning of the file?
             if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || filecache_inject_error(30)) {
                 g_set_error(gerr, system_quark(), errno, "filecache_sync: failed lseek");
                 goto finish;

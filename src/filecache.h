@@ -34,6 +34,7 @@
 #define E_FC_SDATANULL EIO
 #define E_FC_LDBERR EIO
 #define E_FC_CURLERR EIO
+#define E_FC_FILETOOLARGE EFBIG
 
 typedef leveldb_t filecache_t;
 
