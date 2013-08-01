@@ -140,7 +140,7 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
         st->st_size = lseek(fd, 0, SEEK_END);
         st->st_blocks = (st->st_size+511)/512;
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", fd, st->st_size, errno, strerror(errno));
-        if (st->st_size < 0) {
+        if (st->st_size < 0 || inject_error(fusedav_error_fillstsize)) {
             g_set_error(gerr, fusedav_quark(), errno, "fill_stat_generic failed lseek");
             return;
         }
@@ -232,11 +232,11 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         // On true error, we set an error and return, avoiding the complete PROPFIND.
         // On sucess we avoid the complete PROPFIND
         // On ESTALE, we do a complete PROPFIND
-        if (propfind_result == 0 && !fusedav_inject_error(0)) {
+        if (propfind_result == 0 && !inject_error(fusedav_error_updatepropfind1)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshen PROPFIND success");
             needs_update = false;
         }
-        else if (propfind_result == -ESTALE && !fusedav_inject_error(0)) {
+        else if (propfind_result == -ESTALE && !inject_error(fusedav_error_updatepropfind1)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshen PROPFIND failed because of staleness.");
         }
         else {
@@ -254,7 +254,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL);
-        if (propfind_result < 0 || fusedav_inject_error(1)) {
+        if (propfind_result < 0 || inject_error(fusedav_error_updatepropfind2)) {
             g_set_error(gerr, fusedav_quark(), EIO, "update_directory: Complete PROPFIND failed on %s", path);
             return;
         }
@@ -387,29 +387,31 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
     // REVIEW: @TODO: Grace mode setting ignore_freshness should not result in
     // -ENOENT for cache misses.
     if (response == NULL) {
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "NULL response from stat_cache_value_get for path %s.", path);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: NULL response from stat_cache_value_get for path %s.", path);
 
-        if (ignore_freshness) {
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Ignoring freshness and sending -ENOENT for path %s.", path);
+        if (ignore_freshness || inject_error(fusedav_error_statignorefreshness)) {
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Ignoring freshness and sending -ENOENT for path %s.", path);
             memset(stbuf, 0, sizeof(struct stat));
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: 1. After Ignoring freshness and sending -ENOENT for path %s (%p %p).", path, gerr, *gerr);
             g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: 2. After Ignoring freshness and sending -ENOENT for path %s.", path);
             return -1;
         }
 
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Treating key as absent of expired for path %s.", path);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Treating key as absent of expired for path %s.", path);
         return -EKEYEXPIRED;
     }
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Got response from stat_cache_value_get for path %s.", path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Got response from stat_cache_value_get for path %s.", path);
     *stbuf = response->st;
     print_stat(stbuf, "stat_cache_value_get response");
     free(response);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, ignore_freshness, stbuf->st_mode ? "0" : "ENOENT");
-    if (stbuf->st_mode == 0) {
+    if (stbuf->st_mode == 0 || inject_error(fusedav_error_statstmode)) {
         g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: stbuf mode is 0: ");
         return -1;
     }
-    return 0;
+    return 0; 
 
 }
 
@@ -472,7 +474,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL) < 0) {
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
+                g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
                 goto fail;
             }
             g_set_error(gerr, fusedav_quark(), EIO, "get_stat: PROPFIND failed");
@@ -524,6 +526,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // Try again to hit the file in the stat cache.
     ret = get_stat_from_cache(path, stbuf, true, &tmpgerr);
     if (tmpgerr) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         goto fail;
     }
@@ -612,47 +615,64 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     return 0;
 }
 
-static int dav_unlink(const char *path) {
+static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat st;
-    GError *gerr = NULL;
-    CURL *session;
+    GError *gerr2 = NULL;
     CURLcode res;
+
+    get_stat(path, &st, &gerr2);
+    if (gerr2) {
+        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+        return;
+    }
+
+    if (!S_ISREG(st.st_mode) || inject_error(fusedav_error_cunlinkisdir)) {
+        g_set_error(gerr, fusedav_quark(), EISDIR, "common_unlink: is a directory");
+        return;
+    }
+
+    if (do_unlink) {
+        CURL *session;
+        if (!(session = session_request_init(path, NULL)) || inject_error(fusedav_error_cunlinksession)) {
+            g_set_error(gerr, fusedav_quark(), EIO, "common_unlink(%s): failed to get request session", path);
+            return;
+        }
+    
+        curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
+    
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
+        res = curl_easy_perform(session);
+        if(res != CURLE_OK || inject_error(fusedav_error_cunlinkcurl)) {
+            g_set_error(gerr, fusedav_quark(), EIO, "common_unlink: DELETE failed: %s\n", curl_easy_strerror(res));
+            return;
+        }
+    }
+
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling filecache_delete on %s", path);
+    filecache_delete(config->cache, path, true, &gerr2);
+    if (gerr) {
+        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+    }
+
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling stat_cache_delete on %s", path);
+    stat_cache_delete(config->cache, path, &gerr2);
+    if (gerr) {
+        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+    }
+    
+    return;
+}
+
+static int dav_unlink(const char *path) {
+    GError *gerr = NULL;
+    bool do_unlink = true;
 
     BUMP(dav_unlink);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_unlink(%s)", path);
-
-    get_stat(path, &st, &gerr);
-    if (gerr) {
-        return processed_gerror("dav_unlink: ", path, gerr);
-    }
-
-    if (!S_ISREG(st.st_mode))
-        return -EISDIR;
-
-    if (!(session = session_request_init(path, NULL))) {
-        log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_unlink(%s): failed to get request session", path);
-        return -EIO;
-    }
-
-    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_unlink: calling DELETE on %s", path);
-    res = curl_easy_perform(session);
-    if(res != CURLE_OK) {
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "DELETE failed: %s\n", curl_easy_strerror(res));
-        return -EIO;
-    }
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_unlink: calling filecache_delete on %s", path);
-    filecache_delete(config->cache, path, true, &gerr);
-    if (gerr) {
-        return processed_gerror("dav_unlink: ", path, gerr);
-    }
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_unlink: calling stat_cache_delete on %s", path);
-    stat_cache_delete(config->cache, path, &gerr);
+    
+    common_unlink(path, do_unlink, &gerr);
     if (gerr) {
         return processed_gerror("dav_unlink: ", path, gerr);
     }
@@ -761,6 +781,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     if (!gerr) {
         stat_cache_value_set(config->cache, path, &value, &gerr);
     }
+    
     if (gerr) {
         return processed_gerror("dav_mkdir: ", path, gerr);
     }
@@ -911,7 +932,50 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     if (path != NULL) {
         bool wrote_data;
         wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
-        if (!gerr && wrote_data) {
+        if (gerr) {
+            GError *subgerr = NULL;
+            bool do_unlink = false;
+            struct stat_cache_value *value;
+            
+            // REVIEW: the idea here is that if we fail the PUT, we want to clean up the detritus
+            // left in the filecache and statcache.
+            // However, we will also do this cleanup on other gErrors in filecache_sync, which include:
+            // no sdata
+            // ldb error on pdata_get, or null return (not in filecache)
+            // error on lseek prior to PUT (why do we do the lseek?)
+            // error on PUT
+            // ldb error on pdata_set
+            
+            // REVIEW: sdata now carries a has_error field. If we detect an error on the file,
+            // we carry it forward. filecache_sync will detect and cause gerr if it sees an error.
+            // Move to forensic haven
+            value = stat_cache_value_get(config->cache, path, true, &subgerr);
+            if (subgerr) {
+                processed_gerror("dav_release:", path, subgerr);
+                g_clear_error(&subgerr);
+            }
+            filecache_forensic_haven(config->cache_path, config->cache, path, value->st.st_size, &subgerr);
+            if (subgerr) {
+                processed_gerror("dav_release:", path, subgerr);
+                g_clear_error(&subgerr);
+            }
+            free(value);
+            if (/* 413 or errno 27 file too big */ false) {
+                do_unlink = true;
+            }
+            log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, 
+                "dav_release: error on file \'%s\'; %sfile and stat caches", 
+                path, do_unlink ? "removing from server and " : "");
+            // This will delete from filecache and statcache; depending on do_unlink might also remove from server
+            common_unlink(path, do_unlink, &subgerr);
+            if (subgerr) {
+                // display the error, but don't return it ...
+                processed_gerror("dav_release: ", path, subgerr);
+            }
+            // return the original error
+            return processed_gerror("dav_release:", path, gerr);
+        }
+        else if (wrote_data) {
             struct stat_cache_value value;
             int fd = filecache_fd(info);
             // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -922,6 +986,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
                 stat_cache_value_set(config->cache, path, &value, &gerr);
             }
         }
+        // REVIEW: else wrote_data is 0; what do we do?
     }
 
     filecache_close(info, &gerr2);
@@ -929,6 +994,9 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         g_propagate_error(&gerr, gerr2);
     }
 
+    // If we get a gerror on filecache_sync, we exit before we get here.
+    // But if we don't, then we use gerr in the wrote_data clause and might
+    // have encountered an error which we detect here.
     if (gerr) {
         return processed_gerror("dav_release: ", path, gerr);
     }
@@ -991,32 +1059,7 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
         memset(&value, 0, sizeof(struct stat_cache_value));
 
         wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
-        // REVIEW: the idea here is that if we fail the PUT, we want to clean up the detritus
-        // left in the filecache and statcache.
-        // However, we will also do this cleanup on other gErrors in filecache_sync, which include:
-        // no sdata
-        // ldb error on pdata_get, or null return (not in filecache)
-        // error on lseek prior to PUT (why do we do the lseek?)
-        // error on PUT
-        // ldb error on pdata_set
         if (gerr) {
-            GError *gerr2 = NULL;
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_flush: error, removing from filecache and statcache %s", path);
-            filecache_delete(config->cache, path, true, &gerr2);
-            if (gerr2) {
-                // report error, but do not return on it
-                processed_gerror("dav_flush: ", path, gerr2);
-            }
-
-            if (gerr2) g_clear_error(&gerr2);
-
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_flush: calling stat_cache_delete on %s", path);
-            stat_cache_delete(config->cache, path, &gerr2);
-            if (gerr2) {
-                // report error, but do not return on it
-                processed_gerror("dav_flush: ", path, gerr2);
-            }
-            // Return the original error
             return processed_gerror("dav_flush: ", path, gerr);
         }
 
@@ -1090,7 +1133,6 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
     return;
 }
 
-
 static int dav_open(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
     BUMP(dav_open);
@@ -1157,6 +1199,30 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
     return bytes_read;
 }
 
+static bool file_too_big(off_t fsz, off_t maxsz) {
+    // REVIEW:
+    // NB. During tests transferring a file that was too large, the command line sftp
+    // client recognized the write error, and the subsequent flush error, with the
+    // following messages:
+    // Couldn't write to remote file "/srv/bindings/df2b48681f46459ba91ddb48077f7a89/files/f_000c84": Failure
+    // Couldn't close file: Failure
+    //
+    // filezilla recognized the errors, but went into a seemingly infinite loop retrying the file.
+    // If killed at the filezilla client, if in the middle of a transfer, a partial file was
+    // left on the server.
+
+    // convert maxsz to bytes so we can get a precise comparison
+    // We need to know the difference between a file which is exactly,
+    // e.g. 256MB, and one that is some bytes larger than that.
+    maxsz *= (1024 * 1024);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_IO, "dav_write: fsz (%lu); maxsz (%lu)", fsz, maxsz);
+    if (fsz > maxsz) {
+        log_print(LOG_ERR, SECTION_FUSEDAV_IO, "dav_write: file size (%lu) is greater than max allowed (%lu)", fsz, maxsz);
+        return true;
+    }
+    return false;
+}
+
 static int dav_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
@@ -1198,26 +1264,8 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
             return processed_gerror("dav_write: ", path, gerr);
         }
         else {
-            // REVIEW:
-            // NB. During tests transferring a file that was too large, the command line sftp
-            // client recognized the write error, and the subsequent flush error, with the
-            // following messages:
-            // Couldn't write to remote file "/srv/bindings/df2b48681f46459ba91ddb48077f7a89/files/f_000c84": Failure
-            // Couldn't close file: Failure
-            //
-            // filezilla recognized the errors, but went into a seemingly infinite loop retrying the file.
-            // If killed at the filezilla client, if in the middle of a transfer, a partial file was
-            // left on the server.
-
-            // convert maxsz to bytes so we can get a precise comparison
-            // We need to know the difference between a file which is exactly,
-            // e.g. 256MB, and one that is some bytes larger than that.
-            int fsz = value.st.st_size;
-            int maxsz = config->max_file_size * (1024 * 1024);
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_IO, "dav_write: fsz (%d); maxsz (%d)", fsz, maxsz);
-            if (fsz > maxsz) {
-                log_print(LOG_ERR, SECTION_FUSEDAV_IO, "dav_write: file size (%d) is greater than max allowed (%d)", 
-                    fsz, maxsz);
+            if (file_too_big(value.st.st_size, config->max_file_size)) {
+                filecache_set_error(info, EFBIG);
                 return (-EFBIG);
             }
             stat_cache_value_set(config->cache, path, &value, &gerr);
@@ -1257,6 +1305,7 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     if (!gerr) {
         stat_cache_value_set(config->cache, path, &value, &gerr);
     }
+    
     if (gerr) {
         return processed_gerror("dav_ftruncate: ", path, gerr);
     }
@@ -1362,13 +1411,6 @@ struct fuse_operations dav_oper = {
     .flush       = dav_flush,
     .flag_nullpath_ok = 1,
 };
-
-// error injection routines
-// This routine is here because it is easier to update if one adds a new call to <>_inject_error() than if it were in util.c
-int fusedav_errors(void) {
-    int const inject_errors = 2; // Number of places we call fusedav_inject_error(). Update when changed.
-    return inject_errors;
-}
 
 static int config_privileges(struct fusedav_config *config) {
     if (config->run_as_gid != 0) {

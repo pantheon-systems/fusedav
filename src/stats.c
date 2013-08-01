@@ -102,6 +102,8 @@ void print_stats(void) {
     log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  orphans:     %u", FETCH(filecache_orphans));
     log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  cleanup:     %u", FETCH(filecache_cleanup));
     log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  get_fd:      %u", FETCH(filecache_get_fd));
+    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  set_error:   %u", FETCH(filecache_set_error));
+    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  forensic:    %u", FETCH(filecache_forensic_haven));
     log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  init:        %u", FETCH(filecache_init));
     log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  path2key:    %u", FETCH(filecache_path2key));
     log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  key2path:    %u", FETCH(filecache_key2path));
@@ -125,5 +127,6 @@ void print_stats(void) {
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  enumerate:   %u", FETCH(statcache_enumerate));
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  has_child:   %u", FETCH(statcache_has_child));
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete_older:%u", FETCH(statcache_delete_older));
+    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  forensic:    %u", FETCH(statcache_forensic_haven));
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  prune:       %u", FETCH(statcache_prune));
 }

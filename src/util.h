@@ -26,6 +26,7 @@
 #endif
 
 #include <glib.h>
+#include <stdbool.h>
 
 char *path_parent(const char *uri);
 
@@ -43,30 +44,96 @@ q_n##_quark (void) \
 }
 
 #endif
-// Error injection routines
-int fusedav_errors(void);
-int filecache_errors(void);
-int statcache_errors(void);
-
 void *inject_error_mechanism(void *ptr);
 
 #if INJECT_ERRORS
 
-#define injecting_errors true
-bool fd_inject_error(int edx);
-bool fc_inject_error(int edx);
-bool sc_inject_error(int edx);
+#define fusedav_error_fillstsize 0
+#define fusedav_error_updatepropfind1 1
+#define fusedav_error_updatepropfind2 2
+#define fusedav_error_statignorefreshness 3
+#define fusedav_error_statstmode 4
+#define fusedav_error_cunlinkisdir 5
+#define fusedav_error_cunlinksession 6
+#define fusedav_error_cunlinkcurl 7
 
-#define fusedav_inject_error(edx) fd_inject_error(edx)
-#define filecache_inject_error(edx) fc_inject_error(edx)
-#define statcache_inject_error(edx) sc_inject_error(edx)
+#define filecache_error_init1 10
+#define filecache_error_init2 11
+#define filecache_error_init3 12
+#define filecache_error_newcachefile 13
+#define filecache_error_setpdata 14
+#define filecache_error_setldb 15
+#define filecache_error_createcalloc 16
+#define filecache_error_getldb 17
+#define filecache_error_getvallen 18
+#define filecache_error_freshopen1 19
+#define filecache_error_freshflock1 20
+#define filecache_error_freshftrunc 21
+#define filecache_error_freshflock2 22
+#define filecache_error_freshsession 23
+#define filecache_error_freshcurl1 24
+#define filecache_error_freshcurl2 25
+#define filecache_error_freshopen2 26
+#define filecache_error_freshpdata 27
+#define filecache_error_fresh404 28
+#define filecache_error_opencalloc 29
+#define filecache_error_readsdata 30
+#define filecache_error_readread 31
+#define filecache_error_writesdata 32
+#define filecache_error_writewriteable 33
+#define filecache_error_writeflock1 34
+#define filecache_error_writewrite 35
+#define filecache_error_writeflock2 36
+#define filecache_error_closesdata 37
+#define filecache_error_closefd 38
+#define filecache_error_closeclose 39
+#define filecache_error_etagflock1 40
+#define filecache_error_etagfstat 41
+#define filecache_error_etagcurl1 42
+#define filecache_error_etagcurl2 43
+#define filecache_error_etagflock2 44
+#define filecache_error_syncsdata 45
+#define filecache_error_syncerror 46
+#define filecache_error_syncpdata 47
+#define filecache_error_synclseek 48
+#define filecache_error_truncsdata 49
+#define filecache_error_truncflock1 50
+#define filecache_error_truncftrunc 51
+#define filecache_error_truncflock2 52
+#define filecache_error_deleteldb 53
+#define filecache_error_movepdata 54
+#define filecache_error_orphanopendir 55
+
+#define statcache_error_cachepath 60
+#define statcache_error_openldb 61
+#define statcache_error_getldb 62
+#define statcache_error_childrenldb 63
+#define statcache_error_readchildrenldb 64
+#define statcache_error_setldb 65
+#define statcache_error_deleteldb 66
+
+#define config_error_parse 70
+#define config_error_sessioninit 71
+#define config_error_cmdline 72
+#define config_error_uri 73
+#define config_error_load 74
+
+#define signal_error_action1 80
+#define signal_error_action2 81
+#define signal_error_action3 82
+
+// Make sure it is higher than the highest value above
+#define inject_error_count 90
+// last slot is no error
+#define no_error inject_error_count - 1
+
+#define injecting_errors true
+bool inject_error(int edx);
 
 #else
 
 #define injecting_errors false
-#define fusedav_inject_error(edx) false
-#define filecache_inject_error(edx) false
-#define statcache_inject_error(edx) false
+#define inject_error(edx) false
 
 #endif
 

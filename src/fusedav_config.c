@@ -86,12 +86,6 @@ static struct fuse_opt fusedav_opts[] = {
     FUSEDAV_OPT("verbosity=%d",                   log_level, 5),
     FUSEDAV_OPT("section_verbosity=%s",           log_level_by_section, 0),
     FUSEDAV_OPT("log_prefix=%s",                  log_prefix, 0),
-    // Misc
-    // We limit the size of files we accept. This is because we terminate
-    // ssl in nginx, all files uploaded come via this path, and nginx has
-    // a max file size limit, which we have configured on valhalla to be
-    // 256MB
-    FUSEDAV_OPT("max_file_size=%d",               max_file_size, 256),
     // Config
     FUSEDAV_OPT("conf=%s",                        conf, 0),
 
@@ -221,6 +215,11 @@ log_prefix=6f7a106722f74cc7bd96d4d06785ed78
 max_file_size=256
 */
 
+// Note for future generations; as currently set up, inject error won't start until
+// after this function is called, so the inject_error routines will never fire even
+// if inject error is turned on
+    
+
 static void parse_configs(struct fusedav_config *config, GError **gerr) {
 
     #define BOOL 0
@@ -287,7 +286,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on load_from_file");
         return;
-    } else if (bret == FALSE) {
+    } else if (bret == FALSE || inject_error(config_error_load)) {
         g_set_error(gerr, fusedav_config_quark(), ENOENT, "parse_configs: Error on load_from_file");
         return;
     }
@@ -347,9 +346,14 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
 
     // default log_level: LOG_NOTICE
     config->log_level = 5;
+    
+    // REVIEW: only needed if someone remounts to a new fusedav but doesn't yet converge to
+    // get the new fusedav.conf which sets this value. Is this a one-off we can throw away
+    // later, or do we want a more elegant mechanism for setting defaults as the future unfolds?
+    config->max_file_size = 0;
 
     // Parse options.
-    if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0) {
+    if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse options.");
         return;
     }
@@ -360,7 +364,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0) {
+    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0 || inject_error(config_error_sessioninit)) {
         g_set_error(gerr, fusedav_config_quark(), EIO, "Failed to initialize session system.");
         return;
     }
@@ -374,7 +378,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     debug = (config->log_level >= 7);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
-    if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0) {
+    if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse the command line.");
         return;
     }
@@ -386,7 +390,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
 
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Parsed command line.");
 
-    if (!config->uri) {
+    if (!config->uri || inject_error(config_error_uri)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "Missing the required URI argument.");
         return;
     }

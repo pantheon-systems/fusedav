@@ -63,6 +63,8 @@ struct statistics {
     unsigned filecache_orphans;
     unsigned filecache_cleanup;
     unsigned filecache_get_fd;
+    unsigned filecache_set_error;
+    unsigned filecache_forensic_haven;
     unsigned filecache_init;
     unsigned filecache_path2key;
     unsigned filecache_key2path;
@@ -85,6 +87,7 @@ struct statistics {
     unsigned statcache_enumerate;
     unsigned statcache_has_child;
     unsigned statcache_delete_older;
+    unsigned statcache_forensic_haven;
     unsigned statcache_prune;
 };
 

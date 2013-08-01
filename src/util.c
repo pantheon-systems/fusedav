@@ -22,6 +22,8 @@
 
 #include <stdbool.h>
 #include <assert.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include "util.h"
 #include "log.h"
@@ -70,23 +72,12 @@ char *path_parent(const char *uri) {
 
 // error injection routines
 // The list of inject_error locations
-static bool *inject_error_list;
-
-// fusedav will take the 0'th element and the next however many it needs
-// filecache will take the section of the list where fusedav leaves off;
-// statcache where fusedav leaves off
-static int fusedav_start;
-static int filecache_start;
-static int statcache_start;
-
-// number of inject_error locations in fusedav, bzw filecache, statcache
-static int fderrors;
-static int fcerrors;
-static int scerrors;
+static bool *inject_error_list = NULL;
 
 // The routine which the pthread calls to get things started
 void *inject_error_mechanism(void *ptr) {
-    int fdx = 0;
+    int fdx = no_error;
+    int tdx = no_error;
 
     // ptr stuff just to get rid of warning message about unused parameter
     log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "INJECTING ERRORS! %p", ptr ? ptr : 0);
@@ -104,17 +95,7 @@ void *inject_error_mechanism(void *ptr) {
     // See the random number generator
     srand(time(NULL));
 
-    // fusedav starts the list at 0
-    fderrors = fusedav_errors();
-    fusedav_start = 0;
-    fcerrors = filecache_errors();
-    // filecache starts the list where fusedav leaves off
-    filecache_start = fderrors;
-    scerrors = statcache_errors();
-    // statcache starts where filecache leaves off
-    statcache_start = filecache_start + fcerrors;
-    // create the list large enough for inject_error locations from all three files
-    inject_error_list = calloc(sizeof(bool), fderrors + fcerrors + scerrors);
+    inject_error_list = calloc(sizeof(bool), inject_error_count);
     if (inject_error_list == NULL) {
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: failed to calloc inject_error_list");
         return NULL;
@@ -122,13 +103,16 @@ void *inject_error_mechanism(void *ptr) {
 
     // Generate errors forever!
     while (true) {
-        int tdx;
         // Sleep 4 seconds between injections
         sleep(4);
 
         // Figure out which error location to set
-        tdx = rand() % (fderrors + fcerrors + scerrors);
-        log_print(LOG_DEBUG, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", fcerrors, fdx, tdx);
+        // JB tdx = rand() % inject_error_count;
+        // flop between writewrite and no_error
+        if (tdx == no_error) tdx = filecache_error_writewrite;
+        else tdx = no_error;
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
 
         // Make the new location true but turn off the locations for the old location.
         inject_error_list[tdx] = true;
@@ -139,32 +123,14 @@ void *inject_error_mechanism(void *ptr) {
     return NULL;
 }
 
-// fusedav.c bzw filecache.c, statcache.c, will call these routines to decide whether to throw an injected error
-// The basic routine; it will figure out if the given location is in this file's section of the list
-
-// edx is relative to the file itself, that is, each file numbers its inject_error locations starting at 0.
-static bool inject_error(int edx, int start, int numerrors) {
-    // Move to the section of the list where this file's inject_error locations start
-    edx += start;
+bool inject_error(int edx) {
     // See if the error location has been set by the mechanism
-    if (inject_error_list[edx]) {
+    if (inject_error_list && inject_error_list[edx]) {
         inject_error_list[edx] = false;
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error(%d, %d, %d)", edx - start, start, numerrors);
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error(%d)", edx);
         return true;
     }
     return false;
-}
-
-bool fd_inject_error(int edx) {
-    return inject_error(edx, fusedav_start, fderrors);
-}
-
-bool fc_inject_error(int edx) {
-    return inject_error(edx, filecache_start, fcerrors);
-}
-
-bool sc_inject_error(int edx) {
-    return inject_error(edx, statcache_start, scerrors);
 }
 
 #else
