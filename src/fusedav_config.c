@@ -350,7 +350,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     // REVIEW: only needed if someone remounts to a new fusedav but doesn't yet converge to
     // get the new fusedav.conf which sets this value. Is this a one-off we can throw away
     // later, or do we want a more elegant mechanism for setting defaults as the future unfolds?
-    config->max_file_size = 0;
+    config->max_file_size = 256;
 
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {

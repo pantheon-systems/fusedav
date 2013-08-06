@@ -148,7 +148,7 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     BUMP(filecache_pdata_set);
 
-    // REVIEW: null pdata will cause file to be unlinked from server and removed from file/stat caches.
+    // REVIEW: null pdata will cause file to go to forensic haven.
     // Is this OK?
     if (!pdata || inject_error(filecache_error_setpdata)) {
         g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_pdata_set NULL pdata");
@@ -164,7 +164,7 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     free(key);
 
-    // REVIEW: ldb error will cause file to be unlinked from server and removed from file/stat caches.
+    // REVIEW: ldb error will cause file to go to forensic haven.
     // Is this OK?
     if (ldberr != NULL || inject_error(filecache_error_setldb)) {
         g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s", ldberr);
@@ -349,12 +349,12 @@ static void get_fresh_fd(filecache_t *cache,
         if (flags & O_TRUNC) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: truncating fd %d:%s::%s", sdata->fd, path, pdata->filename);
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: acquiring shared file lock on fd %d", sdata->fd);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: acquiring shared file lock on fd %d", sdata->fd);
             if (flock(sdata->fd, LOCK_SH) || inject_error(filecache_error_freshflock1)) {
                 g_set_error(gerr, system_quark(), errno, "get_fresh_fd: error acquiring shared file lock");
                 goto finish;
             }
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: acquired shared file lock on fd %d", sdata->fd);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: acquired shared file lock on fd %d", sdata->fd);
 
             if (ftruncate(sdata->fd, 0) || inject_error(filecache_error_freshftrunc)) {
                 g_set_error(gerr, system_quark(), errno, "get_fresh_fd: ftruncate failed");
@@ -362,7 +362,7 @@ static void get_fresh_fd(filecache_t *cache,
                 // Fall through to release the lock
             }
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: releasing shared file lock on fd %d", sdata->fd);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: releasing shared file lock on fd %d", sdata->fd);
             if (flock(sdata->fd, LOCK_UN) || inject_error(filecache_error_freshflock2)) {
                 // If we didn't get an error from ftruncate, then set gerr here from flock on error;
                 // If ftruncate did get an error, it will take precedence and we will ignore this error
@@ -380,7 +380,7 @@ static void get_fresh_fd(filecache_t *cache,
             // We've fallen through to flock from ftruncate; if ftruncate returns an error, return here
             if (gerr) goto finish;
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: released shared file lock on fd %d", sdata->fd);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: released shared file lock on fd %d", sdata->fd);
 
             sdata->modified = true;
         }
@@ -449,12 +449,10 @@ static void get_fresh_fd(filecache_t *cache,
                 goto finish;
             }
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "Got 304 on %s with etag %s", path, pdata->etag);
-
             // Mark the cache item as revalidated at the current time.
             pdata->last_server_update = time(NULL);
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul : etag %s.", path, pdata->filename, pdata->last_server_update, pdata->etag);
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 304: ");
@@ -723,16 +721,16 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
     }
 
     // Don't write to a file while it is being PUT
-    log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: acquiring shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_write: acquiring shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_SH) || inject_error(filecache_error_writeflock1)) {
         g_set_error(gerr, system_quark(), errno, "filecache_write: error acquiring shared file lock");
         return -1;
     }
-    log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: acquired shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_write: acquired shared file lock on fd %d", sdata->fd);
 
     bytes_written = pwrite(sdata->fd, buf, size, offset);
     
-    // REVIEW: If pwrite fails, we ultimately unlink from server and remove from file/stat caches
+    // REVIEW: If pwrite fails, file goes to forensic haven
     // Is this OK?
     if (bytes_written < 0 || inject_error(filecache_error_writewrite)) {
         set_error(sdata, errno);
@@ -743,12 +741,12 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
         log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: wrote %d bytes on fd %d", bytes_written, sdata->fd);
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: releasing shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_write: releasing shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_UN) || inject_error(filecache_error_writeflock2)) {
         g_set_error(gerr, system_quark(), errno, "filecache_write: error releasing shared file lock");
         // Since we've already written (or not), just fall through and return bytes_written
     }
-    log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: released shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_write: released shared file lock on fd %d", sdata->fd);
 
     return bytes_written;
 }
@@ -795,12 +793,12 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "enter: put_return_etag(,%s,%d,,)", path, fd);
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "put_return_etag: acquiring exclusive file lock on fd %d", fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "put_return_etag: acquiring exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_EX) || inject_error(filecache_error_etagflock1)) {
         g_set_error(gerr, system_quark(), errno, "put_return_etag: error acquiring exclusive file lock");
         return;
     }
-    log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "put_return_etag: acquired exclusive file lock on fd %d", fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "put_return_etag: acquired exclusive file lock on fd %d", fd);
 
     assert(etag);
 
@@ -849,12 +847,12 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
 finish:
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "put_return_etag: releasing exclusive file lock on fd %d", fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "put_return_etag: releasing exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_UN) || inject_error(filecache_error_etagflock2)) {
         g_set_error(gerr, system_quark(), errno, "put_return_etag: error releasing exclusive file lock");
     }
     else {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "put_return_etag: released exclusive file lock on fd %d", fd);
+        log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "put_return_etag: released exclusive file lock on fd %d", fd);
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "exit: put_return_etag");
@@ -890,9 +888,9 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     
     // If we already have an error:
     // If we are about to try a PUT, just stop and return. This will cause dav_release to
-    // cleanup, potentially removing from server, filecache, statcache.
+    // cleanup, sending file to forensic haven.
     // So no need to go ahead and try to process this.
-    // However, if we aren't yet do the PUT, let the sync continue. Eventually, the file
+    // However, if we aren't yet doing the PUT, let the sync continue. Eventually, the file
     // will make it to forensic haven
     if (sdata->error_code && do_put) {
         log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: already have previous error on %s", path);
@@ -925,7 +923,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
         if (do_put) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Seeking fd=%d", sdata->fd);
             // REVIEW: why do we do the lseek? Do we need to be at the beginning of the file?
-            // REVIEW: if this lseek fails, we ultimately unlink from server and remove from file/stat caches.
+            // REVIEW: if this lseek fails, file eventually goes to forensic haven.
             // Is this OK?
             if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error(filecache_error_synclseek)) {
                 set_error(sdata, errno);
@@ -938,7 +936,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 
             put_return_etag(path, sdata->fd, pdata->etag, &tmpgerr);
             
-            // REVIEW: if we fail PUT for any reason, we will eventually unlink from server and remove from file/stat caches.
+            // REVIEW: if we fail PUT for any reason, file will eventually go to forensic haven.
             // Is there a case where we don't want to do this?
             // We err in put_return_etag on:
             // -- failure to get flock
@@ -1003,19 +1001,19 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_truncate(%d)", sdata->fd);
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_truncate: acquiring shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_truncate: acquiring shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_SH) || inject_error(filecache_error_truncflock1)) {
         g_set_error(gerr, system_quark(), errno, "filecache_truncate: error acquiring shared file lock");
         return;
     }
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_truncate: acquired shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_truncate: acquired shared file lock on fd %d", sdata->fd);
 
     if ((ftruncate(sdata->fd, s) < 0) || inject_error(filecache_error_truncftrunc)) {
         g_set_error(gerr, system_quark(), errno, "filecache_truncate: ftruncate failed");
         // fall through to release lock ...
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_truncate: releasing shared file lock on fd %d", sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_truncate: releasing shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_UN) || inject_error(filecache_error_truncflock2)) {
         if (!gerr) {
             g_set_error(gerr, system_quark(), errno, "filecache_truncate: error releasing shared file lock");
@@ -1165,7 +1163,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     }
     
     // Put info into buf that will go into the .txt file
-    // Currently cache file name, last server update, filesize, and whether the rename above failed
+    // Currently path, cache file name, last server update, filesize, and whether the rename above failed
     asprintf(&buf, "path: %s\ncache filename: %s\nlast_server_update: %lu\nfilesize: %lu\nfailed_rename %d\n", 
         path, pdata->filename, pdata->last_server_update, fsize, failed_rename);
     bytes_written = write(fd, buf, strlen(buf));

@@ -84,6 +84,8 @@ static void set_saint_mode(void) {
 // GError mechanisms
 static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
+// REVIEW: not really for review, but this is where we were creating the
+// conditions for a segmentation violation, taking the address of a input argument
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
     GError *gerr = *pgerr;
@@ -393,9 +395,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         if (ignore_freshness || inject_error(fusedav_error_statignorefreshness)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Ignoring freshness and sending -ENOENT for path %s.", path);
             memset(stbuf, 0, sizeof(struct stat));
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: 1. After Ignoring freshness and sending -ENOENT for path %s (%p %p).", path, gerr, *gerr);
             g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: 2b. After Ignoring freshness and sending -ENOENT for path %s.", path);
             return -1;
         }
 
@@ -412,7 +412,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: stbuf mode is 0: ");
         return -1;
     }
-    return 0; 
+    return 0;
 
 }
 
@@ -420,7 +420,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char *parent_path = NULL;
     GError *tmpgerr = NULL;
-    GError *tmpgerr1 = NULL;
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
@@ -526,10 +525,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     }
 
     // Try again to hit the file in the stat cache.
-    ret = get_stat_from_cache(path, stbuf, true, &tmpgerr1);
-    if (tmpgerr1) {
+    ret = get_stat_from_cache(path, stbuf, true, &tmpgerr);
+    if (tmpgerr) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
-        g_propagate_prefixed_error(gerr, tmpgerr1, "get_stat: ");
+        g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         goto fail;
     }
     if (ret == 0) goto finish;
@@ -979,6 +978,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
                 processed_gerror("dav_release:", path, &subgerr);
                 // processed_gerror will clear the error for reuse below
             }
+            // REVIEW: should we ever unlink a file on file error?
             if (/* 413 or errno 27 file too big */ false) {
                 do_unlink = true;
             }
@@ -1284,6 +1284,8 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
         }
         else {
             if (file_too_big(value.st.st_size, config->max_file_size)) {
+                // The file will now carry along with it the fact that there has been an error.
+                // Eventually, this will send the file to forensic haven
                 filecache_set_error(info, EFBIG);
                 return (-EFBIG);
             }
