@@ -103,8 +103,8 @@ void *inject_error_mechanism(void *ptr) {
 
     // Generate errors forever!
     while (true) {
-        // Sleep 4 seconds between injections
-        sleep(4);
+        // Sleep 11 seconds between injections
+        sleep(11);
 
         // Figure out which error location to set
         // JB tdx = rand() % inject_error_count;

@@ -47,6 +47,9 @@
 // Entries for stat and file cache are in the ldb cache; fc: designates filecache entries
 static const char * filecache_prefix = "fc:";
 
+// Name of forensic haven directory
+static const char * forensic_haven_dir = "forensic-haven";
+
 typedef int fd_t;
 
 // Session data
@@ -94,7 +97,7 @@ void filecache_init(char *cache_path, GError **gerr) {
         }
     }
     
-    snprintf(path, PATH_MAX, "%s/forensic_haven", cache_path);
+    snprintf(path, PATH_MAX, "%s/%s", cache_path, forensic_haven_dir);
     if (mkdir(path, 0770) == -1) {
         if (errno != EEXIST || inject_error(filecache_error_init3)) {
             g_set_error (gerr, system_quark(), errno, "filecache_init: Path %s could not be created.", path);
@@ -737,6 +740,7 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
         log_print(LOG_INFO, SECTION_FILECACHE_IO, "filecache_write: %ld::%d %lu %ld :: %s", bytes_written, sdata->fd, size, offset, strerror(errno));
     } else {
         sdata->modified = true;
+        log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: wrote %d bytes on fd %d", bytes_written, sdata->fd);
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: releasing shared file lock on fd %d", sdata->fd);
@@ -867,18 +871,6 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 
     BUMP(filecache_sync);
 
-    if (sdata == NULL || inject_error(filecache_error_syncsdata)) {
-        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_sync: sdata is NULL");
-        goto finish;
-    }
-    
-    // If we already have an error, we are going to unlink, removing from server, filecache, statcache.
-    // So no need to go ahead and try to process this.
-    if (sdata->error_code || inject_error(filecache_error_syncerror)) {
-        g_set_error(gerr, filecache_quark(), sdata->error_code, "filecache_sync: sdata indicates previous error");
-        goto finish;
-    }
-
     // We only do the sync if we have a path
     // If we are accessing a bare file descriptor (open/unlink/read|write),
     // path will be NULL, so just return without doing anything
@@ -890,9 +882,27 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
         log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync(%s, fd=%d)", path, sdata->fd);
     }
 
+    if (sdata == NULL || inject_error(filecache_error_syncsdata)) {
+        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: error on NULL sdata on %s", path);
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_sync: sdata is NULL");
+        goto finish;
+    }
+    
+    // If we already have an error:
+    // If we are about to try a PUT, just stop and return. This will cause dav_release to
+    // cleanup, potentially removing from server, filecache, statcache.
+    // So no need to go ahead and try to process this.
+    // However, if we aren't yet do the PUT, let the sync continue. Eventually, the file
+    // will make it to forensic haven
+    if (sdata->error_code && do_put) {
+        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: already have previous error on %s", path);
+        g_set_error(gerr, filecache_quark(), sdata->error_code, "filecache_sync: sdata indicates previous error");
+        // JB goto finish;
+    }
+
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: not writable");
+        log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: not writable on %s", path);
         goto finish;
     }
 
@@ -900,10 +910,12 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     // Update the file cache
     pdata = filecache_pdata_get(cache, path, &tmpgerr);
     if (tmpgerr) {
+        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: error on filecache_pdata_get on %s", path);
         g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: ");
         goto finish;
     }
     if (pdata == NULL || inject_error(filecache_error_syncpdata)) {
+        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: error on pdata NULL on %s", path);
         g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_sync: pdata is NULL");
         goto finish;
     }
@@ -917,6 +929,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // Is this OK?
             if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error(filecache_error_synclseek)) {
                 set_error(sdata, errno);
+                log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: error on lseek on %s", path);
                 g_set_error(gerr, system_quark(), errno, "filecache_sync: failed lseek");
                 goto finish;
             }
@@ -935,6 +948,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // -- failure to release flock
             if (tmpgerr) {
                 set_error(sdata, tmpgerr->code);
+                log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: put_return_etag PUT failed on %s", path);
                 g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: put_return_etag PUT failed: ");
                 goto finish;
             }
@@ -958,10 +972,9 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     // @TODO: Should we run the following if sdata->modified is false?
     // Point the persistent cache to the new file content.
     filecache_pdata_set(cache, path, pdata, &tmpgerr);
-    // REVIEW: on ldb error on set, we unlink from server and remove for file/stat caches.
-    // Is this OK?
     if (tmpgerr) {
         set_error(sdata, tmpgerr->code);
+        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: filecache_pdata_set failed on %s", path);
         g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: ");
         goto finish;
     }
@@ -1116,62 +1129,58 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     // get the base name of the cache file
     bname = basename(bpath);
     // Make a path name for the cache file but in the directory forensic-haven rather than files
-    asprintf(&newpath, "%s/forensic-haven/%s", cache_path, bname);
+    asprintf(&newpath, "%s/%s/%s", cache_path, forensic_haven_dir, bname);
     // Move the file to forensic-haven
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: doing rename(%s, %s)", pdata->filename, newpath);
     if (rename(pdata->filename, newpath) == -1) {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on rename(%s, %s)", pdata->filename, newpath);
-        // We can tolerate a failed rename, and just try to write the .txt file below
-        g_set_error(gerr, filecache_quark(), errno, "filecache_forensic_haven: failed rename(%s, %s)", pdata->filename, newpath);
+        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on rename(%s, %s)", pdata->filename, newpath);
+        // We can tolerate a failed rename, and just try to write the .txt file below; but let the error bubble up
+        // REVIEW: Creating this pattern since we want to continue even in the presence of an error here,
+        // and might need gerr later. See also below. Maybe we shouldn't treat it as an 'error' using GError
+        // and just log the message since it is non-fatal. But maybe we want to highlight it as an error
+        // in case we see failures here.
+        g_set_error(&subgerr, filecache_quark(), errno, "filecache_forensic_haven: failed rename(%s, %s)", pdata->filename, newpath);
+        g_propagate_error(gerr, subgerr);
+        g_clear_error(&subgerr);
         // If rename fails, put this in the .txt file
         failed_rename = true;
     }
     free(bpath);
-    // do not pass bname to free
+    // do not pass bname to free; basename() does not return a free'able address
     free(newpath);
     newpath = NULL; // reusing below
     
     // Create the .txt file with information about the cache file we moved
     // It will have the same name as the cache file, with .txt appended
-    asprintf(&newpath, "%s/forensic-haven/%s.txt", cache_path, bname);
+    asprintf(&newpath, "%s/%s/%s.txt", cache_path, forensic_haven_dir, bname);
     fd = creat(newpath, 0600);
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: creat(%s) fd %d", newpath, fd);
     if (fd < 0) {
-        if (gerr) {
-            log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on creat(%s) fd %d (set subgerr)", newpath, fd);
-            g_set_error(&subgerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on create of %s", newpath);
-            g_propagate_error(gerr, subgerr);
-        }
-        else {
-            log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on creat(%s) fd %d (set gerr)", newpath, fd);
-            g_set_error(gerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on create of %s", newpath);
-        }
+        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on creat(%s) fd %d (set gerr)", newpath, fd);
+        g_set_error(&subgerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on create of %s", newpath);
+        g_propagate_error(gerr, subgerr);
+        g_clear_error(&subgerr);
+        // Exit; no point in writing a file we couldn't create
         goto finish;
     }
     
     // Put info into buf that will go into the .txt file
     // Currently cache file name, last server update, filesize, and whether the rename above failed
-    asprintf(&buf, "filename: %s\nlast_server_update: %lu\nfilesize: %lu\nfailed_rename %d\n", 
-        pdata->filename, pdata->last_server_update, fsize, failed_rename);
+    asprintf(&buf, "path: %s\ncache filename: %s\nlast_server_update: %lu\nfilesize: %lu\nfailed_rename %d\n", 
+        path, pdata->filename, pdata->last_server_update, fsize, failed_rename);
     bytes_written = write(fd, buf, strlen(buf));
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: write (%s) of fd %d returns %d", newpath, fd, bytes_written);
     if (bytes_written < 0) {
-        if (gerr) {
-            log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on write (%s) of fd %d returns %d", newpath, fd, bytes_written);
-            g_set_error(&subgerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on write to %s", newpath);
-            g_propagate_error(gerr, subgerr);
-        }
-        else {
-            log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on write (%s) of fd %d returns %d", newpath, fd, bytes_written);
-            g_set_error(gerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on write to %s", newpath);
-        }
+        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on write (%s) of fd %d returns %d", newpath, fd, bytes_written);
+        g_set_error(gerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on write to %s", newpath);
         goto finish;
     }
     
 finish:
-    if (fd > 0) close(fd);
+    if (fd >= 0) close(fd);
     free(buf);
     free(newpath);
+    free(pdata);
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: exiting for %s", path);
 }
 

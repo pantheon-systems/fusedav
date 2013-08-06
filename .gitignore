@@ -21,6 +21,7 @@ config.h.in
 *.pyc
 /tests/readrecursive
 /tests/readwhatwaswritten
+/tests/continualwrites
 /tests/trunc
 /src/*.plist
 _trial_temp*

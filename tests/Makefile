@@ -27,6 +27,10 @@ readwhatwaswritten = $(testdir)/readwhatwaswritten
 # flag -v for verbose, -f# for number of files, -u are we doing unlinks 'readwhatwaswritten-flags=-v -u -f16'
 readwhatwaswritten-flags =
 
+continualwrites = $(testdir)/continualwrites
+# flag -v for verbose, -f# for number of files 'continualwrites-flags=-v -u -f16'
+continualwrites-flags =
+
 trunc = $(testdir)/trunc
 # -v for verbose, -r# for number of rounds, -f# for number of files, -s# for size of write, -i# for
 # number of write iters'trunc-flags=-v -r 8 -f 8 -s 32 -i 16'
@@ -35,7 +39,7 @@ trunc-flags =
 all: run-stress-tests
 
 # restrict unit tests to low-resource tests
-run-unit-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-trunc run-iozone-unit
+run-unit-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-iozone-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 run-stress-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-stress
@@ -74,6 +78,12 @@ run-readwhatwaswritten-unlink-stress: $(readwhatwaswritten)
 	$(readwhatwaswritten) -f256 $(readwhatwaswritten-flags) -u
 
 $(readwhatwaswritten): $(testdir)/readwhatwaswritten.c
+	cc $< -std=c99 -g -o $@
+
+run-continualwrites-unit: $(continualwrites)
+	$(continualwrites) -f16 $(continualwrites-flags)
+
+$(continualwrites): $(testdir)/continualwrites.c
 	cc $< -std=c99 -g -o $@
 
 run-trunc: $(trunc)

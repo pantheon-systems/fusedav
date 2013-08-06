@@ -93,7 +93,7 @@ void *inject_error_mechanism(void *ptr);
 #define filecache_error_etagcurl2 43
 #define filecache_error_etagflock2 44
 #define filecache_error_syncsdata 45
-#define filecache_error_syncerror 46
+#define filecache_error_REUSE 46
 #define filecache_error_syncpdata 47
 #define filecache_error_synclseek 48
 #define filecache_error_truncsdata 49

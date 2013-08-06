@@ -84,11 +84,12 @@ static void set_saint_mode(void) {
 // GError mechanisms
 static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
-static int processed_gerror(const char *prefix, const char *path, GError *gerr) {
+static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
+    GError *gerr = *pgerr;
     log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s", prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
     ret = -gerr->code;
-    g_clear_error(&gerr);
+    g_clear_error(pgerr);
     return ret;
 }
 
@@ -167,7 +168,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         // @TODO Figure out a cleaner way to avoid overwriting newer entrie.
         existing = stat_cache_value_get(config->cache, path, true, &gerr);
         if (gerr) {
-            processed_gerror("getdir_propfind_callback: ", path, gerr);
+            processed_gerror("getdir_propfind_callback: ", path, &gerr);
             return;
         }
 
@@ -185,7 +186,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         // @TODO call processed_gerror here because gerr begins here, and is not passed back.
         // But this is not really the right place to call processed_gerror
         if (gerr) {
-            processed_gerror("getdir_propfind_callback: ", path, gerr);
+            processed_gerror("getdir_propfind_callback: ", path, &gerr);
             return;
         }
         //stat_cache_prune(config->cache);
@@ -193,7 +194,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     else {
         stat_cache_value_set(config->cache, path, &value, &gerr);
         if (gerr) {
-            processed_gerror("getdir_propfind_callback: ", path, gerr);
+            processed_gerror("getdir_propfind_callback: ", path, &gerr);
             return;
         }
     }
@@ -327,7 +328,7 @@ static int dav_readdir(
         update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
         if (gerr) {
             if (!config->grace) {
-                return processed_gerror("dav_readdir: failed to update directory: ", path, gerr);
+                return processed_gerror("dav_readdir: failed to update directory: ", path, &gerr);
             }
             log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "Failed to update directory: %s : using grace : %d %s", path, gerr->code, strerror(gerr->code));
             set_saint_mode();
@@ -394,7 +395,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
             memset(stbuf, 0, sizeof(struct stat));
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: 1. After Ignoring freshness and sending -ENOENT for path %s (%p %p).", path, gerr, *gerr);
             g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: 2. After Ignoring freshness and sending -ENOENT for path %s.", path);
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: 2b. After Ignoring freshness and sending -ENOENT for path %s.", path);
             return -1;
         }
 
@@ -419,6 +420,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char *parent_path = NULL;
     GError *tmpgerr = NULL;
+    GError *tmpgerr1 = NULL;
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
@@ -524,10 +526,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     }
 
     // Try again to hit the file in the stat cache.
-    ret = get_stat_from_cache(path, stbuf, true, &tmpgerr);
-    if (tmpgerr) {
+    ret = get_stat_from_cache(path, stbuf, true, &tmpgerr1);
+    if (tmpgerr1) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
-        g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
+        g_propagate_prefixed_error(gerr, tmpgerr1, "get_stat: ");
         goto fail;
     }
     if (ret == 0) goto finish;
@@ -590,7 +592,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     if (gerr) {
         // Don't print error on ENOENT; that's what get_attr is for
         if (gerr->code == ENOENT) return -gerr->code;
-        return processed_gerror("dav_fgetattr: ", path, gerr);
+        return processed_gerror("dav_fgetattr: ", path, &gerr);
     }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s)", path?path:"null path");
 
@@ -607,7 +609,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     if (gerr) {
         // Don't print error on ENOENT; that's what get_attr is for
         if (gerr->code == ENOENT) return -gerr->code;
-        return processed_gerror("dav_getattr: ", path, gerr);
+        return processed_gerror("dav_getattr: ", path, &gerr);
     }
     print_stat(stbuf, "dav_getattr");
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s)", path);
@@ -651,14 +653,16 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling filecache_delete on %s", path);
     filecache_delete(config->cache, path, true, &gerr2);
-    if (gerr) {
+    if (gerr2) {
         g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+        g_clear_error(&gerr2);
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling stat_cache_delete on %s", path);
     stat_cache_delete(config->cache, path, &gerr2);
-    if (gerr) {
+    if (gerr2) {
         g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+        g_clear_error(&gerr2);
     }
     
     return;
@@ -674,7 +678,7 @@ static int dav_unlink(const char *path) {
     
     common_unlink(path, do_unlink, &gerr);
     if (gerr) {
-        return processed_gerror("dav_unlink: ", path, gerr);
+        return processed_gerror("dav_unlink: ", path, &gerr);
     }
 
     return 0;
@@ -695,7 +699,7 @@ static int dav_rmdir(const char *path) {
 
     get_stat(path, &st, &gerr);
     if (gerr) {
-        return processed_gerror("dav_rmdir: ", path, gerr);
+        return processed_gerror("dav_rmdir: ", path, &gerr);
     }
 
     if (!S_ISDIR(st.st_mode)) {
@@ -733,13 +737,13 @@ static int dav_rmdir(const char *path) {
 
     stat_cache_delete(config->cache, path, &gerr);
     if (gerr) {
-        return processed_gerror("dav_rmdir: ", path, gerr);
+        return processed_gerror("dav_rmdir: ", path, &gerr);
     }
 
     // Delete Updated_children entry for path
     stat_cache_updated_children(config->cache, path, 0, &gerr);
     if (gerr) {
-        return processed_gerror("dav_rmdir: ", path, gerr);
+        return processed_gerror("dav_rmdir: ", path, &gerr);
     }
 
     return 0;
@@ -783,7 +787,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     }
     
     if (gerr) {
-        return processed_gerror("dav_mkdir: ", path, gerr);
+        return processed_gerror("dav_mkdir: ", path, &gerr);
     }
 
     return 0;
@@ -813,7 +817,7 @@ static int dav_rename(const char *from, const char *to) {
 
     get_stat(from, &st, &gerr);
     if (gerr) {
-        server_ret = processed_gerror("dav_rmdir: ", from, gerr);
+        server_ret = processed_gerror("dav_rmdir: ", from, &gerr);
         goto finish;
     }
 
@@ -868,7 +872,7 @@ static int dav_rename(const char *from, const char *to) {
     /* If the server_side failed, then both the stat_cache and filecache moves need to succeed */
     entry = stat_cache_value_get(config->cache, from, true, &gerr);
     if (gerr) {
-        local_ret = processed_gerror("dav_rename: ", from, gerr);
+        local_ret = processed_gerror("dav_rename: ", from, &gerr);
         goto finish;
     }
 
@@ -881,7 +885,7 @@ static int dav_rename(const char *from, const char *to) {
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
     stat_cache_value_set(config->cache, to, entry, &gerr);
     if (gerr) {
-        local_ret = processed_gerror("dav_rename: ", to, gerr);
+        local_ret = processed_gerror("dav_rename: ", to, &gerr);
         log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: failed stat cache moving source entry to destination %d:%s", fd, to);
         // If the local stat_cache move fails, leave the filecache alone so we don't get mixed state
         goto finish;
@@ -889,7 +893,7 @@ static int dav_rename(const char *from, const char *to) {
 
     stat_cache_delete(config->cache, from, &gerr);
     if (gerr) {
-        local_ret = processed_gerror("dav_rename: ", from, gerr);
+        local_ret = processed_gerror("dav_rename: ", from, &gerr);
         goto finish;
     }
 
@@ -901,7 +905,7 @@ static int dav_rename(const char *from, const char *to) {
             // Don't propagate but do log
             log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: filecache_delete failed %d:%s -- %s", fd, to, tmpgerr->message);
         }
-        local_ret = processed_gerror("dav_rename: ", to, gerr);
+        local_ret = processed_gerror("dav_rename: ", to, &gerr);
         goto finish;
     }
     local_ret = 0;
@@ -922,7 +926,6 @@ finish:
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
-    GError *gerr2 = NULL;
 
     BUMP(dav_release);
 
@@ -936,6 +939,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             GError *subgerr = NULL;
             bool do_unlink = false;
             struct stat_cache_value *value;
+            size_t st_size;
             
             // REVIEW: the idea here is that if we fail the PUT, we want to clean up the detritus
             // left in the filecache and statcache.
@@ -951,29 +955,47 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             // Move to forensic haven
             value = stat_cache_value_get(config->cache, path, true, &subgerr);
             if (subgerr) {
-                processed_gerror("dav_release:", path, subgerr);
-                g_clear_error(&subgerr);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: error on stat_cache_value_get on %s", path);
+                // display the error but don't return it
+                processed_gerror("dav_release:", path, &subgerr);
+                // processed_gerror will clear the error for reuse below
             }
-            filecache_forensic_haven(config->cache_path, config->cache, path, value->st.st_size, &subgerr);
-            if (subgerr) {
-                processed_gerror("dav_release:", path, subgerr);
-                g_clear_error(&subgerr);
+            
+            // value == NULL means not found in statcache. This is not an error from the
+            // point of view of the statcache, so double check here before dereferencing
+            if (value == NULL) {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: pdata NULL on %s", path);
+                st_size = 0; // interpret 0 as unknown size
+            }
+            else {
+                st_size = value->st.st_size;
             }
             free(value);
+            
+            filecache_forensic_haven(config->cache_path, config->cache, path, st_size, &subgerr);
+            if (subgerr) {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed filecache_forensic_haven on %s", path);
+                // display the error but don't return it
+                processed_gerror("dav_release:", path, &subgerr);
+                // processed_gerror will clear the error for reuse below
+            }
             if (/* 413 or errno 27 file too big */ false) {
                 do_unlink = true;
             }
             log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, 
-                "dav_release: error on file \'%s\'; %sfile and stat caches", 
-                path, do_unlink ? "removing from server and " : "");
+                "dav_release: error on file \'%s\'; removing from %sfile and stat caches", 
+                path, do_unlink ? "server and " : "");
             // This will delete from filecache and statcache; depending on do_unlink might also remove from server
             common_unlink(path, do_unlink, &subgerr);
             if (subgerr) {
                 // display the error, but don't return it ...
-                processed_gerror("dav_release: ", path, subgerr);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed common_unlink on %s", path);
+                processed_gerror("dav_release: ", path, &subgerr);
+                g_clear_error(&subgerr);
             }
             // return the original error
-            return processed_gerror("dav_release:", path, gerr);
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed filecache_sync on %s", path);
+            return processed_gerror("dav_release:", path, &gerr);
         }
         else if (wrote_data) {
             struct stat_cache_value value;
@@ -985,20 +1007,17 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             if (!gerr) {
                 stat_cache_value_set(config->cache, path, &value, &gerr);
             }
+            if (gerr) {
+                return processed_gerror("dav_release: ", path, &gerr);
+            }
         }
         // REVIEW: else wrote_data is 0; what do we do?
     }
 
-    filecache_close(info, &gerr2);
-    if (!gerr && gerr2) {
-        g_propagate_error(&gerr, gerr2);
-    }
-
-    // If we get a gerror on filecache_sync, we exit before we get here.
-    // But if we don't, then we use gerr in the wrote_data clause and might
-    // have encountered an error which we detect here.
+    filecache_close(info, &gerr);
     if (gerr) {
-        return processed_gerror("dav_release: ", path, gerr);
+        // Log but do not exit on error
+        processed_gerror("dav_release: ", path, &gerr);
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "END: dav_release: release(%s)", (path ? path : "null path"));
@@ -1024,7 +1043,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     // descriptor there
     wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
     if (gerr) {
-        return processed_gerror("dav_fsync: ", path, gerr);
+        return processed_gerror("dav_fsync: ", path, &gerr);
     }
 
     if (wrote_data) {
@@ -1036,7 +1055,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
             stat_cache_value_set(config->cache, path, &value, &gerr);
         }
         if (gerr) {
-            return processed_gerror("dav_fsync: ", path, gerr);
+            return processed_gerror("dav_fsync: ", path, &gerr);
         }
     }
 
@@ -1060,7 +1079,7 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
 
         wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
         if (gerr) {
-            return processed_gerror("dav_flush: ", path, gerr);
+            return processed_gerror("dav_flush: ", path, &gerr);
         }
 
         if (wrote_data) {
@@ -1072,7 +1091,7 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
                 stat_cache_value_set(config->cache, path, &value, &gerr);
             }
             if (gerr) {
-                return processed_gerror("dav_flush: ", path, gerr);
+                return processed_gerror("dav_flush: ", path, &gerr);
             }
         }
     }
@@ -1099,7 +1118,7 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
         stat_cache_value_set(config->cache, path, &value, &gerr);
     }
     if (gerr) {
-        return processed_gerror("dav_mknod: ", path, gerr);
+        return processed_gerror("dav_mknod: ", path, &gerr);
     }
 
     return 0;
@@ -1148,7 +1167,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
     do_open(path, info, &gerr);
     if (gerr) {
-        int ret = processed_gerror("dav_open: ", path, gerr);
+        int ret = processed_gerror("dav_open: ", path, &gerr);
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "CALLBACK: dav_open: returns %d", ret);
         return ret;
     }
@@ -1168,7 +1187,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
             stat_cache_value_set(config->cache, path, &value, &gerr);
         }
         if (gerr) {
-            return processed_gerror("dav_open: ", path, gerr);
+            return processed_gerror("dav_open: ", path, &gerr);
         }
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_open: fill_stat_generic on O_TRUNC: %d--%s", value.st.st_size, path);
     }
@@ -1189,7 +1208,7 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
 
     bytes_read = filecache_read(info, buf, size, offset, &gerr);
     if (gerr) {
-        return processed_gerror("dav_read: ", path, gerr);
+        return processed_gerror("dav_read: ", path, &gerr);
     }
 
     if (bytes_read < 0) {
@@ -1239,7 +1258,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 
     bytes_written = filecache_write(info, buf, size, offset, &gerr);
     if (gerr) {
-        return processed_gerror("dav_write: ", path, gerr);
+        return processed_gerror("dav_write: ", path, &gerr);
     }
 
     if (bytes_written < 0) {
@@ -1251,7 +1270,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
         int fd;
         filecache_sync(config->cache, path, info, false, &gerr);
         if (gerr) {
-            return processed_gerror("dav_write: ", path, gerr);
+            return processed_gerror("dav_write: ", path, &gerr);
         }
 
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1261,7 +1280,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
         // mode = 0 (unspecified), is_dir = false; fd to get size
         fill_stat_generic(&(value.st), 0, false, fd, &gerr);
         if (gerr) {
-            return processed_gerror("dav_write: ", path, gerr);
+            return processed_gerror("dav_write: ", path, &gerr);
         }
         else {
             if (file_too_big(value.st.st_size, config->max_file_size)) {
@@ -1290,13 +1309,14 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
 
     filecache_truncate(info, size, &gerr);
     if (gerr) {
-        return processed_gerror("dav_ftruncate: ", path, gerr);
+        return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
 
     // Let sync handle a NULL path
+    // REVIEW: It looks to me like an error to pass 'false' here; we should want the PUT to happen, shouldn't we?
     filecache_sync(config->cache, path, info, false, &gerr);
     if (gerr) {
-        return processed_gerror("dav_ftruncate: ", path, gerr);
+        return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
 
     fd = filecache_fd(info);
@@ -1307,7 +1327,7 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     }
     
     if (gerr) {
-        return processed_gerror("dav_ftruncate: ", path, gerr);
+        return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "dav_ftruncate: returning");
@@ -1340,14 +1360,14 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     do_open(path, info, &gerr);
 
     if (gerr) {
-        return processed_gerror("dav_create: ", path, gerr);
+        return processed_gerror("dav_create: ", path, &gerr);
     }
 
     // @TODO: Perform a chmod here based on mode.
 
     filecache_sync(config->cache, path, info, false, &gerr);
     if (gerr) {
-        return processed_gerror("dav_create: ", path, gerr);
+        return processed_gerror("dav_create: ", path, &gerr);
     }
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1360,7 +1380,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
         stat_cache_value_set(config->cache, path, &value, &gerr);
     }
     if (gerr) {
-        return processed_gerror("dav_create: ", path, gerr);
+        return processed_gerror("dav_create: ", path, &gerr);
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "Done: create()");
@@ -1459,7 +1479,7 @@ static void *cache_cleanup(void *ptr) {
         // from errant stat and file caches
         filecache_cleanup(config->cache, config->cache_path, first, &gerr);
         if (gerr) {
-            processed_gerror("cache_cleanup: ", config->cache_path, gerr);
+            processed_gerror("cache_cleanup: ", config->cache_path, &gerr);
         }
         first = false;
         stat_cache_prune(config->cache);
@@ -1546,7 +1566,7 @@ int main(int argc, char *argv[]) {
     // Open the stat cache.
     stat_cache_open(&config.cache, &config.cache_supplemental, config.cache_path, &gerr);
     if (gerr) {
-        processed_gerror("main: ", config.cache_path, gerr);
+        processed_gerror("main: ", config.cache_path, &gerr);
         config.cache = NULL;
         goto finish;
     }
@@ -1580,7 +1600,7 @@ int main(int argc, char *argv[]) {
 
 finish:
     if (gerr) {
-        processed_gerror("main: ", "main", gerr);
+        processed_gerror("main: ", "main", &gerr);
     }
 
     if (ch != NULL) {
