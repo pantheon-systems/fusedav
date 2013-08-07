@@ -895,7 +895,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     if (sdata->error_code && do_put) {
         log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: already have previous error on %s", path);
         g_set_error(gerr, filecache_quark(), sdata->error_code, "filecache_sync: sdata indicates previous error");
-        // JB goto finish;
+        goto finish;
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Checking if file (%s) was writable.", path);
