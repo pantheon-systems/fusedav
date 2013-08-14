@@ -302,6 +302,7 @@ static void get_fresh_fd(filecache_t *cache,
     GError *tmpgerr = NULL;
     long code;
     CURLcode res;
+    struct curl_slist *slist = NULL;
     struct filecache_pdata *pdata;
     char etag[ETAG_MAX];
     char response_filename[PATH_MAX] = "\0";
@@ -389,7 +390,6 @@ static void get_fresh_fd(filecache_t *cache,
 
     if (pdata) {
         char *header = NULL;
-        struct curl_slist *slist = NULL;
 
         // In case we have stale cache data, set a header to aim for a 304.
         asprintf(&header, "If-None-Match: %s", pdata->etag);
@@ -547,6 +547,7 @@ finish:
         if (response_fd >= 0) close(response_fd);
         if (response_filename[0] != '\0') unlink(response_filename);
     }
+    if (slist) curl_slist_free_all(slist);
 }
 
 // top-level open call
