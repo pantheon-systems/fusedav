@@ -890,7 +890,7 @@ finish:
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
 
     free(entry);
-    free(slist);
+    curl_slist_free_all(slist);
 
     // if either the server move or the local move succeed, we return
     if (server_ret == 0 || local_ret == 0)
