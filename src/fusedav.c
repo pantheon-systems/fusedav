@@ -603,7 +603,11 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     common_getattr(path, stbuf, NULL, &gerr);
     if (gerr) {
         // Don't print error on ENOENT; that's what get_attr is for
-        if (gerr->code == ENOENT) return -gerr->code;
+        if (gerr->code == ENOENT) {
+            int res = -gerr->code;
+            g_clear_error(&gerr);
+            return res;
+        }
         return processed_gerror("dav_getattr: ", path, gerr);
     }
     print_stat(stbuf, "dav_getattr");
