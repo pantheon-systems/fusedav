@@ -19,7 +19,7 @@ iozone-unit-flags = -g4096 -n4096
 # iozone fails on large files; it sometimes succeeds at 128M, but set to 64M
 iozone-stress-flags = -g65536
 # for continual testing, limit iozone to 16M
-iozone-stress-flags = -g16384
+iozone-continual-flags = -g16384
 
 readrecursive = $(testdir)/readrecursive
 # So far, the only flag is -v for verbose, 'readrecursive-flags=-v'
