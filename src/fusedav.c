@@ -84,7 +84,7 @@ static void set_saint_mode(void) {
 // GError mechanisms
 static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
-// REVIEW: not really for review, but this is where we were creating the
+// REVIEW: this is where we were creating the
 // conditions for a segmentation violation, taking the address of a input argument
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
@@ -607,7 +607,11 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     common_getattr(path, stbuf, NULL, &gerr);
     if (gerr) {
         // Don't print error on ENOENT; that's what get_attr is for
-        if (gerr->code == ENOENT) return -gerr->code;
+        if (gerr->code == ENOENT) {
+            int res = -gerr->code;
+            g_clear_error(&gerr);
+            return res;
+        }
         return processed_gerror("dav_getattr: ", path, &gerr);
     }
     print_stat(stbuf, "dav_getattr");
@@ -914,7 +918,7 @@ finish:
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
 
     free(entry);
-    free(slist);
+    curl_slist_free_all(slist);
 
     // if either the server move or the local move succeed, we return
     if (server_ret == 0 || local_ret == 0)
