@@ -26,6 +26,7 @@
 #endif
 
 #include <glib.h>
+#include <stdbool.h>
 
 char *path_parent(const char *uri);
 
