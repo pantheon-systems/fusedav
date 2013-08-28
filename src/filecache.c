@@ -431,6 +431,7 @@ static void get_fresh_fd(filecache_t *cache,
         // file, or the getattr/get_stat calls in fusedav.c should have detected the file was
         // missing and handled it there.
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &code);
+        if (filecache_inject_error(15)) code = 404;
         if (code == 304) {
             // This should never happen with a well-behaved server.
             if (pdata == NULL) {
@@ -514,15 +515,28 @@ static void get_fresh_fd(filecache_t *cache,
                 log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
         }
-        else if (code == 404 || filecache_inject_error(15)) {
+        else if (code == 404) {
+            struct stat_cache_value *value;
             g_set_error(gerr, filecache_quark(), ENOENT, "get_fresh_fd: File expected to exist returns 404.");
             /* we get a 404 because the stat_cache returned that the file existed, but it
              * was not on the server. Deleting it from the stat_cache makes the stat_cache
              * consistent, so the next access to the file will be handled correctly.
              */
 
-            if (stat_cache_value_get(cache, path, true, NULL)) {
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s; deleting...", path);
+            value = stat_cache_value_get(cache, path, true, NULL);
+            if (value) {
+                // Collect some additional information to give some hints about the file
+                // which might help uncover why this error is happening.
+                time_t lsu = 0;
+                time_t atime = value->st.st_atime;
+                off_t sz = value->st.st_size;
+                unsigned long lg = value->local_generation;
+                
+                if (pdata) lsu = pdata->last_server_update;
+                
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %ul %ul %ul %ul); deleting...", 
+                    path, lg, sz, atime, lsu);
+                free(value);
                 stat_cache_delete(cache, path, &tmpgerr);
 
                 /* We do not propagate this error, it is just informational */
