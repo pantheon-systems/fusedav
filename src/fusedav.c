@@ -1559,6 +1559,9 @@ int main(int argc, char *argv[]) {
             log_print(LOG_INFO, SECTION_FUSEDAV_MAIN, "Failed to create error injection thread.");
             goto finish;
         }
+        // Sleep some amount of time to ensure that inject_error_mechanism gets a chance to get called
+        // before the first inject_error call is made and segv's because the list hasn't been set up yet.
+        sleep(10);
     }
 
     // Ensure directory exists for file content cache.

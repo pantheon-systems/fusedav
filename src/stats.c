@@ -127,6 +127,5 @@ void print_stats(void) {
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  enumerate:   %u", FETCH(statcache_enumerate));
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  has_child:   %u", FETCH(statcache_has_child));
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete_older:%u", FETCH(statcache_delete_older));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  forensic:    %u", FETCH(statcache_forensic_haven));
     log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  prune:       %u", FETCH(statcache_prune));
 }

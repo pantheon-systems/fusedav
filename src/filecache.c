@@ -442,6 +442,7 @@ static void get_fresh_fd(filecache_t *cache,
         // file, or the getattr/get_stat calls in fusedav.c should have detected the file was
         // missing and handled it there.
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &code);
+        if (inject_error(filecache_error_fresh404)) code = 404;
         if (code == 304) {
             // This should never happen with a well-behaved server.
             if (pdata == NULL || inject_error(filecache_error_freshcurl2)) {
@@ -523,15 +524,28 @@ static void get_fresh_fd(filecache_t *cache,
                 log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
         }
-        else if (code == 404 || inject_error(filecache_error_fresh404)) {
+        else if (code == 404) {
+            struct stat_cache_value *value;
             g_set_error(gerr, filecache_quark(), ENOENT, "get_fresh_fd: File expected to exist returns 404.");
             /* we get a 404 because the stat_cache returned that the file existed, but it
              * was not on the server. Deleting it from the stat_cache makes the stat_cache
              * consistent, so the next access to the file will be handled correctly.
              */
 
-            if (stat_cache_value_get(cache, path, true, NULL)) {
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s; deleting...", path);
+            value = stat_cache_value_get(cache, path, true, NULL);
+            if (value) {
+                // Collect some additional information to give some hints about the file
+                // which might help uncover why this error is happening.
+                time_t lsu = 0;
+                time_t atime = value->st.st_atime;
+                off_t sz = value->st.st_size;
+                unsigned long lg = value->local_generation;
+                
+                if (pdata) lsu = pdata->last_server_update;
+                
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %ul %ul %ul %ul); deleting...", 
+                    path, lg, sz, atime, lsu);
+                free(value);
                 stat_cache_delete(cache, path, &tmpgerr);
 
                 /* We do not propagate this error, it is just informational */
@@ -952,7 +966,15 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // -- curl response code not between 200 and 300
             // -- failure to release flock
             if (tmpgerr) {
-                set_error(sdata, tmpgerr->code);
+                /* grace/saint mode is specifically designed to allow continued use of local files
+                 * in the presence of network errors. So if we get a cURL error back, don't
+                 * set this file up for forensic-haven (don't call set_error on it).
+                 * We get a CURL error back on easy_perform not CURL_OK, and on curl
+                 * response not between 200 and 300, unless it is EBIGFILE 413.
+                 * NB: we might want to detect other 400 errors, particularly 404, and have
+                 * them go to forensic haven.
+                 */
+                if (tmpgerr->code != E_FC_CURLERR) set_error(sdata, tmpgerr->code);
                 log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: put_return_etag PUT failed on %s", path);
                 g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: put_return_etag PUT failed: ");
                 goto finish;

@@ -87,7 +87,6 @@ struct statistics {
     unsigned statcache_enumerate;
     unsigned statcache_has_child;
     unsigned statcache_delete_older;
-    unsigned statcache_forensic_haven;
     unsigned statcache_prune;
 };
 
