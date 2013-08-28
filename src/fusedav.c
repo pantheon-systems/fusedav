@@ -243,7 +243,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshen PROPFIND failed because of staleness.");
         }
         else {
-            g_set_error(gerr, fusedav_quark(), EIO, "update_directory: propfind failed: ");
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: propfind failed: ");
             return;
         }
     }
@@ -258,7 +258,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL);
         if (propfind_result < 0 || inject_error(fusedav_error_updatepropfind2)) {
-            g_set_error(gerr, fusedav_quark(), EIO, "update_directory: Complete PROPFIND failed on %s", path);
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: Complete PROPFIND failed on %s", path);
             return;
         }
 
@@ -478,7 +478,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
                 g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
                 goto fail;
             }
-            g_set_error(gerr, fusedav_quark(), EIO, "get_stat: PROPFIND failed");
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "get_stat: PROPFIND failed");
             goto fail;
         }
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Zero-depth PROPFIND succeeded: %s", path);
@@ -513,8 +513,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         // In that case, skip the progressive propfind and go straight to complete propfind
         update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
         if (subgerr) {
-            // If the error is non-EIO or grace is off, fail.
-            if (subgerr->code != EIO || !config->grace) {
+            // If the error is non-ENETDOWN or grace is off, fail.
+            if (subgerr->code != ENETDOWN || !config->grace) {
                 g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
                 goto fail;
             }
@@ -640,7 +640,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     if (do_unlink) {
         CURL *session;
         if (!(session = session_request_init(path, NULL)) || inject_error(fusedav_error_cunlinksession)) {
-            g_set_error(gerr, fusedav_quark(), EIO, "common_unlink(%s): failed to get request session", path);
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
             return;
         }
     
@@ -649,7 +649,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
         res = curl_easy_perform(session);
         if(res != CURLE_OK || inject_error(fusedav_error_cunlinkcurl)) {
-            g_set_error(gerr, fusedav_quark(), EIO, "common_unlink: DELETE failed: %s\n", curl_easy_strerror(res));
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: DELETE failed: %s\n", curl_easy_strerror(res));
             return;
         }
     }
@@ -725,7 +725,7 @@ static int dav_rmdir(const char *path) {
 
     if (!(session = session_request_init(fn, NULL))) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
-        return -EIO;
+        return -ENETDOWN;
     }
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
@@ -768,7 +768,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     if (!(session = session_request_init(fn, NULL))) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
-        return -EIO;
+        return -ENETDOWN;
     }
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
@@ -981,10 +981,6 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
                 // display the error but don't return it
                 processed_gerror("dav_release:", path, &subgerr);
                 // processed_gerror will clear the error for reuse below
-            }
-            // REVIEW: should we ever unlink a file on file error?
-            if (/* 413 or errno 27 file too big */ false) {
-                do_unlink = true;
             }
             log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, 
                 "dav_release: error on file \'%s\'; removing from %sfile and stat caches", 

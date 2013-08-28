@@ -966,13 +966,17 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // -- curl response code not between 200 and 300
             // -- failure to release flock
             if (tmpgerr) {
-                /* grace/saint mode is specifically designed to allow continued use of local files
-                 * in the presence of network errors. So if we get a cURL error back, don't
-                 * set this file up for forensic-haven (don't call set_error on it).
-                 * We get a CURL error back on easy_perform not CURL_OK, and on curl
-                 * response not between 200 and 300, unless it is EBIGFILE 413.
-                 * NB: we might want to detect other 400 errors, particularly 404, and have
-                 * them go to forensic haven.
+                /* Outside of calls to fsync itself, we call filecache_sync and PUT the file twice, 
+                 * once on dav_flush, then closely after on dav_release. If we call set_error on the 
+                 * first one, we won't attempt the PUT on the second one. In case of cURL error,
+                 * don't set_error, so if it fails on the dav_flush, it might still succeed on the
+                 * dav_release.
+                 * This is a separate issue from whether or not the file goes to forensic haven.
+                 * (We call filecache_sync on writes and other times, but with the arg do_put
+                 * set to false, so it doesn't do the PUT anyway.)
+                 * set_error really means, "If we see an error on write before we ever even attempt
+                 * to do the PUT, don't do the PUT." This is different from, "If we fail PUT on dav_flush, 
+                 * do/don't try the PUT on dav_release."
                  */
                 if (tmpgerr->code != E_FC_CURLERR) set_error(sdata, tmpgerr->code);
                 log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: put_return_etag PUT failed on %s", path);

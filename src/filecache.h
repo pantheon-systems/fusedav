@@ -24,16 +24,17 @@
 #include "fuse.h"
 
 /* Ultimately, it will be a dav_* function returning the value, so set it up for appropriate
- * values here, i.e. errno-like values. If curl errors occur, they are quite reasonably
- * reported as unspecified IO error, so EIO fits. For leveldb, EIO is not a perfect fit,
+ * values here, i.e. errno-like values. If curl errors occur, they are network errors
+ * so report them as ENETDOWN. For leveldb, EIO is not a perfect fit,
  * but since it might get propagated to all kinds of dav_* function, EIO seems the closest
  * match. The closest approximation to PDATANULL is ENOENT; it means whenever we're trying
  * to do an operation, we don't have the file in the cache, so we can't update, etc.
+ * Calling file too large EFBIG is pretty obvious.
  */
 #define E_FC_PDATANULL ENOENT
 #define E_FC_SDATANULL EIO
 #define E_FC_LDBERR EIO
-#define E_FC_CURLERR EIO
+#define E_FC_CURLERR ENETDOWN
 #define E_FC_FILETOOLARGE EFBIG
 
 typedef leveldb_t filecache_t;
