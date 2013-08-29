@@ -929,16 +929,50 @@ finish:
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
+    GError *gerr2 = NULL;
+    bool wrote_data;
+    int ret = 0;
 
     BUMP(dav_release);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
-    // path might be NULL if we are accessing a bare file descriptor.
-    if (path != NULL) {
-        bool wrote_data;
-        wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+    // path might be NULL if we are accessing a bare file descriptor. This is not an error
+    if (path == NULL) goto finish;
+    
+    wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+
+    // If we didn't write data, we either got an error, which we handle below, or there is not error,
+    // so just fall through (not writable, not modified are examples)
+    if (wrote_data && !gerr) { // I don't think we can exit with gerr and still write data, but just to be safe...
+        struct stat_cache_value value;
+        int fd = filecache_fd(info);
+        // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+        memset(&value, 0, sizeof(struct stat_cache_value));
+        // mode = 0 (unspecified), is_dir = false; fd to get size
+        fill_stat_generic(&(value.st), 0, false, fd, &gerr);
+        if (!gerr) {
+            stat_cache_value_set(config->cache, path, &value, &gerr);
+        }
         if (gerr) {
+            ret = -gerr->code;
+            processed_gerror("dav_release: ", path, &gerr);
+        }
+    }
+    
+    filecache_close(info, &gerr2);
+    if (gerr2) {
+        // Log but do not exit on error
+        processed_gerror("dav_release: ", path, &gerr2);
+    }
+
+    if (gerr) {
+        // NB. We considered not removing the file from the local caches on cURL error, but
+        // if we do that we can conceivably have a file in our local cache and no file on
+        // the server. On the next open, we will get the dreaded unexpected 404. Also, we
+        // would set up cache incoherence between this binding and the others.
+        // For now, go to forensic haven even on cURL error (ENETDOWN).
+        if (/* gerr->code != ENETDOWN */ true) {
             GError *subgerr = NULL;
             bool do_unlink = false;
             struct stat_cache_value *value;
@@ -995,34 +1029,16 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             }
             // return the original error
             log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed filecache_sync on %s", path);
-            return processed_gerror("dav_release:", path, &gerr);
         }
-        else if (wrote_data) {
-            struct stat_cache_value value;
-            int fd = filecache_fd(info);
-            // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
-            memset(&value, 0, sizeof(struct stat_cache_value));
-            // mode = 0 (unspecified), is_dir = false; fd to get size
-            fill_stat_generic(&(value.st), 0, false, fd, &gerr);
-            if (!gerr) {
-                stat_cache_value_set(config->cache, path, &value, &gerr);
-            }
-            if (gerr) {
-                return processed_gerror("dav_release: ", path, &gerr);
-            }
-        }
-        // REVIEW: else wrote_data is 0; what do we do?
+        return processed_gerror("dav_release:", path, &gerr);
     }
 
-    filecache_close(info, &gerr);
-    if (gerr) {
-        // Log but do not exit on error
-        processed_gerror("dav_release: ", path, &gerr);
-    }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "END: dav_release: release(%s)", (path ? path : "null path"));
 
-    return 0;
+finish:
+
+    return ret;
 }
 
 static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
