@@ -65,20 +65,123 @@ char *path_parent(const char *uri) {
  * 2. make INJECT_ERRORS=1
  */
 
-/* In this implementation, we randomly set one inject_error location to true for
- * a set amount of time. We can in the future design it in a more tailored fashion
- * to simulate something resembling the kinds of storms of errors we see.
- */
-
-// error injection routines
 // The list of inject_error locations
 static bool *inject_error_list = NULL;
 
-// The routine which the pthread calls to get things started
-void *inject_error_mechanism(void *ptr) {
+// specific error tests. 
+/* This test's main use is to ensure that we don't cause serious errors,
+ * e.g. segv, when we process a gerr. It just randomly sets an error.
+ * Of course, if the program running doesn't hit that point in the code
+ * where the inject error is set while it is set, it will not execute.
+ */
+static void rand_test(void) {
+    int fdx = no_error;
+    int tdx = no_error;
+    
+    // Sleep 11 seconds between injections
+    sleep(11);
+
+    // Figure out which error location to set
+    tdx = rand() % inject_error_count;
+    
+    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
+
+    // Make the new location true but turn off the locations for the old location.
+    inject_error_list[tdx] = true;
+    inject_error_list[fdx] = false;
+    fdx = tdx;
+}
+
+/* test what happens on a write error */
+static void writewrite_test(void) {
     int fdx = no_error;
     int tdx = no_error;
 
+    // Sleep 11 seconds between injections
+    sleep(11);
+
+    // flop between writewrite and no_error
+    
+    if (tdx == no_error) tdx = filecache_error_writewrite;
+    else tdx = no_error;
+    
+    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
+
+    // Make the new location true but turn off the locations for the old location.
+    inject_error_list[tdx] = true;
+    inject_error_list[fdx] = false;
+    fdx = tdx;
+}
+
+/* test conditions which might or might not land a file in the forensic haven 
+ * This is a pretty extensive test of the filecache errors, but not a complete one.
+ */
+static void filecache_forensic_haven_test(void) {
+    struct error_name_s {
+        int error;
+        const char *name;
+    };
+    #define sz 
+    struct error_name_s error_name[] = {
+        {filecache_error_newcachefile, "filecache_error_newcachefile"},
+        {filecache_error_setpdata, "filecache_error_setpdata"},
+        {filecache_error_setldb, "filecache_error_setldb"},
+        {filecache_error_createcalloc, "filecache_error_createcalloc"},
+        {filecache_error_getldb, "filecache_error_getldb"},
+        {filecache_error_getvallen, "filecache_error_getvallen"},
+        {filecache_error_freshopen1, "filecache_error_freshopen1"},
+        {filecache_error_freshflock1, "filecache_error_freshflock1"},
+        {filecache_error_freshftrunc, "filecache_error_freshftrunc"},
+        {filecache_error_freshflock2, "filecache_error_freshflock2"},
+        {filecache_error_freshsession, "filecache_error_freshsession"},
+        {filecache_error_freshcurl1, "filecache_error_freshcurl1"},
+        {filecache_error_fresh404, "filecache_error_fresh404"},
+        {filecache_error_freshcurl2, "filecache_error_freshcurl2"},
+        {filecache_error_freshopen2, "filecache_error_freshopen2"},
+        {filecache_error_freshpdata, "filecache_error_freshpdata"},
+        {filecache_error_opencalloc, "filecache_error_opencalloc"},
+        {filecache_error_readsdata, "filecache_error_readsdata"},
+        {filecache_error_readread, "filecache_error_readread"},
+        {filecache_error_writesdata, "filecache_error_writesdata"},
+        {filecache_error_writewriteable, "filecache_error_writewriteable"},
+        {filecache_error_writeflock1, "filecache_error_writeflock1"},
+        {filecache_error_writewrite, "filecache_error_writewrite"},
+        {filecache_error_writeflock2, "filecache_error_writeflock2"},
+        {filecache_error_closesdata, "filecache_error_closesdata"},
+        {filecache_error_closefd, "filecache_error_closefd"},
+        {filecache_error_closeclose, "filecache_error_closeclose"},
+        {filecache_error_etagflock1, "filecache_error_etagflock1"},
+        {filecache_error_etagfstat, "filecache_error_etagfstat"},
+        {filecache_error_etagcurl1, "filecache_error_etagcurl1"},
+        {filecache_error_etagcurl2, "filecache_error_etagcurl2"},
+        {filecache_error_etagflock2, "filecache_error_etagflock2"},
+        {filecache_error_syncsdata, "filecache_error_syncsdata"},
+        {filecache_error_syncpdata, "filecache_error_syncpdata"},
+        {filecache_error_synclseek, "filecache_error_synclseek"},
+        {filecache_error_deleteldb, "filecache_error_deleteldb"},
+        {-1, ""}, // sentinel
+    };
+    const char *name;
+    int fdx = no_error;
+    int tdx = no_error;
+    
+    for (int idx = 0; error_name[idx].error != -1; idx++) {
+        tdx = error_name[idx].error;
+        name = error_name[idx].name;
+            
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
+    
+        // Make the new location true but turn off the locations for the old location.
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+        sleep(17);
+    }
+}
+
+// The routine which the pthread calls to get things started
+void *inject_error_mechanism(void *ptr) {
+    bool being_tested = false;
     // ptr stuff just to get rid of warning message about unused parameter
     log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "INJECTING ERRORS! %p", ptr ? ptr : 0);
 
@@ -100,24 +203,16 @@ void *inject_error_mechanism(void *ptr) {
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: failed to calloc inject_error_list");
         return NULL;
     }
+    
+    // Just to avoid unused-function warnings, list all tests not being tested here
+    if (being_tested) {
+        rand_test();
+        writewrite_test();
+    }
 
     // Generate errors forever!
     while (true) {
-        // Sleep 11 seconds between injections
-        sleep(11);
-
-        // Figure out which error location to set
-        // JB tdx = rand() % inject_error_count;
-        // flop between writewrite and no_error
-        if (tdx == no_error) tdx = filecache_error_writewrite;
-        else tdx = no_error;
-        
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
-
-        // Make the new location true but turn off the locations for the old location.
-        inject_error_list[tdx] = true;
-        inject_error_list[fdx] = false;
-        fdx = tdx;
+        filecache_forensic_haven_test();
     }
     free(inject_error_list);
     return NULL;

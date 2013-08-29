@@ -25,8 +25,6 @@
 
 #include "statcache.h"
 
-// REVIEW: the following is not precisely true anymore
-
 // Access with struct fusedav_config *config = fuse_get_context()->private_data;
 
 // We have separated all fusedav options (below) from fuse options (gid, uid, umask...)
@@ -34,11 +32,6 @@
 // via the Options line in the .mount file. 'conf' is the exception.
 // We can still access config via the above mechanism, but it might be more logical just
 // to expose it in some other way now.
-
-// REVIEW: do we need username and password?
-// REVIEW: decide whether to keep singlethread and nodaemon or just make developers do a code change
-// if they need to run in one of these modes. For now they need to be here for old titan's
-// .mount Options line
 
 // We populate these entries during configuration, and use them in our fusedav code
 struct fusedav_config {

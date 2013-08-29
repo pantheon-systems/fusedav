@@ -84,8 +84,6 @@ static void set_saint_mode(void) {
 // GError mechanisms
 static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
-// REVIEW: this is where we were creating the
-// conditions for a segmentation violation, taking the address of a input argument
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
     GError *gerr = *pgerr;
@@ -387,7 +385,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         return -1;
     }
 
-    // REVIEW: @TODO: Grace mode setting ignore_freshness should not result in
+    // @TODO: Grace mode setting ignore_freshness should not result in
     // -ENOENT for cache misses.
     if (response == NULL) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: NULL response from stat_cache_value_get for path %s.", path);
@@ -940,7 +938,9 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // path might be NULL if we are accessing a bare file descriptor. This is not an error
     if (path == NULL) goto finish;
     
+    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "2CALLBACK: dav_release: release(%s)", path ? path : "null path");
     wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "3CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
     // If we didn't write data, we either got an error, which we handle below, or there is not error,
     // so just fall through (not writable, not modified are examples)
@@ -950,22 +950,25 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
         memset(&value, 0, sizeof(struct stat_cache_value));
         // mode = 0 (unspecified), is_dir = false; fd to get size
-        fill_stat_generic(&(value.st), 0, false, fd, &gerr);
-        if (!gerr) {
-            stat_cache_value_set(config->cache, path, &value, &gerr);
+        fill_stat_generic(&(value.st), 0, false, fd, &gerr2);
+        if (!gerr2) {
+            stat_cache_value_set(config->cache, path, &value, &gerr2);
         }
-        if (gerr) {
-            ret = -gerr->code;
-            processed_gerror("dav_release: ", path, &gerr);
+        if (gerr2) {
+            ret = -gerr2->code;
+            processed_gerror("dav_release: ", path, &gerr2);
+            g_clear_error(&gerr2);
         }
     }
     
+    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "4CALLBACK: dav_release: release(%s)", path ? path : "null path");
     filecache_close(info, &gerr2);
     if (gerr2) {
         // Log but do not exit on error
         processed_gerror("dav_release: ", path, &gerr2);
     }
 
+    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "5CALLBACK: dav_release: release(%s)", path ? path : "null path");
     if (gerr) {
         // NB. We considered not removing the file from the local caches on cURL error, but
         // if we do that we can conceivably have a file in our local cache and no file on
@@ -978,7 +981,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             struct stat_cache_value *value;
             size_t st_size;
             
-            // REVIEW: the idea here is that if we fail the PUT, we want to clean up the detritus
+            log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_release: invoking forensic_haven on %s", path);
+            // The idea here is that if we fail the PUT, we want to clean up the detritus
             // left in the filecache and statcache.
             // However, we will also do this cleanup on other gErrors in filecache_sync, which include:
             // no sdata
@@ -987,9 +991,6 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             // error on PUT
             // ldb error on pdata_set
             
-            // REVIEW: sdata now carries a has_error field. If we detect an error on the file,
-            // we carry it forward. filecache_sync will detect and cause gerr if it sees an error.
-            // Move to forensic haven
             value = stat_cache_value_get(config->cache, path, true, &subgerr);
             if (subgerr) {
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: error on stat_cache_value_get on %s", path);
@@ -1009,6 +1010,9 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             }
             free(value);
             
+            // sdata now carries a has_error field. If we detect an error on the file,
+            // we carry it forward. filecache_sync will detect and cause gerr if it sees an error.
+            // Move to forensic haven
             filecache_forensic_haven(config->cache_path, config->cache, path, st_size, &subgerr);
             if (subgerr) {
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed filecache_forensic_haven on %s", path);
@@ -1016,10 +1020,11 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
                 processed_gerror("dav_release:", path, &subgerr);
                 // processed_gerror will clear the error for reuse below
             }
-            log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, 
+            log_print(LOG_INFO, SECTION_FUSEDAV_FILE, 
                 "dav_release: error on file \'%s\'; removing from %sfile and stat caches", 
                 path, do_unlink ? "server and " : "");
             // This will delete from filecache and statcache; depending on do_unlink might also remove from server
+            // Currently, do_unlink is always false; we have taken the decision to never remove from server
             common_unlink(path, do_unlink, &subgerr);
             if (subgerr) {
                 // display the error, but don't return it ...
@@ -1027,12 +1032,11 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
                 processed_gerror("dav_release: ", path, &subgerr);
                 g_clear_error(&subgerr);
             }
-            // return the original error
             log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed filecache_sync on %s", path);
         }
+        // return the original error
         return processed_gerror("dav_release:", path, &gerr);
     }
-
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "END: dav_release: release(%s)", (path ? path : "null path"));
 
@@ -1235,7 +1239,6 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
 }
 
 static bool file_too_big(off_t fsz, off_t maxsz) {
-    // REVIEW:
     // NB. During tests transferring a file that was too large, the command line sftp
     // client recognized the write error, and the subsequent flush error, with the
     // following messages:
@@ -1331,7 +1334,7 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     }
 
     // Let sync handle a NULL path
-    // REVIEW: It looks to me like an error to pass 'false' here; we should want the PUT to happen, shouldn't we?
+    // @TODO: It looks to me like an error to pass 'false' here; we should want the PUT to happen, shouldn't we?
     filecache_sync(config->cache, path, info, false, &gerr);
     if (gerr) {
         return processed_gerror("dav_ftruncate: ", path, &gerr);

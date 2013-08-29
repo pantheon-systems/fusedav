@@ -148,8 +148,7 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     BUMP(filecache_pdata_set);
 
-    // REVIEW: null pdata will cause file to go to forensic haven.
-    // Is this OK?
+    // null pdata will cause file to go to forensic haven.
     if (!pdata || inject_error(filecache_error_setpdata)) {
         g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_pdata_set NULL pdata");
         return;
@@ -164,8 +163,7 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     free(key);
 
-    // REVIEW: ldb error will cause file to go to forensic haven.
-    // Is this OK?
+    // ldb error will cause file to go to forensic haven.
     if (ldberr != NULL || inject_error(filecache_error_setldb)) {
         g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s", ldberr);
         free(ldberr);
@@ -418,7 +416,7 @@ static void get_fresh_fd(filecache_t *cache,
     new_cache_file(cache_path, response_filename, &response_fd, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd: ");
-        // REVIEW: @TODO: Should we delete path from cache and/or null-out pdata?
+        // @TODO: Should we delete path from cache and/or null-out pdata?
         goto finish;
     }
 
@@ -441,6 +439,10 @@ static void get_fresh_fd(filecache_t *cache,
         // We should not get a 404 here; either the open included O_CREAT and we create a new
         // file, or the getattr/get_stat calls in fusedav.c should have detected the file was
         // missing and handled it there.
+        // Update on unexpected 404: one theoretical path is that a file gets opened and written to, 
+        // but on the close (dav_flush/release), the PUT fails and the file never makes it to the server.
+        // On opening again, the server will deliver this unexpected 404. Changes for forensic-haven
+        // should prevent these errors in the future (2013-08-29)
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &code);
         if (inject_error(filecache_error_fresh404)) code = 404;
         if (code == 304) {
@@ -546,7 +548,9 @@ static void get_fresh_fd(filecache_t *cache,
                 log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %ul %ul %ul %ul); deleting...", 
                     path, lg, sz, atime, lsu);
                 free(value);
-                stat_cache_delete(cache, path, &tmpgerr);
+                // JB TMP: don't delete from stat cache here; do it during forensic-haven processing.
+                // But test carefully first!
+                // stat_cache_delete(cache, path, &tmpgerr);
 
                 /* We do not propagate this error, it is just informational */
                 if (tmpgerr) {
@@ -745,8 +749,7 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
 
     bytes_written = pwrite(sdata->fd, buf, size, offset);
     
-    // REVIEW: If pwrite fails, file goes to forensic haven
-    // Is this OK?
+    // If pwrite fails, file goes to forensic haven
     if (bytes_written < 0 || inject_error(filecache_error_writewrite)) {
         set_error(sdata, errno);
         g_set_error(gerr, system_quark(), errno, "filecache_write: pwrite failed");
@@ -894,11 +897,11 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     // If we are accessing a bare file descriptor (open/unlink/read|write),
     // path will be NULL, so just return without doing anything
     if (path == NULL) {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync(NULL path, returning, fd=%d)", sdata->fd);
+        log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync(NULL path, returning, fd=%d)", sdata? sdata->fd : -1);
         goto finish;
     }
     else {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync(%s, fd=%d)", path, sdata->fd);
+        log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync(%s, fd=%d)", path, sdata? sdata->fd : -1);
     }
 
     if (sdata == NULL || inject_error(filecache_error_syncsdata)) {
@@ -943,9 +946,8 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     if (sdata->modified) {
         if (do_put) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Seeking fd=%d", sdata->fd);
-            // REVIEW: why do we do the lseek? Do we need to be at the beginning of the file?
-            // REVIEW: if this lseek fails, file eventually goes to forensic haven.
-            // Is this OK?
+            // @TODO: why do we do the lseek? Do we need to be at the beginning of the file?
+            // If this lseek fails, file eventually goes to forensic haven.
             if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error(filecache_error_synclseek)) {
                 set_error(sdata, errno);
                 log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: error on lseek on %s", path);
@@ -957,8 +959,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 
             put_return_etag(path, sdata->fd, pdata->etag, &tmpgerr);
             
-            // REVIEW: if we fail PUT for any reason, file will eventually go to forensic haven.
-            // Is there a case where we don't want to do this?
+            // if we fail PUT for any reason, file will eventually go to forensic haven.
             // We err in put_return_etag on:
             // -- failure to get flock
             // -- failure on fstat of fd
@@ -971,13 +972,14 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
                  * first one, we won't attempt the PUT on the second one. In case of cURL error,
                  * don't set_error, so if it fails on the dav_flush, it might still succeed on the
                  * dav_release.
-                 * This is a separate issue from whether or not the file goes to forensic haven.
                  * (We call filecache_sync on writes and other times, but with the arg do_put
                  * set to false, so it doesn't do the PUT anyway.)
+                 * This is a separate issue from whether or not the file goes to forensic haven.
                  * set_error really means, "If we see an error on write before we ever even attempt
                  * to do the PUT, don't do the PUT." This is different from, "If we fail PUT on dav_flush, 
                  * do/don't try the PUT on dav_release."
                  */
+                 // Don't set error on cURL error; if dav_flush fails, we can still try again on dav_release
                 if (tmpgerr->code != E_FC_CURLERR) set_error(sdata, tmpgerr->code);
                 log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: put_return_etag PUT failed on %s", path);
                 g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: put_return_etag PUT failed: ");
@@ -1166,7 +1168,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     if (rename(pdata->filename, newpath) == -1) {
         log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on rename(%s, %s)", pdata->filename, newpath);
         // We can tolerate a failed rename, and just try to write the .txt file below; but let the error bubble up
-        // REVIEW: Creating this pattern since we want to continue even in the presence of an error here,
+        // Creating this pattern since we want to continue even in the presence of an error here,
         // and might need gerr later. See also below. Maybe we shouldn't treat it as an 'error' using GError
         // and just log the message since it is non-fatal. But maybe we want to highlight it as an error
         // in case we see failures here.

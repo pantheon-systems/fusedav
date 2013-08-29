@@ -30,7 +30,7 @@
 #include "util.h"
 #include "session.h"
 
-// REVIEW: These changes assume that we will ensure that there is a new fusedav
+// @TODO: These changes assume that we will ensure that there is a new fusedav
 // available before the corresponding changes to titan go into effect. We can
 // tolerate this new fusedav running on old titan, but we cannot tolerate updating
 // to a new titan while still remounting the old fusedav.
@@ -48,7 +48,7 @@ enum {
 
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
 
-// REVIEW: The fusedav_opts are only necessary while we have an old version of titan
+// @TODO: The fusedav_opts are only necessary while we have an old version of titan
 // where the .mount file's Options line includes all of these items.
 // Once we have a new titan with the short list of Options, all of which are
 // recognized internally by fusedav, we will no longer need the FUSEDAV_OPT
@@ -347,7 +347,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     // default log_level: LOG_NOTICE
     config->log_level = 5;
     
-    // REVIEW: only needed if someone remounts to a new fusedav but doesn't yet converge to
+    // @TODO: only needed if someone remounts to a new fusedav but doesn't yet converge to
     // get the new fusedav.conf which sets this value. Is this a one-off we can throw away
     // later, or do we want a more elegant mechanism for setting defaults as the future unfolds?
     config->max_file_size = 256;
@@ -383,7 +383,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    // REVIEW: is there a best place for fuse_opt_add_arg? Does it need to follow fuse_parse_cmdline?
+    // @TODO: is there a best place for fuse_opt_add_arg? Does it need to follow fuse_parse_cmdline?
     // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
     // @TODO temporary to make new fusedav work with old titan, until everyone is up to date
     fuse_opt_add_arg(args, "-oumask=0007");
