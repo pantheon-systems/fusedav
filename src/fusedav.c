@@ -622,6 +622,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat st;
     GError *gerr2 = NULL;
+    GError *gerr3 = NULL;
     CURLcode res;
 
     get_stat(path, &st, &gerr2);
@@ -656,14 +657,12 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     filecache_delete(config->cache, path, true, &gerr2);
     if (gerr2) {
         g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
-        g_clear_error(&gerr2);
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling stat_cache_delete on %s", path);
-    stat_cache_delete(config->cache, path, &gerr2);
-    if (gerr2) {
-        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
-        g_clear_error(&gerr2);
+    stat_cache_delete(config->cache, path, &gerr3);
+    if (gerr3) {
+        g_propagate_prefixed_error(gerr, gerr3, "common_unlink: ");
     }
     
     return;
@@ -938,9 +937,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // path might be NULL if we are accessing a bare file descriptor. This is not an error
     if (path == NULL) goto finish;
     
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "2CALLBACK: dav_release: release(%s)", path ? path : "null path");
     wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "3CALLBACK: dav_release: release(%s)", path ? path : "null path");
 
     // If we didn't write data, we either got an error, which we handle below, or there is not error,
     // so just fall through (not writable, not modified are examples)
@@ -961,14 +958,12 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         }
     }
     
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "4CALLBACK: dav_release: release(%s)", path ? path : "null path");
     filecache_close(info, &gerr2);
     if (gerr2) {
         // Log but do not exit on error
         processed_gerror("dav_release: ", path, &gerr2);
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "5CALLBACK: dav_release: release(%s)", path ? path : "null path");
     if (gerr) {
         // NB. We considered not removing the file from the local caches on cURL error, but
         // if we do that we can conceivably have a file in our local cache and no file on

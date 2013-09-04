@@ -165,7 +165,7 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     // ldb error will cause file to go to forensic haven.
     if (ldberr != NULL || inject_error(filecache_error_setldb)) {
-        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s", ldberr);
+        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_set: leveldb_put error %s", ldberr ? ldberr : "inject-error");
         free(ldberr);
         return;
     }
@@ -237,7 +237,7 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
     free(key);
 
     if (ldberr != NULL || inject_error(filecache_error_getldb)) {
-        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_get: leveldb_get error %s", ldberr);
+        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_pdata_get: leveldb_get error %s", ldberr ? ldberr : "inject-error");
         free(ldberr);
         free(pdata);
         return NULL;
@@ -1121,7 +1121,7 @@ void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefil
     }
 
     if (ldberr != NULL || inject_error(filecache_error_deleteldb)) {
-        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_delete: leveldb_delete: %s", ldberr);
+        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "filecache_delete: leveldb_delete: %s", ldberr ? ldberr : "error-inject");
         free(ldberr);
     }
 

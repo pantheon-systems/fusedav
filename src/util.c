@@ -24,6 +24,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "util.h"
 #include "log.h"
@@ -121,7 +122,6 @@ static void filecache_forensic_haven_test(void) {
         int error;
         const char *name;
     };
-    #define sz 
     struct error_name_s error_name[] = {
         {filecache_error_newcachefile, "filecache_error_newcachefile"},
         {filecache_error_setpdata, "filecache_error_setpdata"},
@@ -130,7 +130,7 @@ static void filecache_forensic_haven_test(void) {
         {filecache_error_getldb, "filecache_error_getldb"},
         {filecache_error_getvallen, "filecache_error_getvallen"},
         {filecache_error_freshopen1, "filecache_error_freshopen1"},
-        {filecache_error_freshflock1, "filecache_error_freshflock1"},
+        /* {filecache_error_freshflock1, "filecache_error_freshflock1"}, this will leave lock locked */
         {filecache_error_freshftrunc, "filecache_error_freshftrunc"},
         {filecache_error_freshflock2, "filecache_error_freshflock2"},
         {filecache_error_freshsession, "filecache_error_freshsession"},
@@ -144,7 +144,7 @@ static void filecache_forensic_haven_test(void) {
         {filecache_error_readread, "filecache_error_readread"},
         {filecache_error_writesdata, "filecache_error_writesdata"},
         {filecache_error_writewriteable, "filecache_error_writewriteable"},
-        {filecache_error_writeflock1, "filecache_error_writeflock1"},
+        /* {filecache_error_writeflock1, "filecache_error_writeflock1"}, this will leave lock locked */
         {filecache_error_writewrite, "filecache_error_writewrite"},
         {filecache_error_writeflock2, "filecache_error_writeflock2"},
         {filecache_error_closesdata, "filecache_error_closesdata"},
@@ -223,6 +223,7 @@ bool inject_error(int edx) {
     if (inject_error_list && inject_error_list[edx]) {
         inject_error_list[edx] = false;
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error(%d)", edx);
+        errno = 0;
         return true;
     }
     return false;
