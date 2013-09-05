@@ -728,7 +728,7 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
     BUMP(filecache_write);
 
     if (sdata == NULL || inject_error(filecache_error_writesdata)) {
-        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_write: sdata is NULL");
         return -1;
     }
 

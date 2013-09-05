@@ -223,7 +223,7 @@ bool inject_error(int edx) {
     if (inject_error_list && inject_error_list[edx]) {
         inject_error_list[edx] = false;
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error(%d)", edx);
-        errno = 0;
+        errno = ENOTTY;
         return true;
     }
     return false;
