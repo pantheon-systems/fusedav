@@ -663,7 +663,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     
     // If we need to combine 2 errors, use one of the error messages in the propagated prefix
     if (gerr2 && gerr3) {
-        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: %s", gerr3->message);
+        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: %s :: ", gerr3->message);
     } 
     else if (gerr2) {
         g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
