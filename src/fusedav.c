@@ -332,6 +332,7 @@ static int dav_readdir(
             }
             log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "Failed to update directory: %s : using grace : %d %s", path, gerr->code, strerror(gerr->code));
             set_saint_mode();
+            g_clear_error(&gerr);
         }
 
         // Output the new data, skipping any cache freshness checks
@@ -359,6 +360,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         stat_cache_delete(config->cache, path, &tmpgerr);
         if (tmpgerr) {
             log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
+            g_clear_error(&tmpgerr);
             return;
         }
     }
@@ -367,6 +369,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         stat_cache_value_set(config->cache, path, &value, &tmpgerr);
         if (tmpgerr) {
             log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
+            g_clear_error(&tmpgerr);
             return;
         }
     }
@@ -466,14 +469,13 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // If it's the root directory or refresh_dir_for_file_stat is false,
     // just do a single, zero-depth PROPFIND.
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
-        // Not sure that tmpgerr above, if triggered, will exit, so get a new gerr variable
         GError *subgerr = NULL;
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
         // @TODO: Armor this better if the server returns unexpected data.
         if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL) < 0) {
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
-                g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
+                g_propagate_prefixed_error(gerr, subgerr, "get_stat: PROPFIND failed");
                 goto fail;
             }
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "get_stat: PROPFIND failed");
@@ -655,13 +657,18 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling filecache_delete on %s", path);
     filecache_delete(config->cache, path, true, &gerr2);
-    if (gerr2) {
-        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
-    }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling stat_cache_delete on %s", path);
     stat_cache_delete(config->cache, path, &gerr3);
-    if (gerr3) {
+    
+    // If we need to combine 2 errors, use one of the error messages in the propagated prefix
+    if (gerr2 && gerr3) {
+        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: %s", gerr3->message);
+    } 
+    else if (gerr2) {
+        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+    } 
+    else if (gerr3) {
         g_propagate_prefixed_error(gerr, gerr3, "common_unlink: ");
     }
     
@@ -904,6 +911,7 @@ static int dav_rename(const char *from, const char *to) {
         if (tmpgerr) {
             // Don't propagate but do log
             log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: filecache_delete failed %d:%s -- %s", fd, to, tmpgerr->message);
+            g_clear_error(&tmpgerr);
         }
         local_ret = processed_gerror("dav_rename: ", to, &gerr);
         goto finish;
@@ -917,7 +925,7 @@ finish:
     free(entry);
     curl_slist_free_all(slist);
 
-    // if either the server move or the local move succeed, we return
+    // if either the server move or the local move succeed, we return success
     if (server_ret == 0 || local_ret == 0)
         return 0;
     return server_ret; // error from either get_stat or curl_easy_getinfo
@@ -939,7 +947,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     
     wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
 
-    // If we didn't write data, we either got an error, which we handle below, or there is not error,
+    // If we didn't write data, we either got an error, which we handle below, or there is no error,
     // so just fall through (not writable, not modified are examples)
     if (wrote_data && !gerr) { // I don't think we can exit with gerr and still write data, but just to be safe...
         struct stat_cache_value value;
@@ -954,7 +962,6 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         if (gerr2) {
             ret = -gerr2->code;
             processed_gerror("dav_release: ", path, &gerr2);
-            g_clear_error(&gerr2);
         }
     }
     
@@ -1025,7 +1032,6 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
                 // display the error, but don't return it ...
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed common_unlink on %s", path);
                 processed_gerror("dav_release: ", path, &subgerr);
-                g_clear_error(&subgerr);
             }
             log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_release: failed filecache_sync on %s", path);
         }
@@ -1304,6 +1310,9 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
                 return (-EFBIG);
             }
             stat_cache_value_set(config->cache, path, &value, &gerr);
+            if (gerr) {
+                return processed_gerror("dav_write: ", path, &gerr);
+            }
         }
     }
 

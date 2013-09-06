@@ -469,7 +469,7 @@ static void get_fresh_fd(filecache_t *cache,
                 if (errno == ENOENT) {
                     // delete pdata from cache, we can't trust its values.
                     // We see one site continually failing on the same non-existent cache file.
-                    filecache_delete(cache, path, true, &tmpgerr);
+                    filecache_delete(cache, path, true, NULL);
                 }
                 g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open for 304 failed: %s", strerror(errno));
                 log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
@@ -548,14 +548,6 @@ static void get_fresh_fd(filecache_t *cache,
                 log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %ul %ul %ul %ul); deleting...", 
                     path, lg, sz, atime, lsu);
                 free(value);
-                // JB TMP: don't delete from stat cache here; do it during forensic-haven processing.
-                // But test carefully first!
-                // stat_cache_delete(cache, path, &tmpgerr);
-
-                /* We do not propagate this error, it is just informational */
-                if (tmpgerr) {
-                    log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: on 404 stat_cache_delete failed on %s", path);
-                }
             }
             goto finish;
         }
@@ -647,7 +639,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
             else if (tmpgerr->domain == system_quark() && retries < max_retries) {
                 log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "filecache_open: Retrying with reset pdata for path %s. Error: %s", path, tmpgerr->message);
                 g_clear_error(&tmpgerr);
-                filecache_delete(cache, path, true, &tmpgerr);
+                filecache_delete(cache, path, true, NULL);
                 // Now that we've gotten rid of cache entry, free pdata
                 free(pdata);
                 pdata = NULL;
@@ -1132,10 +1124,10 @@ void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefil
 
 void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const char *path, off_t fsize, GError **gerr) {
     struct filecache_pdata *pdata = NULL;
-    GError *subgerr = NULL;
     char *bpath = NULL;
     char *bname;
     char *newpath = NULL;
+    GError *subgerr = NULL;
     int fd = -1;
     char *buf = NULL;
     ssize_t bytes_written;
@@ -1146,6 +1138,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
 
     // Get info from pdata and write to file in forensic haven
     pdata = filecache_pdata_get(cache, path, &subgerr);
+    // If there's no pdata, there's no filecache cache file to move to the forensic haven
     if (subgerr) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_delete: error on filecache_pdata_get %s", path);
         g_propagate_prefixed_error(gerr, subgerr, "filecache_forensic_haven: ");
@@ -1166,15 +1159,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     // Move the file to forensic-haven
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: doing rename(%s, %s)", pdata->filename, newpath);
     if (rename(pdata->filename, newpath) == -1) {
-        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on rename(%s, %s)", pdata->filename, newpath);
-        // We can tolerate a failed rename, and just try to write the .txt file below; but let the error bubble up
-        // Creating this pattern since we want to continue even in the presence of an error here,
-        // and might need gerr later. See also below. Maybe we shouldn't treat it as an 'error' using GError
-        // and just log the message since it is non-fatal. But maybe we want to highlight it as an error
-        // in case we see failures here.
-        g_set_error(&subgerr, filecache_quark(), errno, "filecache_forensic_haven: failed rename(%s, %s)", pdata->filename, newpath);
-        g_propagate_error(gerr, subgerr);
-        g_clear_error(&subgerr);
+        log_print(LOG_WARNING, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on rename(%s, %s)", pdata->filename, newpath);
         // If rename fails, put this in the .txt file
         failed_rename = true;
     }
@@ -1189,10 +1174,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     fd = creat(newpath, 0600);
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: creat(%s) fd %d", newpath, fd);
     if (fd < 0) {
-        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on creat(%s) fd %d (set gerr)", newpath, fd);
-        g_set_error(&subgerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on create of %s", newpath);
-        g_propagate_error(gerr, subgerr);
-        g_clear_error(&subgerr);
+        log_print(LOG_WARNING, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on creat(%s) fd %d", newpath, fd);
         // Exit; no point in writing a file we couldn't create
         goto finish;
     }
