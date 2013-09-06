@@ -71,9 +71,13 @@ void setup_signal_handlers(GError **gerr) {
     sigemptyset(&(sa.sa_mask));
     sa.sa_flags = 0;
 
+    // Note for future generations; as currently set up, inject error won't start until
+    // after this function is called, so the inject_error routines will never fire even
+    // if inject error is turned on
+    
     if (sigaction(SIGHUP, &sa, NULL) == -1 ||
         sigaction(SIGINT, &sa, NULL) == -1 ||
-        sigaction(SIGTERM, &sa, NULL) == -1) {
+        sigaction(SIGTERM, &sa, NULL) == -1 || inject_error(signal_error_action1)) {
 
         log_print(LOG_CRIT, SECTION_SIGNALHANDLING_DEFAULT, "Cannot set exit signal handlers: %s", strerror(errno));
         g_set_error(gerr, signal_handling_quark(), errno, "Cannot set exit signal handlers");
@@ -82,7 +86,7 @@ void setup_signal_handlers(GError **gerr) {
 
     sa.sa_handler = SIG_IGN;
 
-    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
+    if (sigaction(SIGPIPE, &sa, NULL) == -1 || inject_error(signal_error_action2)) {
         g_set_error(gerr, signal_handling_quark(), errno, "Cannot set ignored signals");
         return;
     }
@@ -90,7 +94,7 @@ void setup_signal_handlers(GError **gerr) {
     /* Used to shut down the locking thread */
     sa.sa_handler = empty_handler;
 
-    if (sigaction(SIGUSR1, &sa, NULL) == -1) {
+    if (sigaction(SIGUSR1, &sa, NULL) == -1 || inject_error(signal_error_action3)) {
         g_set_error(gerr, signal_handling_quark(), errno, "Cannot set user signals");
         return;
     }
