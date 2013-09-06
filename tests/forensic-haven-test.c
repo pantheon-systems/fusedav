@@ -54,7 +54,9 @@ int main() {
             sleep(3); // Give fusedav a chance to reset an injected error that might affect open
             fd[idx] = open(filename[idx], O_RDWR | O_CREAT);
             if (fd[idx] < 0) {
-                printf("%s zError on open: %s; %d %s\n", mytime(fstr, sizeof(fstr)), filename[idx], errno, strerror(errno));
+                sprintf(errstr, "%s zError on open: %s; %d %s\n", mytime(fstr, sizeof(fstr)), filename[idx], errno, strerror(errno));
+                printf("%s", errstr);
+                write(errfd, errstr, sizeof(errstr));
                 continue;
             }
             printf("Writing %s\n", filename[idx]);
