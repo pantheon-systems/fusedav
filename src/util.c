@@ -76,8 +76,8 @@ static bool *inject_error_list = NULL;
  * where the inject error is set while it is set, it will not execute.
  */
 static void rand_test(void) {
-    int fdx = no_error;
-    int tdx = no_error;
+    static int fdx = no_error;
+    static int tdx;
     
     // Sleep 11 seconds between injections
     sleep(11);
@@ -95,8 +95,8 @@ static void rand_test(void) {
 
 /* test what happens on a write error */
 static void writewrite_test(void) {
-    int fdx = no_error;
-    int tdx = no_error;
+    static int fdx = no_error;
+    static int tdx = no_error;
 
     // Sleep 11 seconds between injections
     sleep(11);
@@ -161,11 +161,11 @@ static void filecache_forensic_haven_test(void) {
         {filecache_error_deleteldb, "filecache_error_deleteldb"},
         {-1, ""}, // sentinel
     };
-    const char *name;
-    int fdx = no_error;
-    int tdx = no_error;
     
     for (int idx = 0; error_name[idx].error != -1; idx++) {
+        const char *name;
+        int fdx = no_error;
+        int tdx;
         tdx = error_name[idx].error;
         name = error_name[idx].name;
             
