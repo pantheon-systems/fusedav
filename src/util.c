@@ -207,12 +207,12 @@ void *inject_error_mechanism(void *ptr) {
     // Just to avoid unused-function warnings, list all tests not being tested here
     if (being_tested) {
         rand_test();
-        writewrite_test();
+        filecache_forensic_haven_test();
     }
 
     // Generate errors forever!
     while (true) {
-        filecache_forensic_haven_test();
+        writewrite_test();
     }
     free(inject_error_list);
     return NULL;

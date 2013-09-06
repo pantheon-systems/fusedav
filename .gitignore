@@ -22,6 +22,7 @@ config.h.in
 /tests/readrecursive
 /tests/readwhatwaswritten
 /tests/continualwrites
+/tests/forensic-haven-test
 /tests/trunc
 /src/*.plist
 _trial_temp*
