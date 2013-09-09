@@ -30,7 +30,7 @@
 #include "util.h"
 #include "session.h"
 
-// REVIEW: These changes assume that we will ensure that there is a new fusedav
+// @TODO: These changes assume that we will ensure that there is a new fusedav
 // available before the corresponding changes to titan go into effect. We can
 // tolerate this new fusedav running on old titan, but we cannot tolerate updating
 // to a new titan while still remounting the old fusedav.
@@ -48,7 +48,7 @@ enum {
 
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
 
-// REVIEW: The fusedav_opts are only necessary while we have an old version of titan
+// @TODO: The fusedav_opts are only necessary while we have an old version of titan
 // where the .mount file's Options line includes all of these items.
 // Once we have a new titan with the short list of Options, all of which are
 // recognized internally by fusedav, we will no longer need the FUSEDAV_OPT
@@ -147,6 +147,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o log_level=NUM (use 7 for debug)\n"
                 "        -o log_level_by_section=STRING (0 means use global verbosity)\n"
                 "    Other:\n"
+                "        -o max_file_size=NUM (in MB)\n"
                 "        -o conf=STRING\n"
                 "\n"
                 , outargs->argv[0]);
@@ -187,6 +188,7 @@ static void print_config(struct fusedav_config *config) {
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level %d", config->log_level);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level_by_section %s", config->log_level_by_section);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_prefix %s", config->log_prefix);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "max_file_size %d", config->max_file_size);
 
     // These are not subject to change by the parse config method
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "uri: %s", config->uri);
@@ -210,7 +212,13 @@ run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
 log_level=5
 log_level_by_section=0
 log_prefix=6f7a106722f74cc7bd96d4d06785ed78
+max_file_size=256
 */
+
+// Note for future generations; as currently set up, inject error won't start until
+// after this function is called, so the inject_error routines will never fire even
+// if inject error is turned on
+    
 
 static void parse_configs(struct fusedav_config *config, GError **gerr) {
 
@@ -243,6 +251,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, log_level, INT),
         keytuple(fusedav, log_level_by_section, STRING),
         keytuple(fusedav, log_prefix, STRING),
+        keytuple(fusedav, max_file_size, INT),
         {NULL, NULL, 0, 0}
         };
 
@@ -277,7 +286,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "parse_configs: Error on load_from_file");
         return;
-    } else if (bret == FALSE) {
+    } else if (bret == FALSE || inject_error(config_error_load)) {
         g_set_error(gerr, fusedav_config_quark(), ENOENT, "parse_configs: Error on load_from_file");
         return;
     }
@@ -337,9 +346,14 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
 
     // default log_level: LOG_NOTICE
     config->log_level = 5;
+    
+    // @TODO: only needed if someone remounts to a new fusedav but doesn't yet converge to
+    // get the new fusedav.conf which sets this value. Is this a one-off we can throw away
+    // later, or do we want a more elegant mechanism for setting defaults as the future unfolds?
+    config->max_file_size = 256;
 
     // Parse options.
-    if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0) {
+    if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse options.");
         return;
     }
@@ -350,8 +364,8 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0) {
-        g_set_error(gerr, fusedav_config_quark(), EIO, "Failed to initialize session system.");
+    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0 || inject_error(config_error_sessioninit)) {
+        g_set_error(gerr, fusedav_config_quark(), ENETDOWN, "Failed to initialize session system.");
         return;
     }
 
@@ -364,19 +378,19 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     debug = (config->log_level >= 7);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
-    if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0) {
+    if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse the command line.");
         return;
     }
 
-    // REVIEW: is there a best place for fuse_opt_add_arg? Does it need to follow fuse_parse_cmdline?
+    // @TODO: is there a best place for fuse_opt_add_arg? Does it need to follow fuse_parse_cmdline?
     // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
     // @TODO temporary to make new fusedav work with old titan, until everyone is up to date
     fuse_opt_add_arg(args, "-oumask=0007");
 
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Parsed command line.");
 
-    if (!config->uri) {
+    if (!config->uri || inject_error(config_error_uri)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "Missing the required URI argument.");
         return;
     }

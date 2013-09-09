@@ -19,12 +19,6 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
-// REVIEW: do we want to put all stats in one struct? Or let each file (fusedav.c,
-// filecache.c, statcache.c) define its own?
-// I would prefer: limit fusedav.c, filecache.c, and statcache.c to fusedav,
-// filecache, statcache core activities; and do other things like inject_error,
-// stats, etc in separate files, like this.
-
 struct statistics {
     unsigned dav_chmod;
     unsigned dav_chown;
@@ -63,6 +57,8 @@ struct statistics {
     unsigned filecache_orphans;
     unsigned filecache_cleanup;
     unsigned filecache_get_fd;
+    unsigned filecache_set_error;
+    unsigned filecache_forensic_haven;
     unsigned filecache_init;
     unsigned filecache_path2key;
     unsigned filecache_key2path;
