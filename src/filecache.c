@@ -547,6 +547,9 @@ static void get_fresh_fd(filecache_t *cache,
                 
                 log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %ul %ul %ul %ul); deleting...", 
                     path, lg, sz, atime, lsu);
+                    
+                stat_cache_delete(cache, path, NULL);
+
                 free(value);
             }
             goto finish;
