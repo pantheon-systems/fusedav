@@ -327,11 +327,11 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
     // Perform the request and parse the response.
-    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s )PROPFIND.", last_updated > 0 ? "progressive" : "complete");
+    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
     res = curl_easy_perform(session);
 
     if (res != CURLE_OK) {
-        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s )PROPFIND failed: %s", last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res));
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s", last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res));
         goto finish;
     }
 
@@ -362,11 +362,11 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
     else {
-        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s )PROPFIND failed with response code: %u", last_updated > 0 ? "progressive" : "complete", response_code);
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed with response code: %u", last_updated > 0 ? "progressive" : "complete", response_code);
         goto finish;
     }
 
-    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: (%s )PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
+    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
 
 finish:

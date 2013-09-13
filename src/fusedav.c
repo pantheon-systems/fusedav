@@ -102,11 +102,11 @@ static int simple_propfind_with_redirect(
 
     int ret;
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s )PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
 
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata);
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Done with (%s )PROPFIND.", last_updated > 0 ? "progressive" : "complete");
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Done with (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
 
     return ret;
 }
