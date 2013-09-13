@@ -240,7 +240,7 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.st.st_uid = getuid();
         state->rstate.st.st_gid = getgid();
 
-        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "endElement: Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
         state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code);
 
         // Reset response state.
@@ -265,8 +265,11 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     if (!state->failure) {
         if (XML_Parse(parser, contents, real_size, 0) == 0) {
             int error_code = XML_GetErrorCode(parser);
-            log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
+            log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "write_parsing_callback: Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
             state->failure = true;
+        }
+        else {
+            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "write_parsing_callback: Response %s", (char *)contents);
         }
     }
 
@@ -324,11 +327,11 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
     // Perform the request and parse the response.
-    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "About to perform PROPFIND.");
+    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s )PROPFIND.", last_updated > 0 ? "progressive" : "complete");
     res = curl_easy_perform(session);
 
     if (res != CURLE_OK) {
-        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "PROPFIND failed: %s", curl_easy_strerror(res));
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s )PROPFIND failed: %s", last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res));
         goto finish;
     }
 
@@ -337,16 +340,16 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (response_code == 207) {
         // Finalize parsing.
         if (state.failure) {
-            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "Could not finalize parsing of the 207 response because it's already in a failed state.");
+            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
             goto finish;
         }
 
         if (XML_Parse(parser, NULL, 0, 1) == 0) {
             int error_code = XML_GetErrorCode(parser);
-            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
         }
         else {
-            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "Finished final parsing on the PROPFIND response.");
+            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: Finished final parsing on the PROPFIND response.");
         }
     }
     else if (response_code == 404) {
@@ -359,11 +362,11 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
     else {
-        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "PROPFIND failed with response code: %u", response_code);
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s )PROPFIND failed with response code: %u", last_updated > 0 ? "progressive" : "complete", response_code);
         goto finish;
     }
 
-    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "PROPFIND completed on path %s", path);
+    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: (%s )PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
 
 finish:
