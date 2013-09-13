@@ -268,9 +268,9 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
             log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "write_parsing_callback: Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
             state->failure = true;
         }
-        else {
-            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "write_parsing_callback: Response %s", (char *)contents);
-        }
+        //else {
+            //log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "write_parsing_callback: Response %s", (char *)contents);
+        //}
     }
 
     return real_size;
