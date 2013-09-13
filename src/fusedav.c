@@ -241,7 +241,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND failed because of staleness.");
         }
         else {
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: proressive propfind errored: ");
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: progressive propfind errored: ");
             return;
         }
     }
