@@ -102,11 +102,11 @@ static int simple_propfind_with_redirect(
 
     int ret;
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Performing PROPFIND of depth %d on path %s.", depth, path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
 
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata);
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done with PROPFIND.");
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Done with (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
 
     return ret;
 }
@@ -227,28 +227,28 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
             return;
         }
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshening directory data: %s", path);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
 
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, getdir_propfind_callback, NULL);
         // On true error, we set an error and return, avoiding the complete PROPFIND.
         // On sucess we avoid the complete PROPFIND
         // On ESTALE, we do a complete PROPFIND
         if (propfind_result == 0 && !inject_error(fusedav_error_updatepropfind1)) {
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshen PROPFIND success");
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND success");
             needs_update = false;
         }
         else if (propfind_result == -ESTALE && !inject_error(fusedav_error_updatepropfind1)) {
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Freshen PROPFIND failed because of staleness.");
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND failed because of staleness.");
         }
         else {
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: propfind failed: ");
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: progressive propfind errored: ");
             return;
         }
     }
 
     // If we had *no data* or freshening failed, rebuild the cache with a full PROPFIND.
     if (needs_update) {
-        unsigned int min_generation;
+        unsigned long min_generation;
 
         // Up log level to NOTICE temporarily to get reports in the logs
         log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
@@ -268,7 +268,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
     }
 
     // Mark the directory contents as updated.
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Marking directory %s as updated at timestamp %lu.", path, timestamp);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Marking directory %s as updated at timestamp %lu.", path, timestamp);
     stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -324,7 +324,7 @@ static int dav_readdir(
             else log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-MISS: %s", path);
         }
 
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "Updating directory: %s", path);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_readdir: Updating directory: %s", path);
         update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
         if (gerr) {
             if (!config->grace) {
@@ -341,7 +341,7 @@ static int dav_readdir(
         stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
     }
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "Successful readdir for path: %s", path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_readdir: Successful readdir for path: %s", path);
     return 0;
 }
 
