@@ -168,32 +168,32 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
 }
 
 static void print_config(struct fusedav_config *config) {
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "CONFIG:");
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "progressive_propfind %d", config->progressive_propfind);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "grace %d", config->grace);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "singlethread %d", config->singlethread);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "cache_uri %s", config->cache_uri);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "CONFIG:");
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "progressive_propfind %d", config->progressive_propfind);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "refresh_dir_for_file_stat %d", config->refresh_dir_for_file_stat);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "grace %d", config->grace);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "singlethread %d", config->singlethread);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "cache_uri %s", config->cache_uri);
 
     // We could set these two, but they are NULL by default, so don't know how to put that in the config file
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "username %s", config->username);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "password %s", config->password);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "username %s", config->username);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "password %s", config->password);
 
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "ca_certificate %s", config->ca_certificate);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "client_certificate %s", config->client_certificate);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "nodaemon %d", config->nodaemon);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "cache_path %s", config->cache_path);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "run_as_uid %s", config->run_as_uid);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "run_as_gid %s", config->run_as_gid);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level %d", config->log_level);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level_by_section %s", config->log_level_by_section);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_prefix %s", config->log_prefix);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "max_file_size %d", config->max_file_size);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "ca_certificate %s", config->ca_certificate);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "client_certificate %s", config->client_certificate);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "nodaemon %d", config->nodaemon);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "cache_path %s", config->cache_path);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "run_as_uid %s", config->run_as_uid);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "run_as_gid %s", config->run_as_gid);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level %d", config->log_level);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level_by_section %s", config->log_level_by_section);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_prefix %s", config->log_prefix);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "max_file_size %d", config->max_file_size);
 
     // These are not subject to change by the parse config method
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "uri: %s", config->uri);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "cache %p", config->cache);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "conf %s", config->conf);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "uri: %s", config->uri);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "cache %p", config->cache);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "conf %s", config->conf);
 }
 
 /* fusedav.conf looks something like:
