@@ -62,7 +62,7 @@ unsigned long stat_cache_get_local_generation(void) {
     }
     ret = ++counter;
     pthread_mutex_unlock(&counter_mutex);
-    //log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "stat_cache_get_local_generation: %lu", ret);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_DEFAULT, "stat_cache_get_local_generation: %lu", ret);
     return ret;
 }
 
@@ -356,7 +356,8 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     value->local_generation = stat_cache_get_local_generation();
 
     key = path2key(path, false);
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "CSET: %s (mode %04o)", key, value->st.st_mode);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "CSET: %s (mode %04o: updated %lu: loc_gen %lu)", 
+        key, value->st.st_mode, value->updated, value->local_generation);
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
@@ -636,6 +637,13 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     return has_children;
 }
 
+/* Pantheon note:
+ * On "wipe", we do a "DELETE /sites/f1f574a9-085b-409c-a382-0859ec01f157/environments/live/files/?source=portal"
+ * on valhalla, which deletes everything. This puts a tag on the system 
+ * (self.update_metadata(metadata={'last_reset': int(time.time())}, ttl=EVENT_TTL))
+ * such that on the subsequent PROPFIND, we get basically an empty return, <?xml version="1.0" encoding="utf-8" ?>. 
+ * We should then use min_generation to remove those items which are older than the given generation.
+ */
 void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation, GError **gerr) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
@@ -647,6 +655,8 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu", 
+            entry->key, minimum_local_generation, entry->value->local_generation);
         if (entry->value->local_generation < minimum_local_generation) {
             stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
             ++deleted_entries;
