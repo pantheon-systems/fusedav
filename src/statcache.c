@@ -672,7 +672,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     }
     stat_cache_iterator_free(iter);
 
-    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : deletedentries %u", path_prefix, deleted_entries);
+    log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : deletedentries %u", path_prefix, deleted_entries);
     // Only prune if there are deleted entries; otherwise there's no work to do
     if (deleted_entries > 0) {
         stat_cache_prune(cache);

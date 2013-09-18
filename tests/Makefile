@@ -25,6 +25,11 @@ readrecursive = $(testdir)/readrecursive
 # So far, the only flag is -v for verbose, 'readrecursive-flags=-v'
 readrecursive-flags =
 
+# If we unlink an open file, make sure we can close it
+openunlinkclose = $(testdir)/openunlinkclose
+# flag -v for verbose
+openunlinkclose-flags =
+
 readwhatwaswritten = $(testdir)/readwhatwaswritten
 # flag -v for verbose, -f# for number of files, -u are we doing unlinks 'readwhatwaswritten-flags=-v -u -f16'
 readwhatwaswritten-flags =
@@ -51,6 +56,8 @@ run-unit-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwasw
 run-stress-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
+# unlink test is creating increasing numbers of open files which never get closed. Remove for now.
+# run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
 run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
@@ -108,6 +115,12 @@ run-readwhatwaswritten-unlink-stress: $(readwhatwaswritten)
 	$(readwhatwaswritten) -f256 $(readwhatwaswritten-flags) -u
 
 $(readwhatwaswritten): $(testdir)/readwhatwaswritten.c
+	cc $< -std=c99 -g -o $@
+
+run-openunlinkclose: $(openunlinkclose)
+	$(openunlinkclose) $(openunlinkclose-flags)
+
+$(openunlinkclose): $(testdir)/openunlinkclose.c
 	cc $< -std=c99 -g -o $@
 
 run-continualwrites-unit: $(continualwrites)
