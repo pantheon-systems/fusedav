@@ -935,7 +935,6 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
     GError *gerr2 = NULL;
-    bool wrote_data;
     int ret = 0;
 
     BUMP(dav_release);
@@ -946,7 +945,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // We still need to close the file.
     
     if (path != NULL) {
-        wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+        bool wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
     
         // If we didn't write data, we either got an error, which we handle below, or there is no error,
         // so just fall through (not writable, not modified are examples)
