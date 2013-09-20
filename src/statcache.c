@@ -67,19 +67,17 @@ unsigned long stat_cache_get_local_generation(void) {
 }
 
 int print_stat(struct stat *stbuf, const char *title) {
-    if (debug) {
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "stat: %s", title);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_mode=%04o", stbuf->st_mode);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_nlink=%ld", stbuf->st_nlink);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_uid=%d", stbuf->st_uid);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_gid=%d", stbuf->st_gid);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_size=%ld", stbuf->st_size);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_blksize=%ld", stbuf->st_blksize);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_blocks=%ld", stbuf->st_blocks);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_atime=%ld", stbuf->st_atime);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_mtime=%ld", stbuf->st_mtime);
-        log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_ctime=%ld", stbuf->st_ctime);
-    }
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "stat: %s", title);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_mode=%04o", stbuf->st_mode);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_nlink=%ld", stbuf->st_nlink);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_uid=%d", stbuf->st_uid);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_gid=%d", stbuf->st_gid);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_size=%ld", stbuf->st_size);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_blksize=%ld", stbuf->st_blksize);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_blocks=%ld", stbuf->st_blocks);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_atime=%ld", stbuf->st_atime);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_mtime=%ld", stbuf->st_mtime);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_ctime=%ld", stbuf->st_ctime);
     return E_SC_SUCCESS;
 }
 
@@ -270,6 +268,18 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                 return NULL;
             }
         }
+    }
+    
+    /* Hack alert! 
+     * On doing a complete PROPFIND, the DAV:reponse we were resetting stat values
+     * but not setting st_blocks, which remained zero. This got stored in the statcache.
+     * Now and until the file modified, that zero value remains. This breaks programs
+     * like "du" which rely on st_blocks. That bug is fixed in this set of commits in props.c,
+     * but we need to fixup files which already have the issue.
+     * At some point this code should become irrelevant if we rewrite all cache entries.
+     */
+    if (value->st.st_blocks == 0 && value->st.st_size > 0) {
+        value->st.st_blocks = (value->st.st_size+511)/512;
     }
 
     return value;
