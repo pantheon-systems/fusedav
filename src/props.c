@@ -229,6 +229,12 @@ static void endElement(void *userData, const XML_Char *name) {
         }
         state->rstate.st.st_blksize = 4096;
 
+        // We get st_size back, but we need to set st_blocks as well. Programs
+        // like "du" use st_blocks for their calculations.
+        if (state->rstate.st.st_blocks == 0 && state->rstate.st.st_size > 0) {
+            state->rstate.st.st_blocks = (state->rstate.st.st_size+511)/512;
+        }
+
         // Default to the current time or mtime.
         if (state->rstate.st.st_mtime == 0)
             state->rstate.st.st_mtime = time(NULL);
