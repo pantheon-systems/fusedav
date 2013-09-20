@@ -23,6 +23,7 @@ config.h.in
 /tests/readwhatwaswritten
 /tests/continualwrites
 /tests/forensic-haven-test
+/tests/openunlinkclose
 /tests/trunc
 /src/*.plist
 _trial_temp*
