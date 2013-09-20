@@ -270,9 +270,13 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         }
     }
     
-    /* Hack alert! At some point in time stat info got stored where st_block was 0.
-     * This breaks programs like du. Set st_block as it comes out of the cache.
-     * At some point this code should become irrelevant.
+    /* Hack alert! 
+     * On doing a complete PROPFIND, the DAV:reponse we were resetting stat values
+     * but not setting st_blocks, which remained zero. This got stored in the statcache.
+     * Now and until the file modified, that zero value remains. This breaks programs
+     * like "du" which rely on st_blocks. That bug is fixed in this set of commits in props.c,
+     * but we need to fixup files which already have the issue.
+     * At some point this code should become irrelevant if we rewrite all cache entries.
      */
     if (value->st.st_blocks == 0 && value->st.st_size > 0) {
         value->st.st_blocks = (value->st.st_size+511)/512;
