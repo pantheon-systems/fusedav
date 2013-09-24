@@ -375,7 +375,6 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     if (config->log_prefix) log_prefix = config->log_prefix;
     else log_prefix = get_base_url();
     log_init(config->log_level, config->log_level_by_section, log_prefix);
-    debug = (config->log_level >= 7);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
     if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {

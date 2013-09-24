@@ -43,7 +43,6 @@
 #include "stats.h"
 
 mode_t mask = 0;
-int debug = 1;
 struct fuse* fuse = NULL;
 
 #define CLOCK_SKEW 10 // seconds
@@ -318,11 +317,9 @@ static int dav_readdir(
     // First, attempt to hit the cache.
     ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
     if (ret < 0) {
-        if (debug) {
-            if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-TOO-OLD: %s", path);
-            else if (ret == -STAT_CACHE_NO_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR_CACHE-NO-DATA available: %s", path);
-            else log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-MISS: %s", path);
-        }
+        if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-TOO-OLD: %s", path);
+        else if (ret == -STAT_CACHE_NO_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR_CACHE-NO-DATA available: %s", path);
+        else log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-MISS: %s", path);
 
         log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_readdir: Updating directory: %s", path);
         update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
