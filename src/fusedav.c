@@ -239,6 +239,9 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         else if (propfind_result == -ESTALE && !inject_error(fusedav_error_updatepropfind1)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND failed because of staleness.");
         }
+        else if (propfind_result == -ETOOMANYREFS && !inject_error(fusedav_error_updatepropfind1)) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND failed because of too many events.");
+        }
         else {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: progressive propfind errored: ");
             return;

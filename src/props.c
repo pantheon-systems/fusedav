@@ -367,6 +367,10 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         ret = -ESTALE;
         goto finish;
     }
+    else if (response_code == 417) {
+        ret = -ETOOMANYREFS;
+        goto finish;
+    }
     else {
         log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed with response code: %u", last_updated > 0 ? "progressive" : "complete", response_code);
         goto finish;
