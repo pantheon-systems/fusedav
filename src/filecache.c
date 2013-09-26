@@ -687,7 +687,7 @@ ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_
     BUMP(filecache_read);
 
     if (sdata == NULL || inject_error(filecache_error_readsdata)) {
-        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_read: sdata is NULL");
         return -1;
     }
 
@@ -775,7 +775,7 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
         return;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_close: fd (%d :: %d).", sdata->fd, sdata->fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_close: fd (%d).", sdata->fd);
 
     if (sdata->fd < 0 || inject_error(filecache_error_closefd))  {
         g_set_error(gerr, system_quark(), EBADF, "filecache_close got bad file descriptor");
@@ -1025,7 +1025,7 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
     BUMP(filecache_truncate);
 
     if (sdata == NULL || inject_error(filecache_error_truncsdata)) {
-        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_close: sdata is NULL");
+        g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_truncate: sdata is NULL");
         return;
     }
 
@@ -1143,7 +1143,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     pdata = filecache_pdata_get(cache, path, &subgerr);
     // If there's no pdata, there's no filecache cache file to move to the forensic haven
     if (subgerr) {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_delete: error on filecache_pdata_get %s", path);
+        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on filecache_pdata_get %s", path);
         g_propagate_prefixed_error(gerr, subgerr, "filecache_forensic_haven: ");
         goto finish;
     }

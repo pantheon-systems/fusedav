@@ -10,6 +10,14 @@ statcacheprune = $(testdir)/statcacheprune.sh
 # default for -d is 2; max allowed is 4; for -f it's 64
 statcacheprune-flags=
 
+# This is a regression test. In the past, if run on cltest files after statcacheprune
+# was run, du would return 0. So as a quasy-test of the issue is to run dutest right
+# after statcacheprune. However, there are two fixes to fix this problem, so it's
+# not really sure which one this one is.
+dutest = $(testdir)/dutest.sh
+# -v for verbose
+dutest-flags=
+
 # NB: no PASS/FAIL notification yet from iozone, still requires eyeballs
 iozone = /opt/iozone/src/current/iozone
 # -g: start with files of this size (by default 64K)
@@ -24,6 +32,11 @@ iozone-continual-flags = -g16384
 readrecursive = $(testdir)/readrecursive
 # So far, the only flag is -v for verbose, 'readrecursive-flags=-v'
 readrecursive-flags =
+
+# If we unlink an open file, make sure we can close it
+openunlinkclose = $(testdir)/openunlinkclose
+# flag -v for verbose
+openunlinkclose-flags =
 
 readwhatwaswritten = $(testdir)/readwhatwaswritten
 # flag -v for verbose, -f# for number of files, -u are we doing unlinks 'readwhatwaswritten-flags=-v -u -f16'
@@ -45,16 +58,18 @@ trunc-flags =
 all: run-stress-tests
 
 # restrict unit tests to low-resource tests
-run-unit-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-iozone-unit
+run-unit-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-iozone-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress
+run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
+# unlink test is creating increasing numbers of open files which never get closed. Remove for now.
+# run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
+run-continual-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-short-stress-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc
+run-short-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc
 
 # run this to test the system under error. To do this:
 # use the fusedav client inject error mechanism. Use the writewrite_test 
@@ -78,7 +93,10 @@ run-cltest:
 	$(cltest) $(cltest-flags)
 
 run-statcacheprune:
-	$(statcacheprune) $(statcacheprune-dirs) $(statcacheprune-flags) $(statcacheprune-verbose)
+	$(statcacheprune) $(statcacheprune-dirs) $(statcacheprune-flags)
+
+run-dutest:
+	$(dutest) $(dutest-flags)
 
 run-iozone-unit:
 	$(iozone) -Ra $(iozone-unit-flags)
@@ -108,6 +126,12 @@ run-readwhatwaswritten-unlink-stress: $(readwhatwaswritten)
 	$(readwhatwaswritten) -f256 $(readwhatwaswritten-flags) -u
 
 $(readwhatwaswritten): $(testdir)/readwhatwaswritten.c
+	cc $< -std=c99 -g -o $@
+
+run-openunlinkclose: $(openunlinkclose)
+	$(openunlinkclose) $(openunlinkclose-flags)
+
+$(openunlinkclose): $(testdir)/openunlinkclose.c
 	cc $< -std=c99 -g -o $@
 
 run-continualwrites-unit: $(continualwrites)
