@@ -250,7 +250,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         unsigned long min_generation;
 
         // Up log level to NOTICE temporarily to get reports in the logs
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
         timestamp = time(NULL);
         min_generation = stat_cache_get_local_generation();
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL);
