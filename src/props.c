@@ -258,6 +258,7 @@ static void endElement(void *userData, const XML_Char *name) {
     memset(&state->estate, 0, sizeof(struct element_state));
 }
 
+#define PARSE_FAILURE_STR_SIZE 64
 static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb, void *userp) {
     XML_Parser parser = (XML_Parser) userp;
     size_t real_size = length * nmemb;
@@ -271,12 +272,14 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     if (!state->failure) {
         if (XML_Parse(parser, contents, real_size, 0) == 0) {
             int error_code = XML_GetErrorCode(parser);
-            log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "write_parsing_callback: Parsing response buffer of length %u failed with error: %s", real_size, XML_ErrorString(error_code));
+            char failure_str[PARSE_FAILURE_STR_SIZE + 1];
+            strncpy(failure_str, contents, PARSE_FAILURE_STR_SIZE);
+            log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "write_parsing_callback: Parsing response buffer of length %u failed with error: %s -- return string: %s", real_size, XML_ErrorString(error_code), failure_str);
             state->failure = true;
         }
-        //else {
-            //log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "write_parsing_callback: Response %s", (char *)contents);
-        //}
+        else {
+            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "write_parsing_callback: Response %s", (char *)contents);
+        }
     }
 
     return real_size;
@@ -365,10 +368,6 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     }
     else if (response_code == 412) {
         ret = -ESTALE;
-        goto finish;
-    }
-    else if (response_code == 417) {
-        ret = -ETOOMANYREFS;
         goto finish;
     }
     else {
