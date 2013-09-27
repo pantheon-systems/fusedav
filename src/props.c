@@ -273,7 +273,11 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
         if (XML_Parse(parser, contents, real_size, 0) == 0) {
             int error_code = XML_GetErrorCode(parser);
             char failure_str[PARSE_FAILURE_STR_SIZE + 1];
-            strncpy(failure_str, contents, PARSE_FAILURE_STR_SIZE);
+            failure_str[0] = '\0';
+            if (contents) {
+                strncpy(failure_str, contents, PARSE_FAILURE_STR_SIZE);
+                failure_str[PARSE_FAILURE_STR_SIZE] = '\0';
+            }
             log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "write_parsing_callback: Parsing response buffer of length %u failed with error: %s -- return string: %s", real_size, XML_ErrorString(error_code), failure_str);
             state->failure = true;
         }
