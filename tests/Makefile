@@ -6,9 +6,15 @@ cltest = $(testdir)/cltest.sh
 cltest-flags=
 
 statcacheprune = $(testdir)/statcacheprune.sh
-# usage on Makefile line: 'statcacheprune-flags=-d2 -f64'
+# usage on Makefile line: 'statcacheprune-flags=-d2 -f64 -tdflt'
 # default for -d is 2; max allowed is 4; for -f it's 64
 statcacheprune-flags=
+
+# statcacheprune takes a flag -t<tag>. This will tag files with
+# tag. This is useful for multi-binding tests, so that each
+# binding can write different files from the others but in the
+# same directories to cause stress and see how the system handles it.
+# I used this to trigger "Too Many Events" exception
 
 # This is a regression test. In the past, if run on cltest files after statcacheprune
 # was run, du would return 0. So as a quasy-test of the issue is to run dutest right
