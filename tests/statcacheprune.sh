@@ -13,6 +13,7 @@ OPTIONS:
    -h      Show this message
    -f      Number of files per directory
    -d      Number of directories per level (up to 4)
+   -t      filename tag, in case of multiple drops
    -v      Verbose
 EOF
 }
@@ -20,7 +21,8 @@ EOF
 numfiles=0
 numdirs=0
 verbose=0
-while getopts "hf:d:v" OPTION
+filetag="dflt"
+while getopts "hf:d:t:v" OPTION
 do
      case $OPTION in
          h)
@@ -35,6 +37,9 @@ do
              if [ $numdirs -gt 4 ]; then
                 numdirs=4
             fi
+             ;;
+         t)
+             filetag=$OPTARG
              ;;
          v)
              verbose=1
@@ -98,11 +103,12 @@ fi
 function add_files() {
     dir=$1
     name=file$2
-    pecho "Adding files for $dir/$name"
+    tag=$3
+    pecho "Adding files for $dir/$tag$name"
     fiter=1
     while [ $fiter -le $numfiles ]
     do
-        file=file$name-$fiter.txt
+        file=file$tag$name-$fiter.txt
         cp $basefile $dir/$file
         compare $basefile $dir/$file
         fiter=$((fiter + 1))
@@ -154,7 +160,7 @@ do
     pecho "Making $dir"
     mkdir -p $dir
     check_dir $dir
-    add_files $dir $dir
+    add_files $dir $dir $filetag
     diriter=$((diriter + 1))
 
     sdiriter=1
@@ -165,7 +171,7 @@ do
         pecho "Making $dir"
         mkdir -p $dir
         check_dir $dir
-        add_files $dir $sdir
+        add_files $dir $sdir $filetag
         sdiriter=$((sdiriter + 1))
 
         ssdiriter=1
@@ -176,7 +182,7 @@ do
             pecho "Making $dir"
             mkdir -p $dir
             check_dir $dir
-            add_files $dir $ssdir
+            add_files $dir $ssdir $filetag
             ssdiriter=$((ssdiriter + 1))
 
             sssdiriter=1
@@ -187,7 +193,7 @@ do
                 pecho "Making $dir"
                 mkdir -p $dir
                 check_dir $dir
-                add_files $dir $sssdir
+                add_files $dir $sssdir $filetag
                 sssdiriter=$((sssdiriter + 1))
             done
         done
