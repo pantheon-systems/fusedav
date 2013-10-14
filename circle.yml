@@ -1,0 +1,6 @@
+dependencies:
+  pre:
+    - pip install cpplint
+test:
+    override:
+        - cpplint --filter=-whitespace/line_length src/* ; true
