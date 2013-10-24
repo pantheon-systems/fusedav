@@ -28,7 +28,6 @@
 #include <sys/file.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <curl/curl.h>
 
 #include "filecache.h"
 #include "statcache.h"
@@ -425,9 +424,9 @@ static void get_fresh_fd(filecache_t *cache,
     curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_response_to_fd);
 
     do {
-        res = curl_easy_perform(session);
+        res = retry_curl_easy_perform(session);
         if (res != CURLE_OK || inject_error(filecache_error_freshcurl1)) {
-            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: curl_easy_perform is not CURLE_OK: %s",
+            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: retry_curl_easy_perform is not CURLE_OK: %s",
                 curl_easy_strerror(res));
             goto finish;
         }
@@ -837,16 +836,16 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
     curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
-    res = curl_easy_perform(session);
+    res = retry_curl_easy_perform(session);
 
     fclose(fp);
 
     if (res != CURLE_OK || inject_error(filecache_error_etagcurl1)) {
-        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: curl_easy_perform is not CURLE_OK: %s", curl_easy_strerror(res));
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: retry_curl_easy_perform is not CURLE_OK: %s", curl_easy_strerror(res));
         goto finish;
     }
     else {
-        log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
+        log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: retry_curl_easy_perform succeeds (fd=%d)", fd);
 
         // Ensure that it's a 2xx response code.
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
@@ -856,7 +855,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             // Opening up into the abyss...adding a separate code for a specific error return. Where will it end?
             int curlerr = E_FC_CURLERR;
             if (response_code == 413) curlerr = E_FC_FILETOOLARGE;
-            g_set_error(gerr, curl_quark(), curlerr, "put_return_etag: curl_easy_perform error response %ld: ",
+            g_set_error(gerr, curl_quark(), curlerr, "put_return_etag: retry_curl_easy_perform error response %ld: ",
                 response_code);
             goto finish;
         }
@@ -958,7 +957,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // We err in put_return_etag on:
             // -- failure to get flock
             // -- failure on fstat of fd
-            // -- curl_easy_perform not CURL_OK
+            // -- retry_curl_easy_perform not CURL_OK
             // -- curl response code not between 200 and 300
             // -- failure to release flock
             if (tmpgerr) {

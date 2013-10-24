@@ -27,8 +27,10 @@
 
 #include <glib.h>
 #include <stdbool.h>
+#include <curl/curl.h>
 
 char *path_parent(const char *uri);
+int retry_curl_easy_perform(CURL *session);
 
 // For GError
 #ifndef G_DEFINE_QUARK
