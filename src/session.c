@@ -32,6 +32,7 @@
 #include <arpa/nameser.h>
 #include <resolv.h>
 #include <stdbool.h>
+#include <time.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -44,18 +45,20 @@ static pthread_key_t session_tsd_key;
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
+static char *filesystem_domain = NULL;
+static char *filesystem_port = NULL;
 
 const char *get_base_url(void) {
     return base_url;
 }
 
-int session_config_init(char *base, char *ca_cert, char *client_cert) {
+int session_config_init(char *base, char *ca_cert, char *client_cert, char *filesystem_domain_in, char *filesystem_port_in) {
     size_t base_len;
 
     assert(base);
 
     if (curl_global_init(CURL_GLOBAL_ALL)) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Failed to initialize libcurl.");
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_config_init: Failed to initialize libcurl.");
         return -1;
     }
 
@@ -73,11 +76,20 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
 
         // Repair p12 to point to pem for now.
         if (strcmp(client_certificate + strlen(client_certificate) - 4, ".p12") == 0) {
-            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "Remapping deprecated certificate path: %s", client_certificate);
+            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_config_init: Remapping deprecated certificate path: %s", client_certificate);
             strncpy(client_certificate + strlen(client_certificate) - 4, ".pem", 4);
         }
 
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using client certificate at path: %s", client_certificate);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_config_init: Using client certificate at path: %s", client_certificate);
+    }
+
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_config_init: Using filesystem domain and port: %s %s", filesystem_domain_in, filesystem_port_in);
+    if (filesystem_domain_in != NULL && filesystem_port_in != NULL) {
+        filesystem_domain = strdup(filesystem_domain_in);
+        filesystem_port = strdup(filesystem_port_in);
+    }
+    else {
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_config_init: Null filesystem domain or port: %s %s", filesystem_domain_in, filesystem_port_in);
     }
 
     return 0;
@@ -101,6 +113,31 @@ static void session_tsd_key_init(void) {
     pthread_key_create(&session_tsd_key, session_destroy);
 }
 
+/* We want to use the logging facility key=value to keep track of the 
+ * node ip address we use when we use the filesystem domain. This
+ * will help us know that we are accessing the nodes in a balanced way.
+ * (We access the filesystem nodes via a domain which resolves to many
+ * A records or IP addrs; our mechanism chooses one of those A records (IP addr).
+ * We know the address used because we capture the libcurl message
+ * "Trying <ip addr>...". Kind of clunky since the message can change. Do
+ * we have a better way?
+ */
+#define LOGSTRSZ 80
+static void print_ipaddr_pair(char *msg) {
+    char addr[LOGSTRSZ];
+    char *end;
+    // msg+9 takes us past "  Trying ". We assume the ip addr starts there.
+    strncpy(addr, msg + 9, LOGSTRSZ);
+    // end finds the first two dots after the ip addr. We put a zero there
+    // to turn the original string into just the IP addr.
+    end = strstr(addr, "..");
+    end[0] = '\0';
+    // We print the key=value pair.
+    // REVIEW: I'm not sure of the exact syntax of this key=value pair so
+    // that our logging facility detects and turns it into a stat.
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem node @ Domain=%s", addr);
+}
+
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
     if (type == CURLINFO_TEXT) {
         char *msg = malloc(size + 1);
@@ -108,7 +145,15 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
             strncpy(msg, data, size);
             msg[size] = '\0';
             if (msg[size - 1] == '\n') msg[size - 1] = '\0';
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
+            // We want to see the "Trying <ip addr> message, but the others only when in some
+            // level of debug
+            if (strstr(msg, "Trying")) {
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
+                print_ipaddr_pair(msg);
+            }
+            else {
+                log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
+            }
             free(msg);
         }
     }
@@ -286,11 +331,8 @@ static int construct_resolve_slist(CURL *session, bool force) {
     int count = 0;
     // result from function
     int res = -1;
-
-    // REVIEW: how do we want to pass in the domain name?
-    const char *filesystem_domain = "valhalla.onebox.panth.io"; // Obviously, need a new way to get this
-    // REVIEW: how do we want to pass in the port?
-    const char *port = "448";
+    // For srand
+    struct timespec ts;
 
     // If the list is still young, just return. The current list is still valid
     curtime = time(NULL);
@@ -305,6 +347,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
     // Free the current list
     curl_slist_free_all(resolve_slist);
+    resolve_slist = NULL;
     // Turn hints off
     memset(&hints, 0, sizeof(struct addrinfo));
     // By setting ai_family to 0, we allow both IPv4 and IPv6
@@ -314,10 +357,10 @@ static int construct_resolve_slist(CURL *session, bool force) {
     hints.ai_socktype = SOCK_STREAM;
 
     // get list from getaddrinfo
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calling getaddrinfo with %s %s", filesystem_domain, port);
-    res = getaddrinfo(filesystem_domain, port, &hints, &aihead);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calling getaddrinfo with %s %s", filesystem_domain, filesystem_port);
+    res = getaddrinfo(filesystem_domain, filesystem_port, &hints, &aihead);
     if(res) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d", res);
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)", res, gai_strerror(res));
         // This is an error. We do not set CURLOPT_RESOLVE, so libcurl will
         // do its default thing. If its call to getaddrinfo succeeds, the
         // first IP will be used (breaks load balancing).  If it fails as it does here,
@@ -345,7 +388,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
         strcat(ipstr, ":");
 
         // The port and colon come next.
-        strcat(ipstr, port);
+        strcat(ipstr, filesystem_port);
         strcat(ipstr, ":");
 
         // An IPv4 struct
@@ -391,7 +434,8 @@ static int construct_resolve_slist(CURL *session, bool force) {
     }
 
     // Randomize!
-    srand(time(NULL));
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    srand(ts.tv_nsec * ts.tv_sec);
     // Count is the number of addresses we processed above
     for (int idx = 0; idx < count; idx++) {
         bool found = false;
