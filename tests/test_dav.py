@@ -36,7 +36,7 @@ from pywebdav.server.fileauth import DAVAuthHandler
 #   LOG_LEVEL=debug [FUSEDAV_PATH=<path to fusedav binary>] trial <path to test_dav.py>
 
 log = logging.getLogger('test_dav')
-LOG_LEVEL = os.environ.get('LOG_LEVEL', 'debug')
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'error')
 
 if LOG_LEVEL == 'debug':
     log.setLevel(logging.DEBUG)
@@ -118,7 +118,7 @@ class DavServer:
         })
         handler = DAVAuthHandler
         handler._config = conf
-        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger().setLevel(logging.ERROR)
         server.runserver(directory=self.path, noauth=True, handler=handler, port=PYWEBDAV_PORT, host=PYWEBDAV_HOST)
 
 class TestDav(unittest.TestCase):
