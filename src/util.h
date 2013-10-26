@@ -27,7 +27,6 @@
 
 #include <glib.h>
 #include <stdbool.h>
-#include <curl/curl.h>
 
 char *path_parent(const char *uri);
 
