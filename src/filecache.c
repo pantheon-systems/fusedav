@@ -28,6 +28,7 @@
 #include <sys/file.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <curl/curl.h>
 
 #include "filecache.h"
 #include "statcache.h"
