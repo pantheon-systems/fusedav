@@ -33,6 +33,7 @@
 #include <resolv.h>
 #include <stdbool.h>
 #include <time.h>
+#include <ctype.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -287,6 +288,40 @@ struct sockaddr_storage {
 };
 */
 
+/* TODO: find a function which takes a string and passes back a boolean,
+ * true if the string is an IP address, false otherwise.
+ * We could copy the rather involved routines from libcurl's inet_pton.c
+ *  unsigned char dst[64];
+ *  Curl_inet_pton(AF_INET, filesystem_domain_in, dst);
+
+ * REVIEW:
+ * My assumptions:
+ * -- I assume the domain is either a correct IPv4, IPv6, or dotted-domain name
+ *    Meaning I don't need to check for incorrectness
+ * -- if it has a colon, it's an IPv6 address and not a domain
+ * -- if it has only decimal digits and dots, it's an IPv4 address and not a domain
+ * -- otherwise it's a domain
+ */
+static bool isdomain(char *filesystem_domain_in, const char *filesystem_port_in) {
+    if (filesystem_domain_in == NULL || filesystem_port_in == NULL) {
+        // Once we've installed our changes, this should not happen.
+        return false;
+    }
+    else if (strchr(filesystem_domain, ':')) {
+        // It's an IPv6 address
+        return false;
+    }
+    else
+    {
+        char *ch = filesystem_domain_in;
+        while (isdigit(*ch) || *ch == '.') ++ch;
+        // If we get to the end of the string and we've only seen decimal digits and dots,
+        // we assume it's an IPv4 address. Is it permissible to have a domain name
+        // with only decimal digits and dots?
+        if (ch == '\0') return false;
+        else return true;
+    }
+}
 
 /* Construct an slist for curl to use with opt CURLOPT_RESOLVE.
  * If our file system has several nodes, and a domain name which resolves
@@ -334,6 +369,11 @@ static int construct_resolve_slist(CURL *session, bool force) {
     int res = -1;
     // For srand
     struct timespec ts;
+
+    if (!isdomain(filesystem_domain, filesystem_port)) {
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Not using filesystem_domain");
+        return 0;
+    }
 
     // If the list is still young, just return. The current list is still valid
     curtime = time(NULL);
