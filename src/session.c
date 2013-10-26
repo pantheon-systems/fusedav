@@ -128,6 +128,7 @@ static void print_ipaddr_pair(char *msg) {
     char *end;
     // msg+9 takes us past "  Trying ". We assume the ip addr starts there.
     strncpy(addr, msg + 9, LOGSTRSZ);
+    addr[LOGSTRSZ - 1] = '\0'; // Just make sure it's null terminated
     // end finds the first two dots after the ip addr. We put a zero there
     // to turn the original string into just the IP addr.
     end = strstr(addr, "..");
@@ -385,6 +386,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
         // The domain comes first, followed by a colon per libcurl's requirement
         strncpy(ipstr, filesystem_domain, IPSTR_SZ);
+        ipstr[IPSTR_SZ - 1] = '\0'; // Just make sure it's null terminated
         strcat(ipstr, ":");
 
         // The port and colon come next.
