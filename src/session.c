@@ -34,6 +34,9 @@
 #include <stdbool.h>
 #include <time.h>
 #include <ctype.h>
+#include <errno.h>
+#include <arpa/inet.h>
+#include <Uri.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -53,8 +56,10 @@ const char *get_base_url(void) {
     return base_url;
 }
 
-int session_config_init(char *base, char *ca_cert, char *client_cert, char *filesystem_domain_in, char *filesystem_port_in) {
+int session_config_init(char *base, char *ca_cert, char *client_cert) {
     size_t base_len;
+    UriParserStateA state;
+    UriUriA uri;
 
     assert(base);
 
@@ -84,14 +89,20 @@ int session_config_init(char *base, char *ca_cert, char *client_cert, char *file
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_config_init: Using client certificate at path: %s", client_certificate);
     }
 
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_config_init: Using filesystem domain and port: %s %s", filesystem_domain_in, filesystem_port_in);
-    if (filesystem_domain_in != NULL && filesystem_port_in != NULL) {
-        filesystem_domain = strdup(filesystem_domain_in);
-        filesystem_port = strdup(filesystem_port_in);
+    state.uri = &uri;
+    if (uriParseUriA(&state, base) != URI_SUCCESS) {
+        /* Failure */
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse on: %s", base);
+        uriFreeUriMembersA(&uri);
+        // TODO Use gerror
+        return -1;
     }
-    else {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_config_init: Null filesystem domain or port: %s %s", filesystem_domain_in, filesystem_port_in);
-    }
+
+    filesystem_domain = strndup(uri.hostText.first, uri.hostText.afterLast - uri.hostText.first);
+    filesystem_port = strndup(uri.portText.first, uri.portText.afterLast - uri.portText.first);
+    uriFreeUriMembersA(&uri);
+    // JB TMP Make DEBUG
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: domain :: port: %s :: %s", filesystem_domain, filesystem_port);
 
     return 0;
 }
@@ -137,7 +148,7 @@ static void print_ipaddr_pair(char *msg) {
     // We print the key=value pair.
     // REVIEW: I'm not sure of the exact syntax of this key=value pair so
     // that our logging facility detects and turns it into a stat.
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem node @ Domain=%s", addr);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -225,103 +236,68 @@ finish:
 }
 
 /* For reference, keep the different sockaddr structs available for inspection
-
-struct addrinfo {
-    int              ai_flags;
-    int              ai_family;
-    int              ai_socktype;
-    int              ai_protocol;
-    socklen_t        ai_addrlen;
-    struct sockaddr *ai_addr;
-    char            *ai_canonname;
-    struct addrinfo *ai_next;
-};
-
-// All pointers to socket address structures are often cast to pointers
-// to this type before use in various functions and system calls:
-
-struct sockaddr {
-    unsigned short    sa_family;    // address family, AF_xxx
-    char              sa_data[14];  // 14 bytes of protocol address
-};
-
-
-// IPv4 AF_INET sockets:
-
-struct sockaddr_in {
-    short            sin_family;   // e.g. AF_INET, AF_INET6
-    unsigned short   sin_port;     // e.g. htons(3490)
-    struct in_addr   sin_addr;     // see struct in_addr, below
-    char             sin_zero[8];  // zero this if you want to
-};
-
-struct in_addr {
-    unsigned long s_addr;          // load with inet_pton()
-};
-
-
-// IPv6 AF_INET6 sockets:
-
-struct sockaddr_in6 {
-    u_int16_t       sin6_family;   // address family, AF_INET6
-    u_int16_t       sin6_port;     // port number, Network Byte Order
-    u_int32_t       sin6_flowinfo; // IPv6 flow information
-    struct in6_addr sin6_addr;     // IPv6 address
-    u_int32_t       sin6_scope_id; // Scope ID
-};
-
-struct in6_addr {
-    unsigned char   s6_addr[16];   // load with inet_pton()
-};
-
-
-// General socket address holding structure, big enough to hold either
-// struct sockaddr_in or struct sockaddr_in6 data:
-
-struct sockaddr_storage {
-    sa_family_t  ss_family;     // address family
-
-    // all this is padding, implementation specific, ignore it:
-    char      __ss_pad1[_SS_PAD1SIZE];
-    int64_t   __ss_align;
-    char      __ss_pad2[_SS_PAD2SIZE];
-};
-*/
-
-/* TODO: find a function which takes a string and passes back a boolean,
- * true if the string is an IP address, false otherwise.
- * We could copy the rather involved routines from libcurl's inet_pton.c
- *  unsigned char dst[64];
- *  Curl_inet_pton(AF_INET, filesystem_domain_in, dst);
-
- * REVIEW:
- * My assumptions:
- * -- I assume the domain is either a correct IPv4, IPv6, or dotted-domain name
- *    Meaning I don't need to check for incorrectness
- * -- if it has a colon, it's an IPv6 address and not a domain
- * -- if it has only decimal digits and dots, it's an IPv4 address and not a domain
- * -- otherwise it's a domain
+ * 
+ * struct addrinfo {
+ *     int              ai_flags;
+ *     int              ai_family;
+ *     int              ai_socktype;
+ *     int              ai_protocol;
+ *     socklen_t        ai_addrlen;
+ *     struct sockaddr *ai_addr;
+ *     char            *ai_canonname;
+ *     struct addrinfo *ai_next;
+ * };
+ * 
+ * // All pointers to socket address structures are often cast to pointers
+ * // to this type before use in various functions and system calls:
+ * 
+ * struct sockaddr {
+ *     unsigned short    sa_family;    // address family, AF_xxx
+ *     char              sa_data[14];  // 14 bytes of protocol address
+ * };
+ * 
+ * 
+ * // IPv4 AF_INET sockets:
+ * 
+ * struct sockaddr_in {
+ *     short            sin_family;   // e.g. AF_INET, AF_INET6
+ *     unsigned short   sin_port;     // e.g. htons(3490)
+ *     struct in_addr   sin_addr;     // see struct in_addr, below
+ *     char             sin_zero[8];  // zero this if you want to
+ * };
+ * 
+ * struct in_addr {
+ *     unsigned long s_addr;          // load with inet_pton()
+ * };
+ * 
+ * 
+ * // IPv6 AF_INET6 sockets:
+ * 
+ * struct sockaddr_in6 {
+ *     u_int16_t       sin6_family;   // address family, AF_INET6
+ *     u_int16_t       sin6_port;     // port number, Network Byte Order
+ *     u_int32_t       sin6_flowinfo; // IPv6 flow information
+ *     struct in6_addr sin6_addr;     // IPv6 address
+ *     u_int32_t       sin6_scope_id; // Scope ID
+ * };
+ * 
+ * struct in6_addr {
+ *     unsigned char   s6_addr[16];   // load with inet_pton()
+ * };
+ * 
+ * 
+ * // General socket address holding structure, big enough to hold either
+ * // struct sockaddr_in or struct sockaddr_in6 data:
+ * 
+ * struct sockaddr_storage {
+ *     sa_family_t  ss_family;     // address family
+ * 
+ *     // all this is padding, implementation specific, ignore it:
+ *     char      __ss_pad1[_SS_PAD1SIZE];
+ *     int64_t   __ss_align;
+ *     char      __ss_pad2[_SS_PAD2SIZE];
+ * };
  */
-static bool isdomain(char *filesystem_domain_in, const char *filesystem_port_in) {
-    if (filesystem_domain_in == NULL || filesystem_port_in == NULL) {
-        // Once we've installed our changes, this should not happen.
-        return false;
-    }
-    else if (strchr(filesystem_domain, ':')) {
-        // It's an IPv6 address
-        return false;
-    }
-    else
-    {
-        char *ch = filesystem_domain_in;
-        while (isdigit(*ch) || *ch == '.') ++ch;
-        // If we get to the end of the string and we've only seen decimal digits and dots,
-        // we assume it's an IPv4 address. Is it permissible to have a domain name
-        // with only decimal digits and dots?
-        if (ch == '\0') return false;
-        else return true;
-    }
-}
 
 /* Construct an slist for curl to use with opt CURLOPT_RESOLVE.
  * If our file system has several nodes, and a domain name which resolves
@@ -370,11 +346,6 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // For srand
     struct timespec ts;
 
-    if (!isdomain(filesystem_domain, filesystem_port)) {
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Not using filesystem_domain");
-        return 0;
-    }
-
     // If the list is still young, just return. The current list is still valid
     curtime = time(NULL);
     if (!force && curtime - prevtime < resolve_slist_timeout) {
@@ -415,14 +386,16 @@ static int construct_resolve_slist(CURL *session, bool force) {
      * The components of the address we need are in an array of chars or ints, so
      * we pull them out one by one and append them to the string we are building.
      * Ultimately, this string, per libcurl's CURLOPT_RESOLVE requirements,
-     * will be DOMAIN:PORT:IP-ADDRESS
+     * will be DOMAIN:PORT:IP-ADDRESS.
+     *
+     * If timeout has passed, we recreate the list and pass it in again to libcurl.
+     * However, if the previous connection is still good, libcurl will continue
+     * to use it in spite of the new order of addresses in the list. (This is good.)
      */
     for (ai = aihead; ai != NULL; ai = ai->ai_next) {
         // Holds the string we are constructing
         char ipstr[IPSTR_SZ];
-        // Each element in the address. An IPv4 address can have a string length
-        // of 3 (255.), so a size of 4 to hold the null
-        char octet[4];
+        char ipaddr[IPSTR_SZ];
 
         // The domain comes first, followed by a colon per libcurl's requirement
         strncpy(ipstr, filesystem_domain, IPSTR_SZ);
@@ -435,43 +408,28 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
         // An IPv4 struct
         if (ai->ai_family == AF_INET) {
-            /* The basic struct sockaddr gets overlaid with the IPv4 version
-             * struct sockaddr_in. The relevant field is a struct in_addr, which
-             * has a single field s_addr, which is a long. We treat that
-             * as 4 independent chars. Let's hope we don't change endianness!
-             * The structures are in the comment above this function.
-             */
-            struct sockaddr_in *ipv4_sockaddr = (struct sockaddr_in *)ai->ai_addr;
-            char *ex = (char *)&ipv4_sockaddr->sin_addr.s_addr;
-            // There are four elements to the IPv4 address (127.1.1.1)
-            for (int idx = 0; idx < 4; idx++) {
-                // dot between elements; skip a dot in front and rear.
-                if (idx != 0) strcat(ipstr, ".");
-                // Grab the element and append to the string
-                sprintf(octet, "%d", ex[idx]);
-                strcat(ipstr, octet);
+            if(!inet_ntop(ai->ai_family, &(((struct sockaddr_in *)ai->ai_addr)->sin_addr), ipaddr, IPSTR_SZ)) {
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET): %d %s", errno, strerror(errno));
+                continue;
             }
         }
         // An IPv6 struct
         else if (ai->ai_family == AF_INET6) {
-            // 2001:4801:7820:75:78c8:1542:ff10:a6cf
-            /* The basic struct sockaddr gets overlaid with the IPv6 version
-             * struct sockaddr_in6. The relevant field is an in6_addr, which
-             * has a single field s6_addr, which is a char array of size 16.
-             * Each address element is made up of two of these chars.
-             */
-            struct sockaddr_in6 *ipv6_sockaddr = (struct sockaddr_in6 *)ai->ai_addr;
-            for (int idx = 0; idx < 16; idx++) {
-                // Before the next pair of octets, put a dot. Avoid a colon at the start and end
-                // Concatenate 2 octets before putting in the colon
-                if (idx % 2 == 0 && idx != 0) strcat(ipstr, ":");
-                // Grab an item and append to string
-                sprintf(octet, "%02x", ipv6_sockaddr->sin6_addr.s6_addr[idx]);
-                strcat(ipstr, octet);
+            if(!inet_ntop(ai->ai_family, &(((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr), ipaddr, IPSTR_SZ)) {
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET6): %d %s", errno, strerror(errno));
+                continue;
             }
         }
+        else {
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ai_family not IPv4 nor IVv6 [%d]", ai->ai_family);
+            continue;
+        }
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ipaddr is %s", ipaddr);
+
         // Store the string in our "pre" list. It will be in sorted order. We randomize later
-        strcpy(prelist[count++], ipstr);
+        strcpy(prelist[count], ipstr);
+        strcat(prelist[count], ipaddr);
+        ++count;
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]", prelist[count - 1], count - 1);
     }
 
