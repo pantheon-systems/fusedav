@@ -343,6 +343,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr) {
     GError *tmpgerr = NULL;
     const char *log_prefix;
+
     // default log_level: LOG_NOTICE
     config->log_level = 5;
     
@@ -363,8 +364,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0 
-        || inject_error(config_error_sessioninit)) {
+    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0 || inject_error(config_error_sessioninit)) {
         g_set_error(gerr, fusedav_config_quark(), ENETDOWN, "Failed to initialize session system.");
         return;
     }
