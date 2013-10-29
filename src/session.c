@@ -92,17 +92,15 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     state.uri = &uri;
     if (uriParseUriA(&state, base) != URI_SUCCESS) {
         /* Failure */
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse on: %s", base);
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse on: %s", base);
         uriFreeUriMembersA(&uri);
-        // TODO Use gerror
         return -1;
     }
 
     filesystem_domain = strndup(uri.hostText.first, uri.hostText.afterLast - uri.hostText.first);
     filesystem_port = strndup(uri.portText.first, uri.portText.afterLast - uri.portText.first);
     uriFreeUriMembersA(&uri);
-    // JB TMP Make DEBUG
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: domain :: port: %s :: %s", filesystem_domain, filesystem_port);
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_config_init: domain :: port: %s :: %s", filesystem_domain, filesystem_port);
 
     return 0;
 }
