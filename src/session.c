@@ -283,18 +283,6 @@ finish:
  *     unsigned char   s6_addr[16];   // load with inet_pton()
  * };
  * 
- * 
- * // General socket address holding structure, big enough to hold either
- * // struct sockaddr_in or struct sockaddr_in6 data:
- * 
- * struct sockaddr_storage {
- *     sa_family_t  ss_family;     // address family
- * 
- *     // all this is padding, implementation specific, ignore it:
- *     char      __ss_pad1[_SS_PAD1SIZE];
- *     int64_t   __ss_align;
- *     char      __ss_pad2[_SS_PAD2SIZE];
- * };
  */
 
 /* Construct an slist for curl to use with opt CURLOPT_RESOLVE.
@@ -542,7 +530,7 @@ CURL *session_request_init(const char *path, const char *query_string) {
      * the load across the multiple nodes.
      */
     if (error) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: Error creating randomized resolve slist; libcurl can survive but with load imbalance");
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_request_init: Error creating randomized resolve slist; libcurl can survive but with load imbalance");
     }
 
     return session;
