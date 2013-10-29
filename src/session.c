@@ -144,8 +144,6 @@ static void print_ipaddr_pair(char *msg) {
     end = strstr(addr, "..");
     end[0] = '\0';
     // We print the key=value pair.
-    // REVIEW: I'm not sure of the exact syntax of this key=value pair so
-    // that our logging facility detects and turns it into a stat.
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
 }
 
@@ -453,7 +451,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
             if (prelist[jdx][0] != '\0') ++iter;
         }
         // This should only happen if I'm a chucklehead
-        if (!found) log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "construct_resolve_slist: construct_resolve_slist: Item for resolve_slist not found::Count:idx:pick:iter %d:%d:%d:%d", count, idx, pick, iter);
+        if (!found) log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Item for resolve_slist not found::Count:idx:pick:iter %d:%d:%d:%d", count, idx, pick, iter);
     }
 
     // If we got here, we are golden!

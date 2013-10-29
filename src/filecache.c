@@ -425,7 +425,7 @@ static void get_fresh_fd(filecache_t *cache,
     curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_response_to_fd);
 
     do {
-        res = retry_curl_easy_perform(session);
+        res = curl_easy_perform(session); // don't call retry_curl_easy_perform, since we have own retry mechanism here
         if (res != CURLE_OK || inject_error(filecache_error_freshcurl1)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: retry_curl_easy_perform is not CURLE_OK: %s",
                 curl_easy_strerror(res));
