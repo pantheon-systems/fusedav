@@ -73,8 +73,6 @@ static struct fuse_opt fusedav_opts[] = {
     FUSEDAV_OPT("grace",                          grace, true),
     FUSEDAV_OPT("singlethread",                   singlethread, true),
     FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
-    FUSEDAV_OPT("filesystem_domain=%s",           filesystem_domain, 0),
-    FUSEDAV_OPT("filesystem_port=%s",             filesystem_port, 0),
     // Authenticate
     FUSEDAV_OPT("username=%s",                    username, 0),
     FUSEDAV_OPT("password=%s",                    password, 0),
@@ -137,8 +135,6 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "        -o grace\n"
                 "        -o singlethread\n"
                 "        -o cache_uri=STRING\n"
-                "        -o filesystem_domain=STRING\n"
-                "        -o filesystem_port=STRING\n"
                 "    Authenticating with the server:\n"
                 "        -o username=STRING\n"
                 "        -o password=STRING\n"
@@ -178,8 +174,6 @@ static void print_config(struct fusedav_config *config) {
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "grace %d", config->grace);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "singlethread %d", config->singlethread);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "cache_uri %s", config->cache_uri);
-    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "filesystem_domain %s", config->filesystem_domain);
-    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "filesystem_port %s", config->filesystem_port);
 
     // We could set these two, but they are NULL by default, so don't know how to put that in the config file
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "username %s", config->username);
@@ -208,8 +202,6 @@ progressive_propfind=true
 refresh_dir_for_file_stat=true
 grace=true
 cache_uri=http://50.57.148.118:10061/fusedav-peer-cache
-filesystem_domain=valhalla.chios.panth.io
-filesystem_port=448
 
 ca_certificate=/etc/pki/tls/certs/ca-bundle.crt
 client_certificate=/srv/bindings/6f7a106722f74cc7bd96d4d06785ed78/certs/binding.pem
@@ -254,8 +246,6 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, ca_certificate, STRING),
         keytuple(fusedav, client_certificate, STRING),
         keytuple(fusedav, cache_path, STRING),
-        keytuple(fusedav, filesystem_domain, STRING),
-        keytuple(fusedav, filesystem_port, STRING),
         keytuple(fusedav, run_as_uid, STRING),
         keytuple(fusedav, run_as_gid, STRING),
         keytuple(fusedav, log_level, INT),

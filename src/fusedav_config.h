@@ -42,8 +42,6 @@ struct fusedav_config {
     bool singlethread;
     bool nodaemon;
     char *cache_uri;
-    char *filesystem_domain;
-    char *filesystem_port;
     char *username;
     char *password;
     char *ca_certificate;
