@@ -36,7 +36,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <arpa/inet.h>
-#include <Uri.h>
+#include <uriparser/Uri.h>
 
 #include "log.h"
 #include "log_sections.h"
