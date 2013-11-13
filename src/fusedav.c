@@ -645,7 +645,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
     
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
-        res = curl_easy_perform(session);
+        res = retry_curl_easy_perform(session);
         if(res != CURLE_OK || inject_error(fusedav_error_cunlinkcurl)) {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: DELETE failed: %s\n", curl_easy_strerror(res));
             return;
@@ -731,7 +731,7 @@ static int dav_rmdir(const char *path) {
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
 
-    res = curl_easy_perform(session);
+    res = retry_curl_easy_perform(session);
     if (res != CURLE_OK) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): DELETE failed: %s", path, curl_easy_strerror(res));
         return -ENOENT;
@@ -774,7 +774,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
 
-    res = curl_easy_perform(session);
+    res = retry_curl_easy_perform(session);
     if (res != CURLE_OK) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): MKCOL failed: %s", path, curl_easy_strerror(res));
         return -ENOENT;
@@ -854,7 +854,7 @@ static int dav_rename(const char *from, const char *to) {
      */
     // Do the server side move
 
-    res = curl_easy_perform(session);
+    res = retry_curl_easy_perform(session);
     if(res != CURLE_OK) {
         long response_code;
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);

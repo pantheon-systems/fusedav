@@ -27,5 +27,6 @@ CURL *session_get_handle(void);
 void session_config_free(void);
 const char *get_base_url(void);
 char *escape_except_slashes(CURL *session, const char *path);
+int retry_curl_easy_perform(CURL *session);
 
 #endif
