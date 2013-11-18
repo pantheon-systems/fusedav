@@ -46,6 +46,13 @@
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
 
+// This will be the list of randomized addresses we pass to curl
+// Make it thread-local so each session gets its own.
+// Assuming that session==thread, but that's what we assume for session_tsd_key above
+// Using __thread in preference to pthread_once mechanism; seems simpler and less
+// error-prone
+static __thread struct curl_slist *resolve_slist = NULL;
+
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
@@ -115,6 +122,8 @@ static void session_destroy(void *s) {
     CURL *session = s;
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL session.");
     assert(s);
+    // Free the resolve_slist before exiting the session
+    curl_slist_free_all(resolve_slist);
     curl_easy_cleanup(session);
 }
 
@@ -157,7 +166,7 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
             // We want to see the "Trying <ip addr> message, but the others only when in some
             // level of debug
             if (strstr(msg, "Trying")) {
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
+                log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
                 print_ipaddr_pair(msg);
             }
             else {
@@ -302,9 +311,6 @@ finish:
 #define MAX_NODES 32
 
 static int construct_resolve_slist(CURL *session, bool force) {
-    // This will be the list of randomized addresses we pass to curl
-    // static so it persists between calls
-    static struct curl_slist *resolve_slist = NULL;
     // This will hold the ip addresses in the order they get returned from gethostaddr; later to be randomized
     // for resolve_slist.
     char prelist[MAX_NODES][IPSTR_SZ];
@@ -332,9 +338,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
     // If the list is still young, just return. The current list is still valid
     curtime = time(NULL);
-    if (!force && curtime - prevtime < resolve_slist_timeout) {
+    if (!force && resolve_slist && (curtime - prevtime < resolve_slist_timeout)) {
         res = 0; // Not an error
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: timeout has not elapsed; return with current slist");
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: timeout has not elapsed; return with current slist (%p)", resolve_slist);
         // goto finish so we can still set CURLOPT_RESOLVE; otherwise libcurl will do its default thing
         goto finish;
     }
@@ -464,6 +470,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // on its own, and return the unsorted, unbalanced, first entry.
 
     finish:
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Sending resolve_slist (%p) to curl", resolve_slist);
     curl_easy_setopt(session, CURLOPT_RESOLVE, resolve_slist);
 
     return res;
