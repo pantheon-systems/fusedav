@@ -327,7 +327,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     const time_t resolve_slist_timeout = 30; 
     // Keep a timer; at periodic intervals we reset the resolve_slist.
     // static so it persists between calls
-    static time_t prevtime = 0;
+    static __thread time_t prevtime = 0;
     time_t curtime;
     // number of ip addresses returned from getaddrinfo
     int count = 0;
