@@ -77,7 +77,8 @@ DAV_CLIENT = 'fusedav'
 FUSEDAV_CONFIG = 'nodaemon,noexec,atomic_o_trunc,hard_remove,umask=0007,cache_path='
 
 PYWEBDAV_HOST = '127.0.0.1'
-PYWEBDAV_PORT = '8008'
+# don't quote the port number
+PYWEBDAV_PORT = 8008
 
 class DavServer:
     def __init__(self, path):
@@ -94,6 +95,9 @@ class DavServer:
     def run(self):
         sys.stdout = open(os.devnull, 'w')
         sys.stderr = open(os.devnull, 'w')
+        # we do pass this conf, via handler, to runserver, but it only
+        # checks the following variables: lockemulation, mimecheck, and baseurl
+        # (https://code.google.com/p/pywebdav/source/browse/pywebdav/server/server.py?r=f28ef270d4a1475be0c1b16243c9752034db533f)
         conf = server.setupDummyConfig(**{
             'verbose': False,
             'directory': self.path,
@@ -115,7 +119,7 @@ class DavServer:
         handler = DAVAuthHandler
         handler._config = conf
         logging.getLogger().setLevel(logging.ERROR)
-        server.runserver(directory=self.path, noauth=True, handler=handler)
+        server.runserver(directory=self.path, noauth=True, handler=handler, port=PYWEBDAV_PORT, host=PYWEBDAV_HOST)
 
 class TestDav(unittest.TestCase):
     files_root = None
