@@ -1379,11 +1379,13 @@ static int dav_utimens(__unused const char *path, const struct timespec tv[2]) {
         return -ENOENT;
     }
     
-    // Set the appropriate times. tv[0] is the last access, use it for access and change
-    // tv[1] is last modified.
+    // Set the appropriate times. tv[0] is the last access, use it for access
+    // tv[1] is last modified; use for ctime and mtime. This is not quite correct
+    // for ctime (when file attributes changed), but since we don't chown or chmod,
+    // having them the same is probably the most appropriate.
     // Then return to the stat cache
     value->st.st_atime = tv[0].tv_sec;
-    value->st.st_ctime = tv[0].tv_sec;
+    value->st.st_ctime = tv[1].tv_sec;
     value->st.st_mtime = tv[1].tv_sec;
     stat_cache_value_set(config->cache, path, value, &gerr);
     if (gerr) {
