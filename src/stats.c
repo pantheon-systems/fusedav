@@ -22,6 +22,10 @@
 
 #include <fuse.h>
 #include <jemalloc/jemalloc.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <time.h>
 
 #include "util.h"
 #include "log.h"
@@ -29,15 +33,31 @@
 #include "stats.h"
 #include "statcache.h"
 
+#define MAX_LINE_LEN 256
+
 struct statistics stats;
 
-static void malloc_stats_output(__unused void *cbopaque, const char *s) {
-    char stripped[256];
+static void print_line(bool log, int fd, unsigned int log_level, unsigned int section, char *output) {
+    if (log) {
+        log_print(log_level, section, output);
+    }
+    else {
+        if (fd >= 0) {
+            strncat(output, "\n", MAX_LINE_LEN);
+            write(fd, output, strlen(output));
+        }
+    }
+}
+
+static void malloc_stats_output(void *cbopaque, const char *s) {
+    char stripped[MAX_LINE_LEN];
     size_t len;
+    int fd = (long)cbopaque;
+    bool log = (fd < 0);
 
     len = strlen(s);
-    if (len >= 256) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "Skipping line over 256 characters.");
+    if (len >= MAX_LINE_LEN) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "Skipping line over %d characters.", MAX_LINE_LEN);
         return;
     }
 
@@ -53,79 +73,191 @@ static void malloc_stats_output(__unused void *cbopaque, const char *s) {
     if (stripped[len - 1] == '\n')
         stripped[len - 1] = '\0';
     stripped[len] = '\0';
+    
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, stripped);
 
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "%s", stripped);
+}
+
+void dump_stats(bool log, const char *cache_path) {
+    char str[MAX_LINE_LEN];
+    int fd = -1;
+    
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: Enter %s :: logging -- %d", cache_path, log);
+    if (!log) {
+        char stat_path[80];
+        const char *stats_dir = "stats";
+        char fname[80];
+        time_t tm;
+        
+        // If we have no cache path, we can't write, so punt
+        if (!cache_path) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "dump_stats: error: no cache path to create stats directory");
+            return;
+        }
+        
+        /* We're being pretty loose with errors here. If we fail, the job just
+         * doesn't get done, but the damage is minimal.
+         */
+        snprintf(stat_path, 80, "%s/%s", cache_path, stats_dir);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: directory %s", stat_path);
+        if (mkdir(stat_path, 0770) == -1) {
+            if (errno != EEXIST) {
+                // just return on error. If we can't create the directory, there's no point
+                // in trying to write the data
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "dump_stats: error creating stats directory %s :: %d %s", stat_path, errno, strerror(errno));
+                return;
+            }
+        }
+        // Create a filename whose name is the date
+        tm = time(NULL);
+        strftime(fname, 80, "%Y%m%d%H%M%S", gmtime(&tm));
+        strncat(stat_path, "/", 80);
+        strncat(stat_path, fname, 80);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: file %s", stat_path);
+        fd = open(stat_path, O_CREAT | O_WRONLY | O_TRUNC);
+        if (fd < 0) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "dump_stats: error creating stats file %s :: %d %s", stat_path, errno, strerror(errno));
+            return; // If we can't open the file, no point in continuing
+        }
+    }
+    
+    mallctl("prof.dump", NULL, NULL, NULL, 0);
+
+    snprintf(str, MAX_LINE_LEN, "Caught SIGUSR2. Printing status.");
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    
+    // Use cbopaque to pass in fd, if there is one
+    malloc_stats_print(malloc_stats_output, (void *)(long)fd, "");
+
+    snprintf(str, MAX_LINE_LEN, "Operations:");
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  chmod:       %u", FETCH(dav_chmod));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  chown:       %u", FETCH(dav_chown));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  create:      %u", FETCH(dav_create));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  fsync:       %u", FETCH(dav_fsync));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  flush:       %u", FETCH(dav_flush));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  ftruncate:   %u", FETCH(dav_ftruncate));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  fgetattr:    %u", FETCH(dav_fgetattr));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  getattr:     %u", FETCH(dav_getattr));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  mkdir:       %u", FETCH(dav_mkdir));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  mknod:       %u", FETCH(dav_mknod));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  open:        %u", FETCH(dav_open));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  read:        %u", FETCH(dav_read));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  readdir:     %u", FETCH(dav_readdir));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  release:     %u", FETCH(dav_release));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  rename:      %u", FETCH(dav_rename));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  rmdir:       %u", FETCH(dav_rmdir));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  unlink:      %u", FETCH(dav_unlink));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  utimens:     %u", FETCH(dav_utimens));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  write:       %u", FETCH(dav_write));
+
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  cache_file:  %u", FETCH(filecache_cache_file));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  pdata_set:   %u", FETCH(filecache_pdata_set));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  create_file: %u", FETCH(filecache_create_file));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  pdata_get:   %u", FETCH(filecache_pdata_get));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  fresh_fd:    %u", FETCH(filecache_fresh_fd));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  open:        %u", FETCH(filecache_open));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  read:        %u", FETCH(filecache_read));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  write:       %u", FETCH(filecache_write));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  close:       %u", FETCH(filecache_close));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  return_etag: %u", FETCH(filecache_return_etag));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  sync:        %u", FETCH(filecache_sync));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  truncate:    %u", FETCH(filecache_truncate));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  delete:      %u", FETCH(filecache_delete));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  pdata_move:  %u", FETCH(filecache_pdata_move));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  orphans:     %u", FETCH(filecache_orphans));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  cleanup:     %u", FETCH(filecache_cleanup));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_fd:      %u", FETCH(filecache_get_fd));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  set_error:   %u", FETCH(filecache_set_error));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  forensic:    %u", FETCH(filecache_forensic_haven));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  init:        %u", FETCH(filecache_init));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  path2key:    %u", FETCH(filecache_path2key));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  key2path:    %u", FETCH(filecache_key2path));
+
+    snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  local_gen:   %u", FETCH(statcache_local_gen));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  path2key:    %u", FETCH(statcache_path2key));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  key2path:    %u", FETCH(statcache_key2path));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  open:        %u", FETCH(statcache_open));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  close:       %u", FETCH(statcache_close));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  value_get:   %u", FETCH(statcache_value_get));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  updated_ch:  %u", FETCH(statcache_updated_ch));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  read_updated:%u", FETCH(statcache_read_updated));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  value_set:   %u", FETCH(statcache_value_set));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  delete:      %u", FETCH(statcache_delete));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  del_parent:  %u", FETCH(statcache_del_parent));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  iter_free:   %u", FETCH(statcache_iter_free));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  iter_init:   %u", FETCH(statcache_iter_init));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  iter_current:%u", FETCH(statcache_iter_current));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  iter_next:   %u", FETCH(statcache_iter_next));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  enumerate:   %u", FETCH(statcache_enumerate));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  has_child:   %u", FETCH(statcache_has_child));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  delete_older:%u", FETCH(statcache_delete_older));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  prune:       %u", FETCH(statcache_prune));
+    print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
 }
 
 void print_stats(void) {
-    mallctl("prof.dump", NULL, NULL, NULL, 0);
-
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "Caught SIGUSR2. Printing status.");
-    malloc_stats_print(malloc_stats_output, NULL, "");
-
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "Operations:");
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  chmod:       %u", FETCH(dav_chmod));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  chown:       %u", FETCH(dav_chown));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  create:      %u", FETCH(dav_create));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  fsync:       %u", FETCH(dav_fsync));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  flush:       %u", FETCH(dav_flush));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  ftruncate:   %u", FETCH(dav_ftruncate));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  fgetattr:    %u", FETCH(dav_fgetattr));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  getattr:     %u", FETCH(dav_getattr));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  mkdir:       %u", FETCH(dav_mkdir));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  mknod:       %u", FETCH(dav_mknod));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  open:        %u", FETCH(dav_open));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  read:        %u", FETCH(dav_read));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  readdir:     %u", FETCH(dav_readdir));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  release:     %u", FETCH(dav_release));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  rename:      %u", FETCH(dav_rename));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  rmdir:       %u", FETCH(dav_rmdir));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  unlink:      %u", FETCH(dav_unlink));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  utimens:     %u", FETCH(dav_utimens));
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "  write:       %u", FETCH(dav_write));
-
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "Filecache Operations:");
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  cache_file:  %u", FETCH(filecache_cache_file));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  pdata_set:   %u", FETCH(filecache_pdata_set));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  create_file: %u", FETCH(filecache_create_file));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  pdata_get:   %u", FETCH(filecache_pdata_get));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  fresh_fd:    %u", FETCH(filecache_fresh_fd));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  open:        %u", FETCH(filecache_open));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  read:        %u", FETCH(filecache_read));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  write:       %u", FETCH(filecache_write));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  close:       %u", FETCH(filecache_close));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  return_etag: %u", FETCH(filecache_return_etag));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  sync:        %u", FETCH(filecache_sync));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  truncate:    %u", FETCH(filecache_truncate));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  delete:      %u", FETCH(filecache_delete));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  pdata_move:  %u", FETCH(filecache_pdata_move));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  orphans:     %u", FETCH(filecache_orphans));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  cleanup:     %u", FETCH(filecache_cleanup));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  get_fd:      %u", FETCH(filecache_get_fd));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  set_error:   %u", FETCH(filecache_set_error));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  forensic:    %u", FETCH(filecache_forensic_haven));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  init:        %u", FETCH(filecache_init));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  path2key:    %u", FETCH(filecache_path2key));
-    log_print(LOG_NOTICE, SECTION_FILECACHE_OUTPUT, "  key2path:    %u", FETCH(filecache_key2path));
-
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "Stat Cache Operations:");
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  local_gen:   %u", FETCH(statcache_local_gen));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  path2key:    %u", FETCH(statcache_path2key));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  key2path:    %u", FETCH(statcache_key2path));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  open:        %u", FETCH(statcache_open));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  close:       %u", FETCH(statcache_close));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  value_get:   %u", FETCH(statcache_value_get));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  updated_ch:  %u", FETCH(statcache_updated_ch));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  read_updated:%u", FETCH(statcache_read_updated));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  value_set:   %u", FETCH(statcache_value_set));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete:      %u", FETCH(statcache_delete));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  del_parent:  %u", FETCH(statcache_del_parent));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_free:   %u", FETCH(statcache_iter_free));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_init:   %u", FETCH(statcache_iter_init));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_current:%u", FETCH(statcache_iter_current));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  iter_next:   %u", FETCH(statcache_iter_next));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  enumerate:   %u", FETCH(statcache_enumerate));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  has_child:   %u", FETCH(statcache_has_child));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  delete_older:%u", FETCH(statcache_delete_older));
-    log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "  prune:       %u", FETCH(statcache_prune));
+    bool log = true;
+    dump_stats(log, NULL);
 }
+

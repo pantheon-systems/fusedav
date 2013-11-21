@@ -19,6 +19,8 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
+#include <stdbool.h>
+
 struct statistics {
     unsigned dav_chmod;
     unsigned dav_chown;
@@ -90,5 +92,6 @@ extern struct statistics stats;
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
 
 void print_stats(void);
+void dump_stats(bool log, const char *cache_path);
 
 #endif
