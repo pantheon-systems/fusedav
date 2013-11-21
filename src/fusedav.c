@@ -1355,10 +1355,43 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     return 0;
 }
 
-static int dav_utimens(__unused const char *path, __unused const struct timespec tv[2]) {
+static int dav_utimens(__unused const char *path, const struct timespec tv[2]) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+    struct stat_cache_value *value;
+    GError *gerr = NULL;
+    int ret = 0;
+    
     BUMP(dav_utimens);
-    log_print(LOG_INFO, SECTION_FUSEDAV_DEFAULT, "CALLBACK: dav_utimens(%s)", path);
-    return 0;
+    log_print(LOG_INFO, SECTION_FUSEDAV_DEFAULT, "CALLBACK: dav_utimens(%s) %lu:%lu", path, tv[0].tv_sec, tv[1].tv_sec);
+
+    // Get the entry from the stat cache. If there's an error or the
+    // entry is missing, punt.
+    value = stat_cache_value_get(config->cache, path, true, &gerr);
+    if (gerr) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_utimens: error on stat_cache_value_get on %s", path);
+        return processed_gerror("dav_utimens:", path, &gerr);
+    }
+    
+    // value == NULL means not found in statcache. This is not an error from the
+    // point of view of the statcache, so double check here before dereferencing
+    if (value == NULL) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_utimens: pdata NULL on %s", path);
+        return -ENOENT;
+    }
+    
+    // Set the appropriate times. tv[0] is the last access, use it for access and change
+    // tv[1] is last modified.
+    // Then return to the stat cache
+    value->st.st_atime = tv[0].tv_sec;
+    value->st.st_ctime = tv[0].tv_sec;
+    value->st.st_mtime = tv[1].tv_sec;
+    stat_cache_value_set(config->cache, path, value, &gerr);
+    if (gerr) {
+        ret = processed_gerror("dav_utimens: ", path, &gerr);
+    }
+
+    free(value);
+    return ret;
 }
 
 static int dav_chmod(__unused const char *path, __unused mode_t mode) {
@@ -1632,13 +1665,17 @@ finish:
         fuse_unmount(mountpoint, ch);
     }
 
-    if (mountpoint != NULL)
+    if (mountpoint != NULL) {
         free(mountpoint);
+    }
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounted.");
 
-    if (fuse)
+    dump_stats(false, config.cache_path); // false means output to file, not to log
+
+    if (fuse) {
         fuse_destroy(fuse);
+    }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Destroyed FUSE object.");
 
     fuse_opt_free_args(&args);

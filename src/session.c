@@ -318,7 +318,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // timeout interval in seconds
     // If this interval has passed, we recreate the list. Within this interval,
     // we reuse the current list.
-    const time_t resolve_slist_timeout = 30; 
+    const time_t resolve_slist_timeout = 30;
     // Keep a timer; at periodic intervals we reset the resolve_slist.
     // static so it persists between calls
     static time_t prevtime = 0;
