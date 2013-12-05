@@ -56,6 +56,8 @@ void *inject_error_mechanism(void *ptr);
 #define fusedav_error_cunlinkisdir 5
 #define fusedav_error_cunlinksession 6
 #define fusedav_error_cunlinkcurl 7
+#define fusedav_error_propfindsession 8
+#define fusedav_error_propfindhead 9
 
 #define filecache_error_init1 10
 #define filecache_error_init2 11
@@ -118,12 +120,16 @@ void *inject_error_mechanism(void *ptr);
 #define config_error_uri 73
 #define config_error_load 74
 
-#define signal_error_action1 80
-#define signal_error_action2 81
-#define signal_error_action3 82
+#define props_error_spropfindsession 80
+#define props_error_spropfindcurl 81
+#define props_error_spropfindunkcode 82
+
+#define signal_error_action1 90
+#define signal_error_action2 91
+#define signal_error_action3 92
 
 // Make sure it is higher than the highest value above
-#define inject_error_count 90
+#define inject_error_count 100
 // last slot is no error
 #define no_error inject_error_count - 1
 

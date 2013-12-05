@@ -78,15 +78,19 @@ static void malloc_stats_output(void *cbopaque, const char *s) {
 
 }
 
+#define STAT_PATH_SIZE 80
 void dump_stats(bool log, const char *cache_path) {
     char str[MAX_LINE_LEN];
     int fd = -1;
     
     log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: Enter %s :: logging -- %d", cache_path, log);
     if (!log) {
-        char stat_path[80];
+        /* The path to the cache stats directory looks like this. 
+         * /srv/bindings/11e4ce335f8240a88b4d5c88a00af3c8/cache/stats/20131203211358
+         */
+        char stat_path[STAT_PATH_SIZE];
         const char *stats_dir = "stats";
-        char fname[80];
+        char fname[STAT_PATH_SIZE];
         time_t tm;
         
         // If we have no cache path, we can't write, so punt
@@ -98,7 +102,7 @@ void dump_stats(bool log, const char *cache_path) {
         /* We're being pretty loose with errors here. If we fail, the job just
          * doesn't get done, but the damage is minimal.
          */
-        snprintf(stat_path, 80, "%s/%s", cache_path, stats_dir);
+        snprintf(stat_path, STAT_PATH_SIZE, "%s/%s", cache_path, stats_dir);
         log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: directory %s", stat_path);
         if (mkdir(stat_path, 0770) == -1) {
             if (errno != EEXIST) {
@@ -110,9 +114,12 @@ void dump_stats(bool log, const char *cache_path) {
         }
         // Create a filename whose name is the date
         tm = time(NULL);
-        strftime(fname, 80, "%Y%m%d%H%M%S", gmtime(&tm));
-        strncat(stat_path, "/", 80);
-        strncat(stat_path, fname, 80);
+        strftime(fname, STAT_PATH_SIZE, "%Y%m%d%H%M%S", gmtime(&tm));
+        // the 'n' in strncat is the max number of chars it will append.
+        // So subtract the current size of stat_path from its max size to use as 'n' in strncat
+        strncat(stat_path, "/", STAT_PATH_SIZE - strlen(stat_path) - 1);
+        strncat(stat_path, fname, STAT_PATH_SIZE - strlen(stat_path) - 1);
+        stat_path[STAT_PATH_SIZE - 1] = '\0'; // Just make sure it's null terminated
         log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: file %s", stat_path);
         fd = open(stat_path, O_CREAT | O_WRONLY | O_TRUNC);
         if (fd < 0) {
@@ -213,6 +220,7 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  path2key:    %u", FETCH(filecache_path2key));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  key2path:    %u", FETCH(filecache_key2path));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
 
     snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);

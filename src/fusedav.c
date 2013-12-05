@@ -97,13 +97,19 @@ static int simple_propfind_with_redirect(
         int depth,
         time_t last_updated,
         props_result_callback result_callback,
-        void *userdata) {
+        void *userdata,
+        GError **gerr) {
 
+    GError *subgerr = NULL;
     int ret;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
 
-    ret = simple_propfind(path, depth, last_updated, result_callback, userdata);
+    ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "simple_propfind_with_redirect: ");
+        return ret;
+    }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Done with (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
 
@@ -149,11 +155,12 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done with fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
 }
 
-static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st, unsigned long status_code) {
-    //int is_dir = 0;
+static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st,
+    unsigned long status_code, GError **gerr) {
+
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    GError *gerr = NULL ;
+    GError *subgerr = NULL ;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -164,36 +171,78 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     if (status_code == 410) {
         struct stat_cache_value *existing;
 
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
         // @TODO Figure out a cleaner way to avoid overwriting newer entrie.
-        existing = stat_cache_value_get(config->cache, path, true, &gerr);
-        if (gerr) {
-            processed_gerror("getdir_propfind_callback: ", path, &gerr);
+        existing = stat_cache_value_get(config->cache, path, true, &subgerr);
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
             return;
         }
 
-        // If there is an existing cache item, and it matches or post-dates
-        // the deletion event, ignore it.
-        if (existing && existing->updated >= st.st_ctime) {
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Ignoring outdated removal of path: %s", path);
+        /* If existing indicates that the file existed at a later timestamp than this delete, keep it. */
+        /* By returning early, here and other places below, we are not updating the updated field on the file,
+         * which stat_cache_value_set below would do; we leave that value as it was. We are not seeing a
+         * creation for this file in the propfind, so it would not be correct to update the updated value as if we had.
+         */
+        if (existing && existing->updated > st.st_ctime) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Ignoring outdated removal of path: %s (%lu %lu)", path, existing->updated, st.st_ctime);
             free(existing);
             return;
         }
+        /* If existing indicates that the file existed at the same timestamp as this delete,
+         * we don't know which to honor. So query the server to see if it exists there and
+         * use that.
+         */
+        else if (existing && existing->updated == st.st_ctime) {
+            CURL *session;
+            int response_code;
+            int res;
 
+            if (!(session = session_request_init(path, NULL)) || inject_error(fusedav_error_propfindsession)) {
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
+                return;
+            }
+
+            curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "HEAD");
+
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "getdir_propfind_callback: calling HEAD on %s", path);
+            res = retry_curl_easy_perform(session);
+            if(res != CURLE_OK || inject_error(fusedav_error_propfindhead)) {
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: HEAD failed: %s\n", curl_easy_strerror(res));
+                return;
+            }
+            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+
+            if (response_code >= 200 && response_code < 300) {
+                // We're not deleting since it exists; jump out!
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "getdir_propfind_callback: file exists: %s", path);
+                return;
+            }
+            else if (response_code > 400) {
+                // fall through to delete
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "getdir_propfind_callback: file doesn't exist: %s", path);
+            }
+            else {
+                // On error, prefer retaining a file which should be deleted over deleting a file which should be retained
+                g_set_error(gerr, fusedav_quark(), EINVAL, "getdir_propfind_callback(%s): HEAD returns unexpected response from curl %d", path, response_code);
+                return;
+            }
+        }
+
+        // 17 is just a random sentinel in case existing doesn't exist
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Removing path: %s (%lu %lu)", path, existing ? existing->updated : 17, st.st_ctime);
         free(existing);
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Removing path: %s", path);
-        stat_cache_delete(config->cache, path, &gerr);
-        // @TODO call processed_gerror here because gerr begins here, and is not passed back.
-        // But this is not really the right place to call processed_gerror
-        if (gerr) {
-            processed_gerror("getdir_propfind_callback: ", path, &gerr);
+        stat_cache_delete(config->cache, path, &subgerr);
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
             return;
         }
-        //stat_cache_prune(config->cache);
     }
     else {
-        stat_cache_value_set(config->cache, path, &value, &gerr);
-        if (gerr) {
-            processed_gerror("getdir_propfind_callback: ", path, &gerr);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: CREATE %s (%lu)", path, status_code);
+        stat_cache_value_set(config->cache, path, &value, &subgerr);
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
             return;
         }
     }
@@ -228,16 +277,22 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         }
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
 
-        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, getdir_propfind_callback, NULL);
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, 
+            getdir_propfind_callback, NULL, &tmpgerr);
         // On true error, we set an error and return, avoiding the complete PROPFIND.
         // On sucess we avoid the complete PROPFIND
         // On ESTALE, we do a complete PROPFIND
+        // If error is injected, it falls through to final else
         if (propfind_result == 0 && !inject_error(fusedav_error_updatepropfind1)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND success");
             needs_update = false;
         }
         else if (propfind_result == -ESTALE && !inject_error(fusedav_error_updatepropfind1)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND Precondition Failed.");
+        }
+        else if (tmpgerr) { // if injecting errors, process this error in preference to fusedav_error_updatepropfind1
+            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            return;
         }
         else {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: progressive propfind errored: ");
@@ -252,13 +307,20 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         // Up log level to NOTICE temporarily to get reports in the logs
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
         timestamp = time(NULL);
+        // min_generation gets value here
         min_generation = stat_cache_get_local_generation();
-        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL);
-        if (propfind_result < 0 || inject_error(fusedav_error_updatepropfind2)) {
+        // getdir_propfind_callback calls stat_cache_value_set, which makes local_generation one higher than min_generation
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL, &tmpgerr);
+        if (tmpgerr) {
+            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            return;
+        }
+        else if (propfind_result < 0 || inject_error(fusedav_error_updatepropfind2)) {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: Complete PROPFIND failed on %s", path);
             return;
         }
 
+        // All files in propfind list will have local_generation > min_generation and will not be subject to deletion
         stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -343,7 +405,7 @@ static int dav_readdir(
 }
 
 static void getattr_propfind_callback(__unused void *userdata, const char *path, struct stat st,
-        unsigned long status_code) {
+        unsigned long status_code, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     GError *tmpgerr = NULL;
@@ -357,7 +419,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         stat_cache_delete(config->cache, path, &tmpgerr);
         if (tmpgerr) {
             log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
-            g_clear_error(&tmpgerr);
+            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
             return;
         }
     }
@@ -366,7 +428,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         stat_cache_value_set(config->cache, path, &value, &tmpgerr);
         if (tmpgerr) {
             log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
-            g_clear_error(&tmpgerr);
+            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
             return;
         }
     }
@@ -469,7 +531,14 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         GError *subgerr = NULL;
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
         // @TODO: Armor this better if the server returns unexpected data.
-        if (simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL) < 0) {
+        ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL, &subgerr);
+        if (subgerr) {
+            // Delete from cache on error; ignore errors from stat_cache_delete since we already have one
+            g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
+            stat_cache_delete(config->cache, path, NULL);
+            goto fail;
+        }
+        else if (ret < 0) { // We don't ever expect ret < 0 but no gerr
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
                 g_propagate_prefixed_error(gerr, subgerr, "get_stat: PROPFIND failed");
