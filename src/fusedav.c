@@ -197,34 +197,39 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             CURL *session;
             int response_code;
             int res;
+            bool temporary_handle = true;
 
-            if (!(session = session_request_init(path, NULL)) || inject_error(fusedav_error_propfindsession)) {
+            if (!(session = session_request_init(path, NULL, temporary_handle)) || inject_error(fusedav_error_propfindsession)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
                 return;
             }
 
-            curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "HEAD");
+            // This makes a "HEAD" call
+            curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "getdir_propfind_callback: calling HEAD on %s", path);
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
             res = retry_curl_easy_perform(session);
             if(res != CURLE_OK || inject_error(fusedav_error_propfindhead)) {
-                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: HEAD failed: %s\n", curl_easy_strerror(res));
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: saw 410; HEAD failed: %s\n", curl_easy_strerror(res));
                 return;
             }
             curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
 
-            if (response_code >= 200 && response_code < 300) {
-                // We're not deleting since it exists; jump out!
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "getdir_propfind_callback: file exists: %s", path);
-                return;
-            }
-            else if (response_code > 400) {
+            session_temp_handle_destroy(session);
+            if (response_code >= 400 && response_code < 500) {
                 // fall through to delete
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "getdir_propfind_callback: file doesn't exist: %s", path);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: saw 410; executed HEAD; file doesn't exist: %s", path);
             }
             else {
-                // On error, prefer retaining a file which should be deleted over deleting a file which should be retained
-                g_set_error(gerr, fusedav_quark(), EINVAL, "getdir_propfind_callback(%s): HEAD returns unexpected response from curl %d", path, response_code);
+                // REVIEW: if the file exists, do we want to call stat_cache_value_set and update its ->updated value?
+                if (response_code >= 200 && response_code < 300) {
+                    // We're not deleting since it exists; jump out!
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: saw 410; executed HEAD; file exists: %s", path);
+                }
+                else {
+                    // On error, prefer retaining a file which should be deleted over deleting a file which should be retained
+                    g_set_error(gerr, fusedav_quark(), EINVAL, "getdir_propfind_callback(%s): saw 410; HEAD returns unexpected response from curl %d", path, response_code);
+                }
                 return;
             }
         }
@@ -706,7 +711,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
     if (do_unlink) {
         CURL *session;
-        if (!(session = session_request_init(path, NULL)) || inject_error(fusedav_error_cunlinksession)) {
+        if (!(session = session_request_init(path, NULL, false)) || inject_error(fusedav_error_cunlinksession)) {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
             return;
         }
@@ -793,7 +798,7 @@ static int dav_rmdir(const char *path) {
         return -ENOTEMPTY;
     }
 
-    if (!(session = session_request_init(fn, NULL))) {
+    if (!(session = session_request_init(fn, NULL, false))) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
         return -ENETDOWN;
     }
@@ -836,7 +841,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     snprintf(fn, sizeof(fn), "%s/", path);
 
-    if (!(session = session_request_init(fn, NULL))) {
+    if (!(session = session_request_init(fn, NULL, false))) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
         return -ENETDOWN;
     }
@@ -899,7 +904,7 @@ static int dav_rename(const char *from, const char *to) {
         from = fn;
     }
 
-    if (!(session = session_request_init(from, NULL))) {
+    if (!(session = session_request_init(from, NULL, false))) {
         log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
         goto finish;
     }

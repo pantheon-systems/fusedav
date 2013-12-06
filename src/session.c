@@ -153,7 +153,7 @@ static void print_ipaddr_pair(char *msg) {
     end = strstr(addr, "..");
     end[0] = '\0';
     // We print the key=value pair.
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -191,6 +191,21 @@ CURL *session_get_handle(void) {
     pthread_setspecific(session_tsd_key, session);
 
     return session;
+}
+
+// get a temporary handles
+static CURL *session_get_temp_handle(void) {
+    CURL *session;
+
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening temporary cURL session.");
+    session = curl_easy_init();
+
+    return session;
+}
+
+void session_temp_handle_destroy(CURL *session) {
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
+    if (session) curl_easy_cleanup(session);
 }
 
 // Return value should be freed using curl_free().
@@ -476,14 +491,24 @@ static int construct_resolve_slist(CURL *session, bool force) {
     return res;
 }
 
-CURL *session_request_init(const char *path, const char *query_string) {
+CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
     int error;
     bool force = false;
 
-    session = session_get_handle();
+    if (temporary_handle) {
+        session = session_get_temp_handle();
+    }
+    else {
+        session = session_get_handle();
+    }
+
+    if (!session) {
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: session handle NULL.");
+        return NULL;
+    }
 
     curl_easy_reset(session);
     curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
