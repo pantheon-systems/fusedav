@@ -122,7 +122,9 @@ void *inject_error_mechanism(void *ptr);
 
 #define props_error_spropfindsession 80
 #define props_error_spropfindcurl 81
-#define props_error_spropfindunkcode 82
+#define props_error_spropfindstatefailure 82
+#define props_error_spropfindxmlparse 83
+#define props_error_spropfindunkcode 84
 
 #define signal_error_action1 90
 #define signal_error_action2 91

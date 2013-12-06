@@ -371,13 +371,13 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     // injected error props_error_spropfindunkcode will fall through to the else clause
     if (response_code == 207 && !inject_error(props_error_spropfindunkcode)) {
         // Finalize parsing.
-        if (state.failure || inject_error(props_error_spropfindcurl)) {
+        if (state.failure || inject_error(props_error_spropfindstatefailure)) {
             log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
             g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
             goto finish;
         }
 
-        if (XML_Parse(parser, NULL, 0, 1) == 0 || inject_error(props_error_spropfindcurl)) {
+        if (XML_Parse(parser, NULL, 0, 1) == 0 || inject_error(props_error_spropfindxmlparse)) {
             int error_code = XML_GetErrorCode(parser);
             g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
             goto finish;
