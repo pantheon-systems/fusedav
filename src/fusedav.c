@@ -166,12 +166,12 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: %s (%lu)", path, status_code);
+    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: %s (%lu)", path, status_code);
 
     if (status_code == 410) {
         struct stat_cache_value *existing;
 
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
         // @TODO Figure out a cleaner way to avoid overwriting newer entrie.
         existing = stat_cache_value_get(config->cache, path, true, &subgerr);
         if (subgerr) {
@@ -185,7 +185,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
          * creation for this file in the propfind, so it would not be correct to update the updated value as if we had.
          */
         if (existing && existing->updated > st.st_ctime) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Ignoring outdated removal of path: %s (%lu %lu)", path, existing->updated, st.st_ctime);
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "Ignoring outdated removal of path: %s (%lu %lu)", path, existing->updated, st.st_ctime);
             free(existing);
             return;
         }
@@ -207,7 +207,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             // This makes a "HEAD" call
             curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
             res = retry_curl_easy_perform(session);
             if(res != CURLE_OK || inject_error(fusedav_error_propfindhead)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: saw 410; HEAD failed: %s\n", curl_easy_strerror(res));
@@ -218,13 +218,13 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             session_temp_handle_destroy(session);
             if (response_code >= 400 && response_code < 500) {
                 // fall through to delete
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: saw 410; executed HEAD; file doesn't exist: %s", path);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; executed HEAD; file doesn't exist: %s", path);
             }
             else {
                 // REVIEW: if the file exists, do we want to call stat_cache_value_set and update its ->updated value?
                 if (response_code >= 200 && response_code < 300) {
                     // We're not deleting since it exists; jump out!
-                    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: saw 410; executed HEAD; file exists: %s", path);
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; executed HEAD; file exists: %s", path);
                 }
                 else {
                     // On error, prefer retaining a file which should be deleted over deleting a file which should be retained
@@ -235,7 +235,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         }
 
         // 17 is just a random sentinel in case existing doesn't exist
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Removing path: %s (%lu %lu)", path, existing ? existing->updated : 17, st.st_ctime);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "Removing path: %s (%lu %lu)", path, existing ? existing->updated : 17, st.st_ctime);
         free(existing);
         stat_cache_delete(config->cache, path, &subgerr);
         if (subgerr) {
@@ -244,7 +244,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         }
     }
     else {
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getdir_propfind_callback: CREATE %s (%lu)", path, status_code);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: CREATE %s (%lu)", path, status_code);
         stat_cache_value_set(config->cache, path, &value, &subgerr);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
@@ -661,7 +661,12 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     common_getattr(path, stbuf, info, &gerr);
     if (gerr) {
         // Don't print error on ENOENT; that's what get_attr is for
-        if (gerr->code == ENOENT) return -gerr->code;
+        if (gerr->code == ENOENT) {
+            int res = -gerr->code;
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "dav_fgetattr(%s): ENOENT", path?path:"null path");
+            g_clear_error(&gerr);
+            return res;
+        }
         return processed_gerror("dav_fgetattr: ", path, &gerr);
     }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s)", path?path:"null path");
@@ -680,6 +685,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         // Don't print error on ENOENT; that's what get_attr is for
         if (gerr->code == ENOENT) {
             int res = -gerr->code;
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "dav_getattr(%s): ENOENT", path?path:"null path");
             g_clear_error(&gerr);
             return res;
         }
