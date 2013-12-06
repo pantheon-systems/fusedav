@@ -92,6 +92,7 @@ void dump_stats(bool log, const char *cache_path) {
         const char *stats_dir = "stats";
         char fname[STAT_PATH_SIZE];
         time_t tm;
+        unsigned int stat_path_remaining;
         
         // If we have no cache path, we can't write, so punt
         if (!cache_path) {
@@ -117,8 +118,20 @@ void dump_stats(bool log, const char *cache_path) {
         strftime(fname, STAT_PATH_SIZE, "%Y%m%d%H%M%S", gmtime(&tm));
         // the 'n' in strncat is the max number of chars it will append.
         // So subtract the current size of stat_path from its max size to use as 'n' in strncat
-        strncat(stat_path, "/", STAT_PATH_SIZE - strlen(stat_path) - 1);
-        strncat(stat_path, fname, STAT_PATH_SIZE - strlen(stat_path) - 1);
+        stat_path_remaining = STAT_PATH_SIZE - strlen(stat_path) - 1;
+        if (stat_path_remaining < 2) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "dump_stats: a. not enough space left in stat_path  %s", stat_path);
+        }
+        else {
+            strncat(stat_path, "/", stat_path_remaining);
+        }
+        stat_path_remaining = STAT_PATH_SIZE - strlen(stat_path) - 1;
+        if (stat_path_remaining < (strlen(fname) + 1)) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "dump_stats: b. not enough space left in stat_path  %s", stat_path);
+        }
+        else {
+            strncat(stat_path, fname, stat_path_remaining);
+        }
         stat_path[STAT_PATH_SIZE - 1] = '\0'; // Just make sure it's null terminated
         log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: file %s", stat_path);
         fd = open(stat_path, O_CREAT | O_WRONLY | O_TRUNC);
