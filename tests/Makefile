@@ -61,21 +61,33 @@ trunc = $(testdir)/trunc
 # number of write iters'trunc-flags=-v -r 8 -f 8 -s 32 -i 16'
 trunc-flags =
 
+# to run this test by invoking the Makefile, add binding=<binding id> to the make line
+# make -f /opt/fusedav/tests/Makefile binding=1b8e45be7c264476bbbc6f65610b3490 run-timestamptest
+# otherwise the test will exit prematurely
+binding=none
+# you must be in a binding's file directory to run this test.
+# you must have at leasst 2 bindings in this environment
+# you must give the binding id of the second binding
+timestamptest = $(testdir)/timestamp.sh
+# usage on Makefile line: 'timestamptest-flags=-i64 -b <other binding>'
+# -i is iters; default is 64
+timestamptest-flags=-b $(binding)
+
 all: run-stress-tests
 
 # restrict unit tests to low-resource tests
-run-unit-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-iozone-unit
+run-unit-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-timestamptest run-iozone-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress
+run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-timestamptest run-iozone-stress
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
 # run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
-run-continual-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
+run-continual-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-timestamptest run-iozone-continual
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-short-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc
+run-short-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-timestamptest 
 
 # run this to test the system under error. To do this:
 # use the fusedav client inject error mechanism. Use the writewrite_test 
@@ -157,4 +169,7 @@ run-trunc: $(trunc)
 
 $(trunc): $(testdir)/trunc.c
 	cc $< -std=c99 -g -o $@
+
+run-timestamptest:
+	$(timestamptest) $(timestamptest-flags)
 

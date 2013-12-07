@@ -114,10 +114,46 @@ static void writewrite_test(void) {
     fdx = tdx;
 }
 
+/* Recreate the kinds of errors we might see on propfinds */
+static void propfind_test(void) {
+    int fdx = no_error;
+    int tdx;
+    struct error_name_s {
+        int error;
+        const char *name;
+    };
+    struct error_name_s error_name[] = {
+        {fusedav_error_propfindsession, "fusedav_error_propfindsession"},
+        {fusedav_error_propfindhead, "fusedav_error_propfindhead"},
+        {props_error_spropfindsession, "props_error_spropfindsession"},
+        {props_error_spropfindcurl, "props_error_spropfindcurl"},
+        {props_error_spropfindstatefailure, "props_error_spropfindstatefailure"},
+        {props_error_spropfindxmlparse, "props_error_spropfindxmlparse"},
+        {props_error_spropfindunkcode, "props_error_spropfindunkcode"},
+        {-1, ""}, // sentinel
+    };
+
+    for (int idx = 0; error_name[idx].error != -1; idx++) {
+        const char *name;
+        tdx = error_name[idx].error;
+        name = error_name[idx].name;
+
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
+
+        // Make the new location true but turn off the locations for the old location.
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+        sleep(17);
+    }
+}
+
 /* test conditions which might or might not land a file in the forensic haven 
  * This is a pretty extensive test of the filecache errors, but not a complete one.
  */
 static void filecache_forensic_haven_test(void) {
+    int fdx = no_error;
+    int tdx;
     struct error_name_s {
         int error;
         const char *name;
@@ -164,8 +200,6 @@ static void filecache_forensic_haven_test(void) {
     
     for (int idx = 0; error_name[idx].error != -1; idx++) {
         const char *name;
-        int fdx = no_error;
-        int tdx;
         tdx = error_name[idx].error;
         name = error_name[idx].name;
             
@@ -208,12 +242,14 @@ void *inject_error_mechanism(void *ptr) {
     if (being_tested) {
         rand_test();
         filecache_forensic_haven_test();
+        writewrite_test();
     }
 
     // Generate errors forever!
     while (true) {
-        writewrite_test();
+        propfind_test();
     }
+
     free(inject_error_list);
     return NULL;
 }
