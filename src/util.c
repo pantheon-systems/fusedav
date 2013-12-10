@@ -117,7 +117,6 @@ static void writewrite_test(void) {
 /* Recreate the kinds of errors we might see on propfinds */
 static void propfind_test(void) {
     int fdx = no_error;
-    int tdx;
     struct error_name_s {
         int error;
         const char *name;
@@ -135,6 +134,8 @@ static void propfind_test(void) {
 
     for (int idx = 0; error_name[idx].error != -1; idx++) {
         const char *name;
+        int tdx;
+
         tdx = error_name[idx].error;
         name = error_name[idx].name;
 
@@ -153,7 +154,6 @@ static void propfind_test(void) {
  */
 static void filecache_forensic_haven_test(void) {
     int fdx = no_error;
-    int tdx;
     struct error_name_s {
         int error;
         const char *name;
@@ -200,6 +200,8 @@ static void filecache_forensic_haven_test(void) {
     
     for (int idx = 0; error_name[idx].error != -1; idx++) {
         const char *name;
+        int tdx;
+
         tdx = error_name[idx].error;
         name = error_name[idx].name;
             
