@@ -199,6 +199,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             int res;
             bool temporary_handle = true;
 
+            free(existing);
+
             if (!(session = session_request_init(path, NULL, temporary_handle)) || inject_error(fusedav_error_propfindsession)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
                 return;
@@ -234,9 +236,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             }
         }
 
-        // 17 is just a random sentinel in case existing doesn't exist
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "Removing path: %s (%lu %lu)", path, existing ? existing->updated : 17, st.st_ctime);
-        free(existing);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "Removing path: %s", path);
         stat_cache_delete(config->cache, path, &subgerr);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
