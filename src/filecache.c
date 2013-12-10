@@ -391,7 +391,7 @@ static void get_fresh_fd(filecache_t *cache,
         goto finish;
     }
 
-    session = session_request_init(path, NULL);
+    session = session_request_init(path, NULL, false);
     if (!session || inject_error(filecache_error_freshsession)) {
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET");
         goto finish;
@@ -823,7 +823,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "put_return_etag: file size %d", st.st_size);
 
-    session = session_request_init(path, NULL);
+    session = session_request_init(path, NULL, false);
 
     fp = fdopen(dup(fd), "r");
 

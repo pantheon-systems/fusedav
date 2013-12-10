@@ -35,6 +35,9 @@
 #include "session.h"
 #include "util.h"
 
+// GError mechanisms
+static G_DEFINE_QUARK(PROP, props)
+
 struct response_state {
     char path[PATH_MAX];
     unsigned long status_code;
@@ -211,13 +214,17 @@ static void endElement(void *userData, const XML_Char *name) {
     else if (strcmp(name, "DAV:getlastmodified") == 0) {
         state->rstate.st.st_mtime = curl_getdate(state->estate.current_data, NULL);
         state->rstate.st.st_atime = state->rstate.st.st_mtime;
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "DAV:getlastmodified: mtime: %lu", state->rstate.st.st_mtime);
     }
     else if (strcmp(name, "DAV:creationdate") == 0) {
         struct tm t;
         strptime(state->estate.current_data, "%FT%H:%M:%S%z", &t);
         state->rstate.st.st_ctime = mktime(&t);
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "DAV:creationdate: %s (ctime: %lu)", state->estate.current_data, state->rstate.st.st_ctime);
     }
     else if (strcmp(name, "DAV:response") == 0) {
+        GError *subgerr = NULL;
+
         // Default to a normal file if it's not explicitly a directory.
         if (state->rstate.st.st_mode & S_IFDIR) {
             state->rstate.st.st_mode |= 0770;
@@ -247,7 +254,12 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.st.st_gid = getgid();
 
         log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "endElement: Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
-        state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code);
+        state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code, &subgerr);
+        if (subgerr) {
+            // There's no mechanism to pass gerr back from endElement, so just print here
+            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "endElement: Error from callback (%d : %s)", subgerr->code, subgerr->message);
+            // Fall through, we still want to reset response state
+        }
 
         // Reset response state.
         memset(&state->rstate, 0, sizeof(struct response_state));
@@ -289,7 +301,8 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     return real_size;
 }
 
-int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results, void *userdata) {
+int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results, 
+        void *userdata, GError **gerr) {
     // Local variables for cURL.
     CURL *session;
     struct curl_slist *slist = NULL;
@@ -308,7 +321,11 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (last_updated > 0) {
         asprintf(&query_string, "changes_since=%lu", last_updated);
     }
-    session = session_request_init(path, query_string);
+    session = session_request_init(path, query_string, false);
+    if (!session || inject_error(props_error_spropfindsession)) {
+        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
+        return ret;
+    }
     free(query_string);
 
     // Set a blank initial state, except for the callback.
@@ -343,39 +360,49 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
     res = curl_easy_perform(session);
 
-    if (res != CURLE_OK) {
+    if (res != CURLE_OK || inject_error(props_error_spropfindcurl)) {
         log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s", last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res));
+        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: curl_easy_perform error %s.", curl_easy_strerror(res));
         goto finish;
     }
 
     curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
 
-    if (response_code == 207) {
+    // injected error props_error_spropfindunkcode will fall through to the else clause
+    if (response_code == 207 && !inject_error(props_error_spropfindunkcode)) {
         // Finalize parsing.
-        if (state.failure) {
+        if (state.failure || inject_error(props_error_spropfindstatefailure)) {
             log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
+            g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
             goto finish;
         }
 
-        if (XML_Parse(parser, NULL, 0, 1) == 0) {
+        if (XML_Parse(parser, NULL, 0, 1) == 0 || inject_error(props_error_spropfindxmlparse)) {
             int error_code = XML_GetErrorCode(parser);
-            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+            g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+            goto finish;
         }
         else {
             log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: Finished final parsing on the PROPFIND response.");
         }
     }
-    else if (response_code == 404) {
+    else if (response_code == 404 && !inject_error(props_error_spropfindunkcode)) {
+        GError *subgerr = NULL;
         // Tell the callback that the item is gone.
         memset(&state.rstate, 0, sizeof(struct response_state));
-        state.callback(state.userdata, path, state.rstate.st, 410);
+        state.callback(state.userdata, path, state.rstate.st, 410, &subgerr);
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "simple_propfind: ");
+            goto finish;
+        }
     }
-    else if (response_code == 412) {
+    else if (response_code == 412 && !inject_error(props_error_spropfindunkcode)) {
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: 412 response, ESTALE.");
         ret = -ESTALE;
         goto finish;
     }
     else {
-        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed with response code: %u", last_updated > 0 ? "progressive" : "complete", response_code);
+        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: (%s) PROPFIND failed with response code: %lu", last_updated > 0 ? "progressive" : "complete", response_code);
         goto finish;
     }
 

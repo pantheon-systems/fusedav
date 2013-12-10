@@ -856,7 +856,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                 else {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
+                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
                     stat_cache_delete(cache, path, NULL);
                 }
                 free(parentpath);

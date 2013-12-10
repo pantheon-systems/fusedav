@@ -19,14 +19,16 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
+#include <stdbool.h>
 #include <curl/curl.h>
 
 int session_config_init(char *base, char *ca_cert, char *client_cert);
-CURL *session_request_init(const char *path, const char *query_string);
+CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle);
 CURL *session_get_handle(void);
 void session_config_free(void);
 const char *get_base_url(void);
 char *escape_except_slashes(CURL *session, const char *path);
 int retry_curl_easy_perform(CURL *session);
+void session_temp_handle_destroy(CURL *session);
 
 #endif
