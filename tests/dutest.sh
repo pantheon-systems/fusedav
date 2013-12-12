@@ -70,8 +70,12 @@ do
         elif [[ "$name" == readwhatwaswritten ]]
         then
             pass=$(( pass + 1 ))
+        elif [[ "$name" == a ]]
+        then
+            pass=$(( pass + 1 ))
         else 
             fail=$(( fail + 1 ))
+            echo "Size was 0; name is $name"
         fi
     else
         pass=$(( pass + 1 ))
