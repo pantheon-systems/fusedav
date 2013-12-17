@@ -73,7 +73,7 @@ static bool use_saint_mode(void) {
 
 static void set_saint_mode(void) {
     struct timespec now;
-    log_print(LOG_WARNING, SECTION_FUSEDAV_DEFAULT, "Using saint mode for %lu seconds.", SAINT_MODE_DURATION);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Using saint mode for %lu seconds.", SAINT_MODE_DURATION);
     clock_gettime(CLOCK_MONOTONIC, &now);
     pthread_mutex_lock(&last_failure_mutex);
     last_failure = now.tv_sec;
@@ -280,7 +280,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
             return;
         }
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
 
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, 
             getdir_propfind_callback, NULL, &tmpgerr);
@@ -589,7 +589,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
                 g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
                 goto fail;
             }
-            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "get_stat: Attempting recovery with grace from error %s on path %s.", subgerr->message, path);
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "get_stat: Attempting recovery with grace from error %s on path %s.", subgerr->message, path);
             g_clear_error(&subgerr);
             set_saint_mode();
         }
