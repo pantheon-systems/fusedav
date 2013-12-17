@@ -357,7 +357,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
     // Perform the request and parse the response.
-    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
+    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).", last_updated > 0 ? "progressive" : "complete", last_updated);
     res = curl_easy_perform(session);
 
     if (res != CURLE_OK || inject_error(props_error_spropfindcurl)) {
