@@ -280,7 +280,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
             return;
         }
-        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
 
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, 
             getdir_propfind_callback, NULL, &tmpgerr);
@@ -310,7 +310,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         unsigned long min_generation;
 
         // Up log level to NOTICE temporarily to get reports in the logs
-        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
         timestamp = time(NULL);
         // min_generation gets value here
         min_generation = stat_cache_get_local_generation();
@@ -334,7 +334,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
     }
 
     // Mark the directory contents as updated.
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Marking directory %s as updated at timestamp %lu.", path, timestamp);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Marking directory %s as updated at timestamp %lu.", path, timestamp);
     stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");

@@ -86,11 +86,13 @@ void log_init(unsigned int log_level, const char *log_level_by_section, const ch
     }
 }
 
+#define max_msg_sz 80
 int log_print(unsigned int log_level, unsigned int section, const char *format, ...) {
     int ret = 0;
     va_list ap;
     char *formatwithtid;
     unsigned int local_log_level = global_log_level;
+    char msg[max_msg_sz - 1];
 
     // If the section verbosity is not 0 for this section, use it as the verbosity level;
     // otherwise, just use the global_log_level
@@ -100,9 +102,10 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
 
     if (log_level <= local_log_level) {
         va_start(ap, format);
-        asprintf(&formatwithtid, "[%s] [tid=%lu] [bid=%s] %s%s", PACKAGE_VERSION, syscall(SYS_gettid), log_prefix_abbrev, errlevel[log_level], format);
+        ret = vsnprintf(msg, max_msg_sz, format, ap);
+        asprintf(&formatwithtid, "[%s] [tid=%lu] [bid=%s] %s", PACKAGE_VERSION, syscall(SYS_gettid), log_prefix_abbrev, errlevel[log_level]);
         assert(formatwithtid);
-        ret = sd_journal_printv(log_level, formatwithtid, ap);
+        ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg, log_level);
         free(formatwithtid);
         va_end(ap);
     }
