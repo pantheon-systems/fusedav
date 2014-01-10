@@ -30,6 +30,9 @@
 #include "util.h"
 #include "session.h"
 
+// The size of the name of what we call this instance of fusedav, e.g. binding id
+#define INSTANCE_ID_SIZE 32
+
 // @TODO: These changes assume that we will ensure that there is a new fusedav
 // available before the corresponding changes to titan go into effect. We can
 // tolerate this new fusedav running on old titan, but we cannot tolerate updating
@@ -107,6 +110,7 @@ static struct fuse_opt fusedav_opts[] = {
 
 // We need to access dav_oper since it is accessed globally in fusedav_opt_proc
 extern struct fuse_operations dav_oper;
+static char instance_identifier[INSTANCE_ID_SIZE + 1];
 
 static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
     struct fusedav_config *config = data;
@@ -372,9 +376,17 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     // Set log levels. We use get_base_url for the log message, so this call needs to follow
     // session_config_init, where base_url is set
     // @TODO when new titan rolls out, just pass in config->log_prefix
-    if (config->log_prefix) log_prefix = config->log_prefix;
-    else log_prefix = get_base_url();
-    log_init(config->log_level, config->log_level_by_section, log_prefix);
+    if (config->log_prefix) {
+        log_prefix = config->log_prefix;
+        // Assume that the log_prefix is the thing which identifies this instance of fusedav, e.g. binding id
+        strncpy(instance_identifier, log_prefix, INSTANCE_ID_SIZE);
+    }
+    else {
+        log_prefix = get_base_url();
+        // If we don't have a log prefix, we don't have an instance identifier
+        instance_identifier[0] = '\0'; // We don't have an instance identifier
+    }
+    log_init(config->log_level, config->log_level_by_section, log_prefix, get_base_url());
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
     if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {
@@ -399,3 +411,6 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     }
 }
 
+char *get_instance_identifier(void) {
+    return instance_identifier;
+}

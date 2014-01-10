@@ -37,6 +37,7 @@
 #include "util.h"
 #include "stats.h"
 #include "session.h"
+#include "fusedav_config.h"
 
 #define REFRESH_INTERVAL 3
 #define CACHE_FILE_ENTROPY 20
@@ -117,6 +118,22 @@ static char *path2key(const char *path) {
     return key;
 }
 
+struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...) {
+    va_list ap;
+    if (logging(log_level, section)) {
+        char *instance_identifier = NULL;
+        char msg[81] = {0};
+        slist = curl_slist_append(slist, "Log-To-Journal: true");
+        asprintf(&instance_identifier, "Instance-Identifier: %s", get_instance_identifier());
+        slist = curl_slist_append(slist, instance_identifier);
+        free(instance_identifier);
+        va_start(ap, format);
+        vsnprintf(msg, 80, format, ap);
+        log_print(log_level, section, msg);
+        va_end(ap);
+    }
+    return slist;
+}
 // creates a new cache file
 static void new_cache_file(const char *cache_path, char *cache_file_path, fd_t *fd, GError **gerr) {
     char entropy[CACHE_FILE_ENTROPY + 1];
@@ -404,6 +421,7 @@ static void get_fresh_fd(filecache_t *cache,
         asprintf(&header, "If-None-Match: %s", pdata->etag);
         slist = curl_slist_append(slist, header);
         free(header);
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_id: %s", path);
         curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
     }
 
@@ -427,7 +445,7 @@ static void get_fresh_fd(filecache_t *cache,
     do {
         res = curl_easy_perform(session); // don't call retry_curl_easy_perform, since we have own retry mechanism here
         if (res != CURLE_OK || inject_error(filecache_error_freshcurl1)) {
-            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: retry_curl_easy_perform is not CURLE_OK: %s",
+            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: curl_easy_perform is not CURLE_OK: %s",
                 curl_easy_strerror(res));
             goto finish;
         }
@@ -799,6 +817,7 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     CURL *session;
     CURLcode res;
+    struct curl_slist *slist = NULL;
     struct stat st;
     long response_code;
     FILE *fp;
@@ -831,6 +850,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
     curl_easy_setopt(session, CURLOPT_INFILESIZE, st.st_size);
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
+
+    slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
 
     // Set a header capture path.
     etag[0] = '\0';
@@ -865,6 +886,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "PUT returns etag: %s", etag);
 
 finish:
+    if (slist) curl_slist_free_all(slist);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "put_return_etag: releasing exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_UN) || inject_error(filecache_error_etagflock2)) {

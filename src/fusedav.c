@@ -280,7 +280,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
             return;
         }
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
 
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, 
             getdir_propfind_callback, NULL, &tmpgerr);
@@ -310,7 +310,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         unsigned long min_generation;
 
         // Up log level to NOTICE temporarily to get reports in the logs
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
         timestamp = time(NULL);
         // min_generation gets value here
         min_generation = stat_cache_get_local_generation();
@@ -334,7 +334,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
     }
 
     // Mark the directory contents as updated.
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Marking directory %s as updated at timestamp %lu.", path, timestamp);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Marking directory %s as updated at timestamp %lu.", path, timestamp);
     stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -717,6 +717,8 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
     if (do_unlink) {
         CURL *session;
+        struct curl_slist *slist = NULL;
+        
         if (!(session = session_request_init(path, NULL, false)) || inject_error(fusedav_error_cunlinksession)) {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
             return;
@@ -724,8 +726,11 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
     
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: %s", path);
+        
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
         res = retry_curl_easy_perform(session);
+        if (slist) curl_slist_free_all(slist);
         if(res != CURLE_OK || inject_error(fusedav_error_cunlinkcurl)) {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: DELETE failed: %s\n", curl_easy_strerror(res));
             return;
@@ -776,6 +781,7 @@ static int dav_rmdir(const char *path) {
     struct stat st;
     CURL *session;
     CURLcode res;
+    struct curl_slist *slist = NULL;
 
     BUMP(dav_rmdir);
 
@@ -811,7 +817,10 @@ static int dav_rmdir(const char *path) {
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
 
+    slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
+
     res = retry_curl_easy_perform(session);
+    if (slist) curl_slist_free_all(slist);
     if (res != CURLE_OK) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): DELETE failed: %s", path, curl_easy_strerror(res));
         return -ENOENT;
@@ -839,6 +848,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     char fn[PATH_MAX];
     CURL *session;
     CURLcode res;
+    struct curl_slist *slist = NULL;
     GError *gerr = NULL;
 
     BUMP(dav_mkdir);
@@ -854,7 +864,10 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
 
+    slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
+
     res = retry_curl_easy_perform(session);
+    if (slist) curl_slist_free_all(slist);
     if (res != CURLE_OK) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): MKCOL failed: %s", path, curl_easy_strerror(res));
         return -ENOENT;
@@ -924,6 +937,9 @@ static int dav_rename(const char *from, const char *to) {
     curl_free(escaped_to);
     slist = curl_slist_append(slist, header);
     free(header);
+    
+    slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: %s to %s", from, to);
+
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     /* move:

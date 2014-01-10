@@ -63,5 +63,5 @@ struct fusedav_config {
 };
 
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr);
-
+char *get_instance_identifier(void);
 #endif
