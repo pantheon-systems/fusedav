@@ -130,7 +130,7 @@ static char *path2key(const char *path) {
  * valhalla detects Log-To-Journal in the header, it will log its message
  * to the journal.
  * We also have the ability to use the inject_error mechanism to test this.
- * We do this by turning the default LOG_INFO level which ets passed in
+ * We do this by turning the default LOG_INFO level which is passed in
  * to enhanced logging to LOG_NOTICE.
  */
 struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...) {
