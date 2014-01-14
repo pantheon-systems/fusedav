@@ -56,12 +56,8 @@ struct fusedav_config {
     char *conf;
     stat_cache_t *cache;
     struct stat_cache_supplemental cache_supplemental;
-    // To be removed when titan and fusedav are in sync
-    bool dummy1;
-    int  dummy2;
-    char *dummy3;
 };
 
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr);
-char *get_instance_identifier(void);
+const char *get_instance_identifier(void);
 #endif

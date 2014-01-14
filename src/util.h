@@ -105,6 +105,7 @@ void *inject_error_mechanism(void *ptr);
 #define filecache_error_deleteldb 53
 #define filecache_error_movepdata 54
 #define filecache_error_orphanopendir 55
+#define filecache_error_enhanced_logging 56
 
 #define statcache_error_cachepath 60
 #define statcache_error_openldb 61

@@ -22,6 +22,7 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdbool.h>
 
 #include "fusedav.h"
 #include "fusedav_config.h"
@@ -29,17 +30,6 @@
 #include "log_sections.h"
 #include "util.h"
 #include "session.h"
-
-// The size of the name of what we call this instance of fusedav, e.g. binding id
-#define INSTANCE_ID_SIZE 32
-
-// @TODO: These changes assume that we will ensure that there is a new fusedav
-// available before the corresponding changes to titan go into effect. We can
-// tolerate this new fusedav running on old titan, but we cannot tolerate updating
-// to a new titan while still remounting the old fusedav.
-// After we update to new fusedav and new titan, we will need to make another
-// pass to cleanup these transition elements.
-
 
 // GError mechanisms
 static G_DEFINE_QUARK(FUSEDAV_CONFIG, fusedav_config)
@@ -51,54 +41,14 @@ enum {
 
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
 
-// @TODO: The fusedav_opts are only necessary while we have an old version of titan
-// where the .mount file's Options line includes all of these items.
-// Once we have a new titan with the short list of Options, all of which are
-// recognized internally by fusedav, we will no longer need the FUSEDAV_OPT
-// entries here. We will still need the FUSE_OPT_KEY items.
-// We can redirect ignoreutimens and ignorexattr to dummy, since we no longer
-// keep track of them in the config structure.
-// We can redirect dir_mode and file_mode to dummy, since we pass umask to fuse
-// itself. We have to 'manually' pass it to fuse in the meantime, but it will
-// be part of the Options line when the new titan lays down a new .mount file.
-// client_certificate_password is now irrelevant since we use pem not p12, so
-// it can be redirected to dummy.
-// The old titan will not lay down a new fusedav.conf file, so we still need
-// these other entries to populate the config structure correctly. With the
-// new titan, we can do away with all of them.
-// HOWEVER, we still need 'conf=' as long as we want to specify it via the Options
-// line in the .mount file
-
+// Fuse options are set in the .mount file and are handled by fuse independently
+// Fusedav options are handled by the fusedav.conf file and don't need to
+// be passed to fuse. The only exception is conf itself for the configuration
+// file. It is specified in the .mount file so that we now where to find it
+// here at configuration time.
 static struct fuse_opt fusedav_opts[] = {
-    // ProtocolAndPerformance
-    FUSEDAV_OPT("progressive_propfind",           progressive_propfind, true),
-    FUSEDAV_OPT("refresh_dir_for_file_stat",      refresh_dir_for_file_stat, true),
-    FUSEDAV_OPT("grace",                          grace, true),
-    FUSEDAV_OPT("singlethread",                   singlethread, true),
-    FUSEDAV_OPT("cache_uri=%s",                   cache_uri, 0),
-    // Authenticate
-    FUSEDAV_OPT("username=%s",                    username, 0),
-    FUSEDAV_OPT("password=%s",                    password, 0),
-    FUSEDAV_OPT("ca_certificate=%s",              ca_certificate, 0),
-    FUSEDAV_OPT("client_certificate=%s",          client_certificate, 0),
-    // LogAndProcess
-    FUSEDAV_OPT("nodaemon",                       nodaemon, true),
-    FUSEDAV_OPT("cache_path=%s",                  cache_path, 0),
-    FUSEDAV_OPT("run_as_uid=%s",                  run_as_uid, 0),
-    FUSEDAV_OPT("run_as_gid=%s",                  run_as_gid, 0),
-    FUSEDAV_OPT("verbosity=%d",                   log_level, 5),
-    FUSEDAV_OPT("section_verbosity=%s",           log_level_by_section, 0),
-    FUSEDAV_OPT("log_prefix=%s",                  log_prefix, 0),
     // Config
-    FUSEDAV_OPT("conf=%s",                        conf, 0),
-
-    // If we have an old version of titan and a new version of fusedav when it
-    // gets restarted, we need to handle these old variables to prevent fuse startup error
-    FUSEDAV_OPT("ignoreutimens",                  dummy1, true),
-    FUSEDAV_OPT("ignorexattr",                    dummy1, true),
-    FUSEDAV_OPT("dir_mode=%o",                    dummy2, 0),
-    FUSEDAV_OPT("file_mode=%o",                   dummy2, 0),
-    FUSEDAV_OPT("client_certificate_password=%s", dummy3, 0),
+    FUSEDAV_OPT("conf=%s",         conf, 0),
 
     FUSE_OPT_KEY("-V",             KEY_VERSION),
     FUSE_OPT_KEY("--version",      KEY_VERSION),
@@ -110,7 +60,7 @@ static struct fuse_opt fusedav_opts[] = {
 
 // We need to access dav_oper since it is accessed globally in fusedav_opt_proc
 extern struct fuse_operations dav_oper;
-static char instance_identifier[INSTANCE_ID_SIZE + 1];
+static const char *instance_identifier;
 
 static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
     struct fusedav_config *config = data;
@@ -133,25 +83,6 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
                 "    -V   --version   print version\n"
                 "\n"
                 "fusedav mount options:\n"
-                "    Protocol and performance options:\n"
-                "        -o progressive_propfind\n"
-                "        -o refresh_dir_for_file_stat\n"
-                "        -o grace\n"
-                "        -o singlethread\n"
-                "        -o cache_uri=STRING\n"
-                "    Authenticating with the server:\n"
-                "        -o username=STRING\n"
-                "        -o password=STRING\n"
-                "        -o ca_certificate=PATH\n"
-                "        -o client_certificate=PATH\n"
-                "    Daemon, logging, and process privilege:\n"
-                "        -o nodaemon\n"
-                "        -o run_as_uid=STRING\n"
-                "        -o run_as_gid=STRING (defaults to primary group for run_as_uid)\n"
-                "        -o log_level=NUM (use 7 for debug)\n"
-                "        -o log_level_by_section=STRING (0 means use global verbosity)\n"
-                "    Other:\n"
-                "        -o max_file_size=NUM (in MB)\n"
                 "        -o conf=STRING\n"
                 "\n"
                 , outargs->argv[0]);
@@ -261,21 +192,9 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
 
     print_config(config);
 
-    // JB FIX ME!
-    // Step one: make sure this new version of fusedav is running on all mounts before merging
-    //           changes to titan and the mount file. If the mount file is updated to include
-    //           conf as an option, the version of fusedav before this one will barf
-    //           since it's not a known option.
-    // Step two: merge changes to titan including config file
-    // Proviso:  ultimately, we want to ensure there is a config file, and err if one is not present
-    //           Until titan is updated to include fusedav in the .mount file, ignore errors
-    //           from non-existant config files
-
     // Bail for now if we don't have a config file
-    // @TODO make this an error once the new titan rolls out
     if (config->conf == NULL) {
-        config->grace = true; // set default if we don't yet have a config file @TODO get rid of this
-        log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "parse_configs: conf was not specified");
+        g_set_error(gerr, fusedav_config_quark(), ENOENT, "parse_configs: No conf file");
         return;
     }
 
@@ -344,50 +263,117 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     return;
 }
 
+/* function returning the max between two numbers */
+static int min(int num1, int num2) 
+{
+   /* local variable declaration */
+   int result;
+ 
+   if (num1 < num2)
+      result = num1;
+   else
+      result = num2;
+ 
+   return result; 
+}
+
+// Pantheon-specific
+// From the base url get the site id and site env
+static void initialize_site(const char **site_id, const char **site_env, const char *base_url) {
+    char *start;
+    char *end;
+    
+    // Get the site id and env
+    // If there is no base url, we'll fill with a marker ("(null)")
+    if (base_url == NULL) {
+        start = NULL;
+    }
+    else {
+        // Get the site_id from the base url
+        start = strstr(base_url, "/sites/");
+        if (start) start += strlen("/sites/"); // move past /sites/
+    }
+    
+    if (start == NULL) {
+        *site_id = "(null)";
+        *site_env = "(null)";
+    }
+    else {
+        // site id goes up to /environments/
+        end = strstr(start, "/environments/");
+        // if /environments/ is not in the base_url, best effort to get something
+        if (end == NULL) {
+            *site_id = strndup(start, KVITEM_SIZE);
+            *site_env = "(null)";
+        }
+        else {
+            // site id is now everything up to /environments/, but don't overrun the string
+            *site_id = strndup(start, min(end - start, KVITEM_SIZE)); // up to /environments
+            // Try to find the environment; it is just past /environments/, so set start there
+            start = end + strlen("/environments/"); // Move past /environments/
+            // There should be a slash after the env name, so find it
+            end = strchr(start, '/');
+            // If there is a slash, use it to limit the string
+            if (end) {
+                *site_env = strndup(start, min(end - start, KVITEM_SIZE));
+            }
+            // But if there is no slash, best effort
+            else {
+                *site_env = strndup(start, KVITEM_SIZE);
+            }
+        }
+    }
+}
+
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr) {
     GError *tmpgerr = NULL;
-    const char *log_prefix;
+    const char *log_key_value[KVITEMS];
 
-    // default log_level: LOG_NOTICE
-    config->log_level = 5;
+    // Set defaults for key items in case some don't otherwise get set
+    // config is mem-zeroed out before getting passed in here, so
+    // technically only need to set defaults for non-zero things.
+
+    config->progressive_propfind = true;
+    config->refresh_dir_for_file_stat = true;
+    config->grace = true;
+    config->singlethread = false;
+    config->nodaemon = false;
+    config->max_file_size = 256; // 256M
+    config->log_level = 5; // default log_level: LOG_NOTICE
     
-    // @TODO: only needed if someone remounts to a new fusedav but doesn't yet converge to
-    // get the new fusedav.conf which sets this value. Is this a one-off we can throw away
-    // later, or do we want a more elegant mechanism for setting defaults as the future unfolds?
-    config->max_file_size = 256;
-
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
-        g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse options.");
+        g_set_error(gerr, fusedav_config_quark(), EINVAL, "configure_fusedav: FUSE could not parse options.");
         return;
     }
 
     parse_configs(config, &tmpgerr);
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "Could not open fusedav config file: %s", config->conf);
+        g_propagate_prefixed_error(gerr, tmpgerr, "configure_fusedav: ");
         return;
     }
 
     if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0 || inject_error(config_error_sessioninit)) {
-        g_set_error(gerr, fusedav_config_quark(), ENETDOWN, "Failed to initialize session system.");
+        g_set_error(gerr, fusedav_config_quark(), ENETDOWN, "configure_fusedav: Failed to initialize session system.");
         return;
     }
 
     // Set log levels. We use get_base_url for the log message, so this call needs to follow
     // session_config_init, where base_url is set
-    // @TODO when new titan rolls out, just pass in config->log_prefix
     if (config->log_prefix) {
-        log_prefix = config->log_prefix;
         // Assume that the log_prefix is the thing which identifies this instance of fusedav, e.g. binding id
-        strncpy(instance_identifier, log_prefix, INSTANCE_ID_SIZE);
+        log_key_value[INSTANCE_ID_FULL] = strndup(config->log_prefix, KVITEM_SIZE);
+        instance_identifier = log_key_value[INSTANCE_ID_FULL];
+        log_key_value[INSTANCE_ID_ABBREV] = strndup(config->log_prefix, 8);
     }
     else {
-        log_prefix = get_base_url();
         // If we don't have a log prefix, we don't have an instance identifier
-        instance_identifier[0] = '\0'; // We don't have an instance identifier
+        log_key_value[INSTANCE_ID_FULL] = "(null)";
+        log_key_value[INSTANCE_ID_ABBREV] = "(null)";
     }
-    log_init(config->log_level, config->log_level_by_section, log_prefix, get_base_url());
-    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
+    initialize_site(&log_key_value[SITE_ID], &log_key_value[SITE_ENV], get_base_url());
+    log_init(config->log_level, config->log_level_by_section, log_key_value);
+    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
     if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse the command line.");
@@ -396,8 +382,6 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
 
     // @TODO: is there a best place for fuse_opt_add_arg? Does it need to follow fuse_parse_cmdline?
     // fuse_opt_add_arg(&args, "-o atomic_o_trunc");
-    // @TODO temporary to make new fusedav work with old titan, until everyone is up to date
-    fuse_opt_add_arg(args, "-oumask=0007");
 
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "Parsed command line.");
 
@@ -411,6 +395,6 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     }
 }
 
-char *get_instance_identifier(void) {
+const char *get_instance_identifier(void) {
     return instance_identifier;
 }

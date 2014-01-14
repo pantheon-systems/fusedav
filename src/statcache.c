@@ -152,7 +152,6 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
 
     // Check that a directory is set.
     if (!cache_path || inject_error(statcache_error_cachepath)) {
-        // @TODO: Before public release: Use a mkdtemp-based path.
         g_set_error (gerr, leveldb_quark(), EINVAL, "stat_cache_open: no cache path specified.");
         return;
     }
@@ -232,9 +231,11 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
-    // @TODO this should be a gerror
     if (vallen != sizeof(struct stat_cache_value)) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        free(errptr);
+        free(value);
+        return NULL;
     }
 
     if (!skip_freshness_check) {
@@ -270,7 +271,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         }
     }
     
-    /* Hack alert! 
+    /* Hack alert!
+     * Maybe we could remove this code 1 Jan 2015?
      * On doing a complete PROPFIND, the DAV:reponse we were resetting stat values
      * but not setting st_blocks, which remained zero. This got stored in the statcache.
      * Now and until the file modified, that zero value remains. This breaks programs

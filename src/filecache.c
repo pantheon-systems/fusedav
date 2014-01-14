@@ -62,7 +62,7 @@ struct filecache_sdata {
     int error_code;
 };
 
-// FIX ME Where to find ETAG_MAX?
+// @TODO Where to find ETAG_MAX?
 #define ETAG_MAX 256
 
 // Persistent data stored in leveldb
@@ -118,9 +118,30 @@ static char *path2key(const char *path) {
     return key;
 }
 
+/* By default, fusedav logs LOG_NOTICE (5) and lower messages.
+ * If we change fusedav.conf to up the logging to LOG_INFO or LOG_DEBUG
+ * and restart fusedav, this enhanced_logging will be triggered.
+ * This will tell valhalla to log its messages to the journal.
+ * We don't otherwise want valhalla to do this, because it generates too
+ * many log messages.
+ * We trigger this mechanism by adding "Log-To-Journal" to the header;
+ * we also add the "Instance-Identifier", aka binding id, to the header
+ * so we can coordinate fusedav/valhalla messages by binding id. When
+ * valhalla detects Log-To-Journal in the header, it will log its message
+ * to the journal.
+ * We also have the ability to use the inject_error mechanism to test this.
+ * We do this by turning the default LOG_INFO level which ets passed in
+ * to enhanced logging to LOG_NOTICE.
+ */
 struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...) {
     va_list ap;
-    if (logging(log_level, section)) {
+    int enhanced = 0;
+
+    // If we are injecting errors, we can trigger enhanced logging
+    if (inject_error(filecache_error_enhanced_logging)) {
+        enhanced = 1;
+    }
+    if (logging(log_level - enhanced, section)) {
         char *instance_identifier = NULL;
         char msg[81] = {0};
         slist = curl_slist_append(slist, "Log-To-Journal: true");
@@ -129,11 +150,12 @@ struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int
         free(instance_identifier);
         va_start(ap, format);
         vsnprintf(msg, 80, format, ap);
-        log_print(log_level, section, msg);
+        log_print(log_level - 1, section, msg);
         va_end(ap);
     }
     return slist;
 }
+
 // creates a new cache file
 static void new_cache_file(const char *cache_path, char *cache_file_path, fd_t *fd, GError **gerr) {
     char entropy[CACHE_FILE_ENTROPY + 1];
@@ -435,6 +457,7 @@ static void get_fresh_fd(filecache_t *cache,
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd: ");
         // @TODO: Should we delete path from cache and/or null-out pdata?
+        // @TODO: Punt. Revisit when we add curl retry to open
         goto finish;
     }
 
@@ -651,7 +674,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
         get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, skip_validation, &tmpgerr);
         if (tmpgerr) {
             if (tmpgerr->domain == curl_quark() && grace_level >= 1 && retries < max_retries) {
-                log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "filecache_open: Falling back with grace mode for path %s. Error: %s", path, tmpgerr->message);
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "filecache_open: Falling back with grace mode for path %s. Error: %s", path, tmpgerr->message);
                 g_clear_error(&tmpgerr);
                 skip_validation = true;
                 *used_grace = true;
@@ -963,7 +986,8 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     if (sdata->modified) {
         if (do_put) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Seeking fd=%d", sdata->fd);
-            // @TODO: why do we do the lseek? Do we need to be at the beginning of the file?
+            // @REVIEW: I don't think we need do the lseek. We dup fd in put_return_etag, which sets
+            // file to the beginning. Should we remove this code?
             // If this lseek fails, file eventually goes to forensic haven.
             if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error(filecache_error_synclseek)) {
                 set_error(sdata, errno);
@@ -1017,18 +1041,19 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             pdata->last_server_update = 0;
         }
         wrote_data = true;
-    }
 
-    // @TODO: Should we run the following if sdata->modified is false?
-    // Point the persistent cache to the new file content.
-    filecache_pdata_set(cache, path, pdata, &tmpgerr);
-    if (tmpgerr) {
-        set_error(sdata, tmpgerr->code);
-        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: filecache_pdata_set failed on %s", path);
-        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: ");
-        goto finish;
-    }
 
+        // @REVIEW: If sdata->modified is false, we didn't change pdata, and if
+        // we didn't change pdata, why call filecache_pdata_set? Or am I wrong?
+        // Point the persistent cache to the new file content.
+        filecache_pdata_set(cache, path, pdata, &tmpgerr);
+        if (tmpgerr) {
+            set_error(sdata, tmpgerr->code);
+            log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: filecache_pdata_set failed on %s", path);
+            g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: ");
+            goto finish;
+        }
+    }
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
 finish:

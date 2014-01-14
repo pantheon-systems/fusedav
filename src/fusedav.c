@@ -61,6 +61,9 @@ struct fill_info {
 pthread_mutex_t last_failure_mutex = PTHREAD_MUTEX_INITIALIZER;
 static time_t last_failure = 0;
 
+// forward reference to avoid dependency loop
+static void common_unlink(const char *path, bool do_unlink, GError **gerr);
+
 static bool use_saint_mode(void) {
     struct timespec now;
     bool use_saint;
@@ -172,7 +175,6 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         struct stat_cache_value *existing;
 
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
-        // @TODO Figure out a cleaner way to avoid overwriting newer entrie.
         existing = stat_cache_value_get(config->cache, path, true, &subgerr);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
@@ -394,7 +396,7 @@ static int dav_readdir(
             if (!config->grace) {
                 return processed_gerror("dav_readdir: failed to update directory: ", path, &gerr);
             }
-            log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "Failed to update directory: %s : using grace : %d %s", path, gerr->code, strerror(gerr->code));
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_DIR, "Failed to update directory: %s : using grace : %d %s", path, gerr->code, strerror(gerr->code));
             set_saint_mode();
             g_clear_error(&gerr);
         }
@@ -420,8 +422,10 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
     value.st = st;
 
     if (status_code == 410) {
+        bool do_unlink = false;
+        
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: Deleting from stat cache: %s", path);
-        stat_cache_delete(config->cache, path, &tmpgerr);
+        common_unlink(path, do_unlink, &tmpgerr);
         if (tmpgerr) {
             log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
             g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
@@ -452,8 +456,8 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         return -1;
     }
 
-    // @TODO: Grace mode setting ignore_freshness should not result in
-    // -ENOENT for cache misses.
+    // @REVIEW: if saint mode set ignore_freshness, do we want to return ENOENT as we do here?
+    // (Seems we don't have a choice, but I had a note which implied we should not)
     if (response == NULL) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: NULL response from stat_cache_value_get for path %s.", path);
 
@@ -464,7 +468,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
             return -1;
         }
 
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Treating key as absent of expired for path %s.", path);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Treating key as absent or expired for path %s.", path);
         return -EKEYEXPIRED;
     }
 
@@ -535,7 +539,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
         GError *subgerr = NULL;
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
-        // @TODO: Armor this better if the server returns unexpected data.
         ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL, &subgerr);
         if (subgerr) {
             // Delete from cache on error; ignore errors from stat_cache_delete since we already have one
@@ -543,7 +546,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             stat_cache_delete(config->cache, path, NULL);
             goto fail;
         }
-        else if (ret < 0) { // We don't ever expect ret < 0 but no gerr
+        else if (ret < 0) { // We don't ever expect ret < 0 without gerr
             stat_cache_delete(config->cache, path, &subgerr);
             if (subgerr) {
                 g_propagate_prefixed_error(gerr, subgerr, "get_stat: PROPFIND failed");
@@ -660,7 +663,6 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
     common_getattr(path, stbuf, info, &gerr);
     if (gerr) {
-        // Don't print error on ENOENT; that's what get_attr is for
         if (gerr->code == ENOENT) {
             int res = -gerr->code;
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "dav_fgetattr(%s): ENOENT", path?path:"null path");
@@ -1430,7 +1432,6 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     }
 
     // Let sync handle a NULL path
-    // @TODO: It looks to me like an error to pass 'false' here; we should want the PUT to happen, shouldn't we?
     filecache_sync(config->cache, path, info, false, &gerr);
     if (gerr) {
         return processed_gerror("dav_ftruncate: ", path, &gerr);
