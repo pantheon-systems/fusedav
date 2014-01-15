@@ -73,18 +73,17 @@ int logging(unsigned int log_level, unsigned int section) {
 
 #define max_msg_sz 80
 int log_print(unsigned int log_level, unsigned int section, const char *format, ...) {
-    int ret = 0;
-    va_list ap;
-    char *formatwithtid;
-    char msg[max_msg_sz - 1];
-
     if (logging(log_level, section)) {
+        va_list ap;
+        char *formatwithtid;
+        char msg[max_msg_sz + 1];
+
         va_start(ap, format);
-        ret = vsnprintf(msg, max_msg_sz, format, ap);
+        vsnprintf(msg, max_msg_sz, format, ap);
         asprintf(&formatwithtid, "[tid=%lu] [bid=%s] %s", syscall(SYS_gettid), log_key_value[INSTANCE_ID_ABBREV], errlevel[log_level]);
         assert(formatwithtid);
         // fusedav-valhalla standardizing on names BINDING, SITE, and ENVIRONMENT
-        ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
+        sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
                               "PRIORITY=%d", log_level,
                               "BINDING=%s", log_key_value[INSTANCE_ID_FULL],
                               "SITE=%s", log_key_value[SITE_ID],

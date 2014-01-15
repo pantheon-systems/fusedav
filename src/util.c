@@ -77,10 +77,10 @@ static bool *inject_error_list = NULL;
  */
 static void rand_test(void) {
     static int fdx = no_error;
-    static int tdx;
     const int iters = 1024 * 1024;
 
     for (int iter = 0; iter < iters; iter++) {
+        int tdx;
         // Sleep 11 seconds between injections
         sleep(11);
     
@@ -252,10 +252,7 @@ static void filecache_forensic_haven_test(void) {
 }
 
 // The routine which the pthread calls to get things started
-void *inject_error_mechanism(void *ptr) {
-    bool being_tested = false;
-    // ptr stuff just to get rid of warning message about unused parameter
-    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "INJECTING ERRORS! %p", ptr ? ptr : 0);
+void *inject_error_mechanism(__unused void *ptr) {
 
     /* We are going to make a list of all error injection locations for all three
      * files, fusedav.c, filecache.c, and statcache.c. Then we are going to tell
