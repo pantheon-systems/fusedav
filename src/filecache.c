@@ -443,9 +443,9 @@ static void get_fresh_fd(filecache_t *cache,
         asprintf(&header, "If-None-Match: %s", pdata->etag);
         slist = curl_slist_append(slist, header);
         free(header);
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_id: %s", path);
-        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
     }
+    slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_id: %s", path);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     // Set an ETag header capture path.
     etag[0] = '\0';
@@ -875,6 +875,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
 
     slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     // Set a header capture path.
     etag[0] = '\0';

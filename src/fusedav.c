@@ -729,6 +729,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
     
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: %s", path);
+        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
         
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
         res = retry_curl_easy_perform(session);
@@ -820,6 +821,7 @@ static int dav_rmdir(const char *path) {
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
 
     slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     res = retry_curl_easy_perform(session);
     if (slist) curl_slist_free_all(slist);
@@ -867,6 +869,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
 
     slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     res = retry_curl_easy_perform(session);
     if (slist) curl_slist_free_all(slist);
