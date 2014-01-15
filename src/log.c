@@ -71,7 +71,7 @@ int logging(unsigned int log_level, unsigned int section) {
     return log_level <= local_log_level;
 }
 
-#define max_msg_sz 80
+#define max_msg_sz 2048
 int log_print(unsigned int log_level, unsigned int section, const char *format, ...) {
     int ret = 0;
     if (logging(log_level, section)) {
