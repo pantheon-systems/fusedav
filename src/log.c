@@ -80,6 +80,7 @@ static void initialize_site(void) {
         log_key_value[idx++] = strndup(token, KVITEM_SIZE);
         token = strtok(NULL, delim);
     }
+    free(str);
     return;
 }
 
