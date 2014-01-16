@@ -1,5 +1,4 @@
-#ifndef foologhfoo
-#define foologhfoo
+#pragma once
 
 /***
   This file is part of fusedav.
@@ -21,23 +20,6 @@
 
 #include <systemd/sd-journal.h>
 
-// These are shared between config and log
-// Pantheon-specific
-#define INSTANCE_ID_ABBREV 0
-#define INSTANCE_ID_FULL 1
-#define SITE_ID 2
-#define SITE_ENV 3
-
-// array to hold values for rich journald key=value pairs
-// see http://0pointer.de/blog/projects/journal-submit.html for examples
-
-// site_env + 1
-#define KVITEMS 4
-// max size for strings in log_key_value array
-#define KVITEM_SIZE 64
-
-void log_init(unsigned int log_level, const char *log_level_by_section, const char *log_key_values[]);
+void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent);
 int log_print(unsigned int log_level, unsigned int section, const char *format, ...);
 int logging(unsigned int log_level, unsigned int section);
-
-#endif

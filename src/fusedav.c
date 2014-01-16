@@ -61,6 +61,8 @@ struct fill_info {
 pthread_mutex_t last_failure_mutex = PTHREAD_MUTEX_INITIALIZER;
 static time_t last_failure = 0;
 
+enum ignore_freshness {OFF, ALREADY_FRESH, SAINT_MODE}; 
+
 // forward reference to avoid dependency loop
 static void common_unlink(const char *path, bool do_unlink, GError **gerr);
 
@@ -443,12 +445,31 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
     }
 }
 
-static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore_freshness, GError **gerr) {
+/* The calls to this function are pretty well prescribed, in get_stat(), but if called elsewhere,
+ * could be problematic.
+ * If called, and stat_cache_value_get returns NULL (not in cache), we have to interpret
+ * what that means and how to handle it based on the circumstances in the place we are
+ * calling it from. If we have already done what is necessary to update the stat cache,
+ * i.e. done a PROPFIND, then a NULL from stat_cache_value_get really means that the item
+ * is not present, and ENOENT is appropriate. We do this by setting skip_freshness_check to
+ * ALREADY_FRESH.
+ * We might also want to skip the freshness check if we are in saint mode. We do this by
+ * setting skip_freshness_check to SAINT_MODE. If the item is not in the stat cache, we
+ * don't know if it really exists (on another binding) or not, so we return something
+ * other than ENOENT. Here, we return ENETDOWN, indicating a network problem, which is exactly
+ * what causes us to go into saint mode in the first place.
+ * If we don't have a reason for skipping the freshness check, and the item is not already
+ * in the stat cache, we assume that the item was expired (in fact, it might not have been
+ * present at all), and allow the program logic to try to find or update the item.
+ */
+static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore_freshness skip_freshness_check, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *response;
     GError *tmpgerr = NULL;
+    // If skipping is not OFF, then it is on for some reason (SAINT_MODE or ALREADY_FRESH)
+    bool ignoring_freshness = (skip_freshness_check != OFF);
 
-    response = stat_cache_value_get(config->cache, path, ignore_freshness, &tmpgerr);
+    response = stat_cache_value_get(config->cache, path, ignoring_freshness, &tmpgerr);
 
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat_from_cache: ");
@@ -456,18 +477,25 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         return -1;
     }
 
-    // @REVIEW: if saint mode set ignore_freshness, do we want to return ENOENT as we do here?
-    // (Seems we don't have a choice, but I had a note which implied we should not)
     if (response == NULL) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: NULL response from stat_cache_value_get for path %s.", path);
 
-        if (ignore_freshness || inject_error(fusedav_error_statignorefreshness)) {
+        // If we're skipping the check because we're in saint mode and the item is not in the cache,
+        // then return ENETDOWN. If we return ENOENT, we are potentially lying since the item
+        // may in fact exist, just on another binding which we can't reach to find out
+        if (skip_freshness_check == SAINT_MODE || inject_error(fusedav_error_statignorefreshnesssaint)) {
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: In saint mode, ignoring freshness and sending -ENETDOWN for path %s.", path);
+            memset(stbuf, 0, sizeof(struct stat));
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "get_stat_from_cache: ");
+            return -1;
+        }
+        else if (skip_freshness_check == ALREADY_FRESH || inject_error(fusedav_error_statignorefreshness)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Ignoring freshness and sending -ENOENT for path %s.", path);
             memset(stbuf, 0, sizeof(struct stat));
             g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
             return -1;
         }
-
+        // else we're not skipping the freshness check and maybe the item is in the cache but just out of date
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Treating key as absent or expired for path %s.", path);
         return -EKEYEXPIRED;
     }
@@ -476,7 +504,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
     *stbuf = response->st;
     print_stat(stbuf, "stat_cache_value_get response");
     free(response);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, ignore_freshness, stbuf->st_mode ? "0" : "ENOENT");
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, skip_freshness_check, stbuf->st_mode ? "0" : "ENOENT");
     if (stbuf->st_mode == 0 || inject_error(fusedav_error_statstmode)) {
         g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: stbuf mode is 0: ");
         return -1;
@@ -492,7 +520,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
-    bool skip_freshness_check = false;
+    enum ignore_freshness skip_freshness_check = OFF;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -515,14 +543,15 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         return;
     }
 
-    if (config->grace && use_saint_mode())
-        skip_freshness_check = true;
+    if (config->grace && use_saint_mode()) {
+        skip_freshness_check = SAINT_MODE;
+    }
 
     // Check if we can directly hit this entry in the stat cache.
     ret = get_stat_from_cache(path, stbuf, skip_freshness_check, &tmpgerr);
 
     // Propagate the error but let the rest of the logic determine return value
-    // Unless we change the logic in get_stat_from_cache, it will return ENONENT
+    // Unless we change the logic in get_stat_from_cache, it will return ENOENT or ENETDOWN
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         return;
@@ -557,7 +586,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         }
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Zero-depth PROPFIND succeeded: %s", path);
 
-        get_stat_from_cache(path, stbuf, true, &subgerr);
+        // The propfind succeeded, so if the item does not exist, then it is ENOENT.
+        // Don't check for whether we are in saint mode
+        skip_freshness_check = ALREADY_FRESH;
+        get_stat_from_cache(path, stbuf, skip_freshness_check, &subgerr);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
             goto fail;
@@ -599,7 +631,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     }
 
     // Try again to hit the file in the stat cache.
-    ret = get_stat_from_cache(path, stbuf, true, &tmpgerr);
+    skip_freshness_check = ALREADY_FRESH;
+    ret = get_stat_from_cache(path, stbuf, skip_freshness_check, &tmpgerr);
     if (tmpgerr) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");

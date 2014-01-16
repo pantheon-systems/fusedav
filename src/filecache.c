@@ -142,12 +142,12 @@ struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int
         log_level -= 1;
     }
     if (logging(log_level, section)) {
-        char *instance_identifier = NULL;
+        char *user_agent = NULL;
         char msg[81] = {0};
         slist = curl_slist_append(slist, "Log-To-Journal: true");
-        asprintf(&instance_identifier, "Instance-Identifier: %s", get_instance_identifier());
-        slist = curl_slist_append(slist, instance_identifier);
-        free(instance_identifier);
+        asprintf(&user_agent, "User-Agent: %s", get_user_agent());
+        slist = curl_slist_append(slist, user_agent);
+        free(user_agent);
         va_start(ap, format);
         vsnprintf(msg, 80, format, ap);
         log_print(log_level, section, msg);

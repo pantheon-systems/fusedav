@@ -272,7 +272,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
     
     /* Hack alert!
-     * Maybe we could remove this code 1 Jan 2015?
+     * Remove this code by 1 Jan 2015!
      * On doing a complete PROPFIND, the DAV:reponse we were resetting stat values
      * but not setting st_blocks, which remained zero. This got stored in the statcache.
      * Now and until the file modified, that zero value remains. This breaks programs
@@ -649,13 +649,6 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     return has_children;
 }
 
-/* Pantheon note:
- * On "wipe", we do a "DELETE /sites/f1f574a9-085b-409c-a382-0859ec01f157/environments/live/files/?source=portal"
- * on valhalla, which deletes everything. This puts a tag on the system 
- * (self.update_metadata(metadata={'last_reset': int(time.time())}, ttl=EVENT_TTL))
- * such that on the subsequent PROPFIND, we get basically an empty return, <?xml version="1.0" encoding="utf-8" ?>. 
- * We should then use min_generation to remove those items which are older than the given generation.
- */
 void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation, GError **gerr) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;

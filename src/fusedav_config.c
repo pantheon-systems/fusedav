@@ -60,7 +60,7 @@ static struct fuse_opt fusedav_opts[] = {
 
 // We need to access dav_oper since it is accessed globally in fusedav_opt_proc
 extern struct fuse_operations dav_oper;
-static const char *instance_identifier;
+const char *user_agent;
 
 static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
     struct fusedav_config *config = data;
@@ -263,71 +263,8 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
     return;
 }
 
-/* function returning the max between two numbers */
-static int min(int num1, int num2) 
-{
-   /* local variable declaration */
-   int result;
- 
-   if (num1 < num2)
-      result = num1;
-   else
-      result = num2;
- 
-   return result; 
-}
-
-// Pantheon-specific
-// From the base url get the site id and site env
-static void initialize_site(const char **site_id, const char **site_env, const char *base_url) {
-    char *start;
-    char *end;
-    
-    // Get the site id and env
-    // If there is no base url, we'll fill with a marker ("(null)")
-    if (base_url == NULL) {
-        start = NULL;
-    }
-    else {
-        // Get the site_id from the base url
-        start = strstr(base_url, "/sites/");
-        if (start) start += strlen("/sites/"); // move past /sites/
-    }
-    
-    if (start == NULL) {
-        *site_id = "(null)";
-        *site_env = "(null)";
-    }
-    else {
-        // site id goes up to /environments/
-        end = strstr(start, "/environments/");
-        // if /environments/ is not in the base_url, best effort to get something
-        if (end == NULL) {
-            *site_id = strndup(start, KVITEM_SIZE);
-            *site_env = "(null)";
-        }
-        else {
-            // site id is now everything up to /environments/, but don't overrun the string
-            *site_id = strndup(start, min(end - start, KVITEM_SIZE)); // up to /environments
-            // Try to find the environment; it is just past /environments/, so set start there
-            start = end + strlen("/environments/"); // Move past /environments/
-            // There should be a slash after the env name, so find it
-            end = strchr(start, '/');
-            // If there is a slash, use it to limit the string
-            if (end) {
-                *site_env = strndup(start, min(end - start, KVITEM_SIZE));
-            }
-            // But if there is no slash, best effort
-            else {
-                *site_env = strndup(start, KVITEM_SIZE);
-            }
-        }
-    }
-}
-
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr) {
     GError *tmpgerr = NULL;
-    const char *log_key_value[KVITEMS];
 
     // Set defaults for key items in case some don't otherwise get set
     // config is mem-zeroed out before getting passed in here, so
@@ -358,21 +295,9 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    // Set log levels. We use get_base_url for the log message, so this call needs to follow
-    // session_config_init, where base_url is set
-    if (config->log_prefix) {
-        // Assume that the log_prefix is the thing which identifies this instance of fusedav, e.g. binding id
-        log_key_value[INSTANCE_ID_FULL] = strndup(config->log_prefix, KVITEM_SIZE);
-        instance_identifier = log_key_value[INSTANCE_ID_FULL];
-        log_key_value[INSTANCE_ID_ABBREV] = strndup(config->log_prefix, 8);
-    }
-    else {
-        // If we don't have a log prefix, we don't have an instance identifier
-        log_key_value[INSTANCE_ID_FULL] = "(null)";
-        log_key_value[INSTANCE_ID_ABBREV] = "(null)";
-    }
-    initialize_site(&log_key_value[SITE_ID], &log_key_value[SITE_ENV], get_base_url());
-    log_init(config->log_level, config->log_level_by_section, log_key_value);
+    user_agent = strdup(config->log_prefix);
+
+    log_init(config->log_level, config->log_level_by_section, config->log_prefix);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
     if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {
@@ -395,6 +320,6 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     }
 }
 
-const char *get_instance_identifier(void) {
-    return instance_identifier;
+const char *get_user_agent(void) {
+    return user_agent;
 }
