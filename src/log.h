@@ -1,5 +1,4 @@
-#ifndef foologhfoo
-#define foologhfoo
+#pragma once
 
 /***
   This file is part of fusedav.
@@ -21,7 +20,6 @@
 
 #include <systemd/sd-journal.h>
 
-void log_init(unsigned int log_level, const char *log_level_by_section, const char *base_url);
+void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent);
 int log_print(unsigned int log_level, unsigned int section, const char *format, ...);
-
-#endif
+int logging(unsigned int log_level, unsigned int section);

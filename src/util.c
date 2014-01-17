@@ -77,46 +77,77 @@ static bool *inject_error_list = NULL;
  */
 static void rand_test(void) {
     static int fdx = no_error;
-    static int tdx;
-    
-    // Sleep 11 seconds between injections
-    sleep(11);
+    const int iters = 1024 * 1024;
 
-    // Figure out which error location to set
-    tdx = rand() % inject_error_count;
+    for (int iter = 0; iter < iters; iter++) {
+        int tdx;
+        // Sleep 11 seconds between injections
+        sleep(11);
     
-    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
+        // Figure out which error location to set
+        tdx = rand() % inject_error_count;
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
+    
+        // Make the new location true but turn off the locations for the old location.
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+    }
+}
 
-    // Make the new location true but turn off the locations for the old location.
-    inject_error_list[tdx] = true;
-    inject_error_list[fdx] = false;
-    fdx = tdx;
+/* test what happens on a write error */
+static void enhanced_logging_test(void) {
+    static int fdx = no_error;
+    static int tdx = no_error;
+    const int iters = 4096; // @TODO I just made this number up; figure out a better one!
+
+    for (int iter = 0; iter < iters; iter++) {
+        // Sleep 11 seconds between injections
+        sleep(11);
+    
+        // flop between writewrite and no_error
+        
+        if (tdx == no_error) tdx = filecache_error_enhanced_logging;
+        else tdx = no_error;
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
+    
+        // Make the new location true but turn off the locations for the old location.
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+    }
 }
 
 /* test what happens on a write error */
 static void writewrite_test(void) {
     static int fdx = no_error;
     static int tdx = no_error;
+    const int iters = 4096; // @TODO I just made this number up; figure out a better one!
 
-    // Sleep 11 seconds between injections
-    sleep(11);
-
-    // flop between writewrite and no_error
+    for (int iter = 0; iter < iters; iter++) {
+        // Sleep 11 seconds between injections
+        sleep(11);
     
-    if (tdx == no_error) tdx = filecache_error_writewrite;
-    else tdx = no_error;
+        // flop between writewrite and no_error
+        
+        if (tdx == no_error) tdx = filecache_error_writewrite;
+        else tdx = no_error;
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
     
-    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
-
-    // Make the new location true but turn off the locations for the old location.
-    inject_error_list[tdx] = true;
-    inject_error_list[fdx] = false;
-    fdx = tdx;
+        // Make the new location true but turn off the locations for the old location.
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+    }
 }
 
 /* Recreate the kinds of errors we might see on propfinds */
 static void propfind_test(void) {
     int fdx = no_error;
+    const int iters = 4096; // @TODO I just made this number up. Figure out a better one!
     struct error_name_s {
         int error;
         const char *name;
@@ -132,20 +163,22 @@ static void propfind_test(void) {
         {-1, ""}, // sentinel
     };
 
-    for (int idx = 0; error_name[idx].error != -1; idx++) {
-        const char *name;
-        int tdx;
-
-        tdx = error_name[idx].error;
-        name = error_name[idx].name;
-
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
-
-        // Make the new location true but turn off the locations for the old location.
-        inject_error_list[tdx] = true;
-        inject_error_list[fdx] = false;
-        fdx = tdx;
-        sleep(17);
+    for (int iter = 0; iter < iters; iter++) {
+        for (int idx = 0; error_name[idx].error != -1; idx++) {
+            const char *name;
+            int tdx;
+    
+            tdx = error_name[idx].error;
+            name = error_name[idx].name;
+    
+            log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
+    
+            // Make the new location true but turn off the locations for the old location.
+            inject_error_list[tdx] = true;
+            inject_error_list[fdx] = false;
+            fdx = tdx;
+            sleep(17);
+        }
     }
 }
 
@@ -154,6 +187,7 @@ static void propfind_test(void) {
  */
 static void filecache_forensic_haven_test(void) {
     int fdx = no_error;
+    const int iters = 4096; // @TODO I just made this number up. Figure out a better one!
     struct error_name_s {
         int error;
         const char *name;
@@ -197,29 +231,28 @@ static void filecache_forensic_haven_test(void) {
         {filecache_error_deleteldb, "filecache_error_deleteldb"},
         {-1, ""}, // sentinel
     };
-    
-    for (int idx = 0; error_name[idx].error != -1; idx++) {
-        const char *name;
-        int tdx;
 
-        tdx = error_name[idx].error;
-        name = error_name[idx].name;
-            
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
+    for (int iter = 0; iter < iters; iter++) {
+        for (int idx = 0; error_name[idx].error != -1; idx++) {
+            const char *name;
+            int tdx;
     
-        // Make the new location true but turn off the locations for the old location.
-        inject_error_list[tdx] = true;
-        inject_error_list[fdx] = false;
-        fdx = tdx;
-        sleep(17);
+            tdx = error_name[idx].error;
+            name = error_name[idx].name;
+                
+            log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
+        
+            // Make the new location true but turn off the locations for the old location.
+            inject_error_list[tdx] = true;
+            inject_error_list[fdx] = false;
+            fdx = tdx;
+            sleep(17);
+        }
     }
 }
 
 // The routine which the pthread calls to get things started
-void *inject_error_mechanism(void *ptr) {
-    bool being_tested = false;
-    // ptr stuff just to get rid of warning message about unused parameter
-    log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "INJECTING ERRORS! %p", ptr ? ptr : 0);
+void *inject_error_mechanism(__unused void *ptr) {
 
     /* We are going to make a list of all error injection locations for all three
      * files, fusedav.c, filecache.c, and statcache.c. Then we are going to tell
@@ -239,19 +272,25 @@ void *inject_error_mechanism(void *ptr) {
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: failed to calloc inject_error_list");
         return NULL;
     }
-    
-    // Just to avoid unused-function warnings, list all tests not being tested here
-    if (being_tested) {
-        rand_test();
-        filecache_forensic_haven_test();
-        writewrite_test();
-    }
 
-    // Generate errors forever!
     while (true) {
-        propfind_test();
-    }
 
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting rand_test");
+        rand_test();
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting filecache_forensic_haven_test");
+        filecache_forensic_haven_test();
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting writewrite_test");
+        writewrite_test();
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting propfind_test");
+        propfind_test();
+        
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting fusedav_triggers_vallhalla_logging");
+        enhanced_logging_test();
+    }
+    
     free(inject_error_list);
     return NULL;
 }
