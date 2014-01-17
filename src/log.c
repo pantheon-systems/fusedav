@@ -30,18 +30,18 @@
 #include "log.h"
 #include "log_sections.h"
 #include "session.h"
+#include "fusedav_config.h"
 
 // Store values for loggging in the log_key_value array, which is set in fusedav_config.
 #define USER_AGENT_ABBREV 0
-#define USER_AGENT_FULL 1
-#define BASEURL_FIRST 2
-#define BASEURL_SECOND 3
-#define BASEURL_THIRD 4
-#define BASEURL_FOURTH 5
-#define BASEURL_FIFTH 6
-#define BASEURL_SIXTH 7
-#define BASEURL_SEVENTH 8
-#define BASEURL_EIGHTH 9
+#define BASEURL_FIRST 1
+#define BASEURL_SECOND 2
+#define BASEURL_THIRD 3
+#define BASEURL_FOURTH 4
+#define BASEURL_FIFTH 5
+#define BASEURL_SIXTH 6
+#define BASEURL_SEVENTH 7
+#define BASEURL_EIGHTH 8
 // last item plus one
 #define KVITEMS BASEURL_EIGHTH + 1
 
@@ -74,9 +74,7 @@ static void initialize_site(void) {
 
     idx = BASEURL_FIRST;
     /* walk through other tokens */
-    while( token != NULL ) 
-    {
-        printf("%s\n", token);
+    while( token != NULL ) {
         log_key_value[idx++] = strndup(token, KVITEM_SIZE);
         token = strtok(NULL, delim);
     }
@@ -85,7 +83,7 @@ static void initialize_site(void) {
 }
 
 /* The log_prefix comes from fusedav.conf; the base_url from curl and fuse. */
-void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent) {
+void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent_abbrev) {
             
     unsigned int vlen;
 
@@ -93,14 +91,10 @@ void log_init(unsigned int log_level, const char *log_level_by_section, const ch
 
     // Set log levels. We use get_base_url for the log message, so this call needs to follow
     // session_config_init, where base_url is set
-    if (user_agent) {
-        // Assume that the log_prefix is the thing which identifies this instance of fusedav, e.g. binding id
-        log_key_value[USER_AGENT_FULL] = strndup(user_agent, KVITEM_SIZE);
-        log_key_value[USER_AGENT_ABBREV] = strndup(user_agent, 8);
+    if (user_agent_abbrev) {
+        log_key_value[USER_AGENT_ABBREV] = strndup(user_agent_abbrev, 8);
     }
     else {
-        // If we don't have a log prefix, we don't have an instance identifier
-        log_key_value[USER_AGENT_FULL] = "(null)";
         log_key_value[USER_AGENT_ABBREV] = "(null)";
     }
     
@@ -145,9 +139,10 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
         // fusedav-valhalla standardizing on names BINDING, SITE, and ENVIRONMENT
         ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
                               "PRIORITY=%d", log_level,
-                              "USER-AGENT=%s", log_key_value[USER_AGENT_FULL],
-                              "SITE=%s", log_key_value[BASEURL_SECOND],
-                              "ENVIRONMENT=%s", log_key_value[BASEURL_FOURTH],
+                              "USER_AGENT=%s", get_user_agent(),
+                              "SITE=%s", log_key_value[BASEURL_FOURTH],
+                              "ENVIRONMENT=%s", log_key_value[BASEURL_SIXTH],
+                              "HOST_ADDRESS=%s", log_key_value[BASEURL_SECOND],
                               "TID=%lu", syscall(SYS_gettid),
                               "PACKAGE_VERSION=%s", PACKAGE_VERSION,
                               NULL);

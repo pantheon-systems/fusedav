@@ -60,7 +60,7 @@ static struct fuse_opt fusedav_opts[] = {
 
 // We need to access dav_oper since it is accessed globally in fusedav_opt_proc
 extern struct fuse_operations dav_oper;
-const char *user_agent;
+char *user_agent = NULL;
 
 static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_args *outargs) {
     struct fusedav_config *config = data;
@@ -295,7 +295,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    user_agent = strdup(config->log_prefix);
+    asprintf(&user_agent, "FuseDAV/%s %s", PACKAGE_VERSION, config->log_prefix);
 
     log_init(config->log_level, config->log_level_by_section, config->log_prefix);
     log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
