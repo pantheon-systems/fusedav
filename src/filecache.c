@@ -37,6 +37,7 @@
 #include "util.h"
 #include "stats.h"
 #include "session.h"
+#include "fusedav_config.h"
 
 #define REFRESH_INTERVAL 3
 #define CACHE_FILE_ENTROPY 20
@@ -61,7 +62,7 @@ struct filecache_sdata {
     int error_code;
 };
 
-// FIX ME Where to find ETAG_MAX?
+// @TODO Where to find ETAG_MAX?
 #define ETAG_MAX 256
 
 // Persistent data stored in leveldb
@@ -115,6 +116,44 @@ static char *path2key(const char *path) {
 
     asprintf(&key, "%s%s", filecache_prefix, path);
     return key;
+}
+
+/* By default, fusedav logs LOG_NOTICE (5) and lower messages.
+ * If we change fusedav.conf to up the logging to LOG_INFO or LOG_DEBUG
+ * and restart fusedav, this enhanced_logging will be triggered.
+ * This will tell valhalla to log its messages to the journal.
+ * We don't otherwise want valhalla to do this, because it generates too
+ * many log messages.
+ * We trigger this mechanism by adding "Log-To-Journal" to the header;
+ * we also add the "Instance-Identifier", aka binding id, to the header
+ * so we can coordinate fusedav/valhalla messages by binding id. When
+ * valhalla detects Log-To-Journal in the header, it will log its message
+ * to the journal.
+ * We also have the ability to use the inject_error mechanism to test this.
+ * We do this by turning the default LOG_INFO level which is passed in
+ * to enhanced logging to LOG_NOTICE.
+ */
+struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...) {
+    va_list ap;
+
+    // If we are injecting errors, we can trigger enhanced logging by decrementing
+    // the log level (LOG_INFO -> LOG_NOTICE)
+    if (inject_error(filecache_error_enhanced_logging)) {
+        log_level -= 1;
+    }
+    if (logging(log_level, section)) {
+        char *user_agent = NULL;
+        char msg[81] = {0};
+        slist = curl_slist_append(slist, "Log-To-Journal: true");
+        asprintf(&user_agent, "User-Agent: %s", get_user_agent());
+        slist = curl_slist_append(slist, user_agent);
+        free(user_agent);
+        va_start(ap, format);
+        vsnprintf(msg, 80, format, ap);
+        log_print(log_level, section, msg);
+        va_end(ap);
+    }
+    return slist;
 }
 
 // creates a new cache file
@@ -404,8 +443,9 @@ static void get_fresh_fd(filecache_t *cache,
         asprintf(&header, "If-None-Match: %s", pdata->etag);
         slist = curl_slist_append(slist, header);
         free(header);
-        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
     }
+    slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_id: %s", path);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     // Set an ETag header capture path.
     etag[0] = '\0';
@@ -417,6 +457,7 @@ static void get_fresh_fd(filecache_t *cache,
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd: ");
         // @TODO: Should we delete path from cache and/or null-out pdata?
+        // @TODO: Punt. Revisit when we add curl retry to open
         goto finish;
     }
 
@@ -427,7 +468,7 @@ static void get_fresh_fd(filecache_t *cache,
     do {
         res = curl_easy_perform(session); // don't call retry_curl_easy_perform, since we have own retry mechanism here
         if (res != CURLE_OK || inject_error(filecache_error_freshcurl1)) {
-            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: retry_curl_easy_perform is not CURLE_OK: %s",
+            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: curl_easy_perform is not CURLE_OK: %s",
                 curl_easy_strerror(res));
             goto finish;
         }
@@ -633,7 +674,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
         get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, skip_validation, &tmpgerr);
         if (tmpgerr) {
             if (tmpgerr->domain == curl_quark() && grace_level >= 1 && retries < max_retries) {
-                log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "filecache_open: Falling back with grace mode for path %s. Error: %s", path, tmpgerr->message);
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "filecache_open: Falling back with grace mode for path %s. Error: %s", path, tmpgerr->message);
                 g_clear_error(&tmpgerr);
                 skip_validation = true;
                 *used_grace = true;
@@ -799,6 +840,7 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     CURL *session;
     CURLcode res;
+    struct curl_slist *slist = NULL;
     struct stat st;
     long response_code;
     FILE *fp;
@@ -831,6 +873,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
     curl_easy_setopt(session, CURLOPT_INFILESIZE, st.st_size);
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
+
+    slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     // Set a header capture path.
     etag[0] = '\0';
@@ -865,6 +910,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "PUT returns etag: %s", etag);
 
 finish:
+    if (slist) curl_slist_free_all(slist);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "put_return_etag: releasing exclusive file lock on fd %d", fd);
     if (flock(fd, LOCK_UN) || inject_error(filecache_error_etagflock2)) {
@@ -941,7 +987,8 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     if (sdata->modified) {
         if (do_put) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Seeking fd=%d", sdata->fd);
-            // @TODO: why do we do the lseek? Do we need to be at the beginning of the file?
+            // @REVIEW: I don't think we need do the lseek. We dup fd in put_return_etag, which sets
+            // file to the beginning. Should we remove this code?
             // If this lseek fails, file eventually goes to forensic haven.
             if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error(filecache_error_synclseek)) {
                 set_error(sdata, errno);
@@ -995,18 +1042,19 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             pdata->last_server_update = 0;
         }
         wrote_data = true;
-    }
 
-    // @TODO: Should we run the following if sdata->modified is false?
-    // Point the persistent cache to the new file content.
-    filecache_pdata_set(cache, path, pdata, &tmpgerr);
-    if (tmpgerr) {
-        set_error(sdata, tmpgerr->code);
-        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: filecache_pdata_set failed on %s", path);
-        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: ");
-        goto finish;
-    }
 
+        // @REVIEW: If sdata->modified is false, we didn't change pdata, and if
+        // we didn't change pdata, why call filecache_pdata_set? Or am I wrong?
+        // Point the persistent cache to the new file content.
+        filecache_pdata_set(cache, path, pdata, &tmpgerr);
+        if (tmpgerr) {
+            set_error(sdata, tmpgerr->code);
+            log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "filecache_sync: filecache_pdata_set failed on %s", path);
+            g_propagate_prefixed_error(gerr, tmpgerr, "filecache_sync: ");
+            goto finish;
+        }
+    }
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
 finish:

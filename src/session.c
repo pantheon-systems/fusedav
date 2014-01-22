@@ -377,7 +377,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calling getaddrinfo with %s %s", filesystem_domain, filesystem_port);
     res = getaddrinfo(filesystem_domain, filesystem_port, &hints, &aihead);
     if(res) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)", res, gai_strerror(res));
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)", res, gai_strerror(res));
         // This is an error. We do not set CURLOPT_RESOLVE, so libcurl will
         // do its default thing. If its call to getaddrinfo succeeds, the
         // first IP will be used (breaks load balancing).  If it fails as it does here,

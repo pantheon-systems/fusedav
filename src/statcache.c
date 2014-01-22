@@ -152,7 +152,6 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
 
     // Check that a directory is set.
     if (!cache_path || inject_error(statcache_error_cachepath)) {
-        // @TODO: Before public release: Use a mkdtemp-based path.
         g_set_error (gerr, leveldb_quark(), EINVAL, "stat_cache_open: no cache path specified.");
         return;
     }
@@ -232,9 +231,11 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
-    // @TODO this should be a gerror
     if (vallen != sizeof(struct stat_cache_value)) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
+        free(errptr);
+        free(value);
+        return NULL;
     }
 
     if (!skip_freshness_check) {
@@ -270,7 +271,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         }
     }
     
-    /* Hack alert! 
+    /* Hack alert!
+     * Remove this code by 1 Jan 2015!
      * On doing a complete PROPFIND, the DAV:reponse we were resetting stat values
      * but not setting st_blocks, which remained zero. This got stored in the statcache.
      * Now and until the file modified, that zero value remains. This breaks programs
@@ -647,13 +649,6 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
     return has_children;
 }
 
-/* Pantheon note:
- * On "wipe", we do a "DELETE /sites/f1f574a9-085b-409c-a382-0859ec01f157/environments/live/files/?source=portal"
- * on valhalla, which deletes everything. This puts a tag on the system 
- * (self.update_metadata(metadata={'last_reset': int(time.time())}, ttl=EVENT_TTL))
- * such that on the subsequent PROPFIND, we get basically an empty return, <?xml version="1.0" encoding="utf-8" ?>. 
- * We should then use min_generation to remove those items which are older than the given generation.
- */
 void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsigned long minimum_local_generation, GError **gerr) {
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;

@@ -21,6 +21,7 @@
 
 #include <leveldb/c.h>
 #include <glib.h>
+#include <curl/curl.h>
 #include "fuse.h"
 
 /* Ultimately, it will be a dav_* function returning the value, so set it up for appropriate
@@ -54,5 +55,6 @@ void filecache_set_error(struct fuse_file_info *info, int error_code);
 void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const char *path, off_t fsize, GError **gerr);
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr);
 void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr);
+struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...);
 
 #endif
