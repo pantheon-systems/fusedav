@@ -298,7 +298,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     asprintf(&user_agent, "FuseDAV/%s %s", PACKAGE_VERSION, config->log_prefix);
 
     log_init(config->log_level, config->log_level_by_section, config->log_prefix);
-    log_print(LOG_NOTICE, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
     if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse the command line.");
