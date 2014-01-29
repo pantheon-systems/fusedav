@@ -41,6 +41,10 @@ struct statistics {
     unsigned dav_unlink;
     unsigned dav_utimens;
     unsigned dav_write;
+    // Were we outside the 3-second window when we made the request?
+    unsigned fusedav_nonnegative_cache;
+    // Were we inside the window and so didn't go to the server
+    unsigned fusedav_negative_cache;
 
     unsigned filecache_cache_file;
     unsigned filecache_pdata_set;
