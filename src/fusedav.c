@@ -1692,7 +1692,7 @@ int main(int argc, char *argv[]) {
     GError *gerr = NULL;
     pthread_t cache_cleanup_thread;
     pthread_t error_injection_thread;
-    int res = -1;
+    int ret = -1;
 
     // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
@@ -1790,7 +1790,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    res = 0;
+    ret = 0;
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Left main FUSE loop. Shutting down.");
 
@@ -1832,5 +1832,5 @@ finish:
     // allows journal to catch up.
     sleep(5);
 
-    return res;
+    return ret;
 }
