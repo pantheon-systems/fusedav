@@ -1692,6 +1692,7 @@ int main(int argc, char *argv[]) {
     GError *gerr = NULL;
     pthread_t cache_cleanup_thread;
     pthread_t error_injection_thread;
+    int ret = -1;
 
     // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
@@ -1789,6 +1790,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    ret = 0;
+
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Left main FUSE loop. Shutting down.");
 
 finish:
@@ -1825,7 +1828,9 @@ finish:
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Shutdown was successful. Exiting.");
 
-    pthread_exit(NULL);
-    
-    return 0;
+    // log statements getting lost going to journal. See if delay here
+    // allows journal to catch up.
+    sleep(5);
+
+    return ret;
 }

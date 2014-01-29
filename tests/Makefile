@@ -73,6 +73,18 @@ timestamptest = $(testdir)/timestamp.sh
 # -i is iters; default is 64
 timestamptest-flags=-b $(binding)
 
+perfanalysis-write = $(testdir)/perfanalysis-write
+# -v for verbose, 'perfanalysis-write-flags=-v'
+# -i iters 'perfanalysis-write-flags=-i 8'
+# -t start_time 'perfanalysis-write-flags=-t <unix epoch>'
+perfanalysis-write-flags =
+
+perfanalysis-read = $(testdir)/perfanalysis-read
+# -v for verbose, 'perfanalysis-read-flags=-v'
+# -i iters 'perfanalysis-read-flags=-i 8'
+# -t start_time 'perfanalysis-read-flags=-t <unix epoch>'
+perfanalysis-read-flags =
+
 all: run-stress-tests
 
 # restrict unit tests to low-resource tests
@@ -173,3 +185,16 @@ $(trunc): $(testdir)/trunc.c
 run-timestamptest:
 	$(timestamptest) $(timestamptest-flags)
 
+.PHONY: run-perfanalysis-write
+run-perfanalysis-write: $(perfanalysis-write)
+	$(perfanalysis-write) $(perfanalysis-write-flags)
+	
+$(perfanalysis-write): $(testdir)/perfanalysis-writeread.c
+	cc $< -std=c99 -g -o $@
+
+.PHONY: run-perfanalysis-read
+run-perfanalysis-read: $(perfanalysis-read)
+	$(perfanalysis-read) $(perfanalysis-read-flags)
+	
+$(perfanalysis-read): $(testdir)/perfanalysis-writeread.c
+	cc $< -std=c99 -g -o $@
