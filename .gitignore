@@ -25,6 +25,8 @@ config.h.in
 /tests/forensic-haven-test
 /tests/openunlinkclose
 /tests/trunc
+tests/perfanalysis-read
+tests/perfanalysis-write
 /src/*.plist
 _trial_temp*
 
