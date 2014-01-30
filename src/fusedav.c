@@ -615,6 +615,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         GError *subgerr = NULL;
+
+        BUMP(fusedav_nonnegative_cache);
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
         // In that case, skip the progressive propfind and go straight to complete propfind
         update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
@@ -628,6 +630,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             g_clear_error(&subgerr);
             set_saint_mode();
         }
+    } else {
+        BUMP(fusedav_negative_cache);
     }
 
     // Try again to hit the file in the stat cache.
@@ -1686,9 +1690,9 @@ int main(int argc, char *argv[]) {
     struct fuse_chan *ch = NULL;
     char *mountpoint = NULL;
     GError *gerr = NULL;
-    int ret = 1;
     pthread_t cache_cleanup_thread;
     pthread_t error_injection_thread;
+    int ret = -1;
 
     // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
@@ -1786,14 +1790,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Left main FUSE loop. Shutting down.");
-
     ret = 0;
+
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Left main FUSE loop. Shutting down.");
 
 finish:
     if (gerr) {
         processed_gerror("main: ", "main", &gerr);
     }
+
+    dump_stats(false, config.cache_path); // false means output to file, not to log
 
     if (ch != NULL) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Unmounting: %s", mountpoint);
@@ -1805,8 +1811,6 @@ finish:
     }
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounted.");
-
-    dump_stats(false, config.cache_path); // false means output to file, not to log
 
     if (fuse) {
         fuse_destroy(fuse);
@@ -1823,6 +1827,10 @@ finish:
     stat_cache_close(config.cache, config.cache_supplemental);
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Shutdown was successful. Exiting.");
+
+    // log statements getting lost going to journal. See if delay here
+    // allows journal to catch up.
+    sleep(5);
 
     return ret;
 }
