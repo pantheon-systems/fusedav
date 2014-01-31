@@ -178,7 +178,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         struct stat_cache_value *existing;
 
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
-        existing = stat_cache_value_get(config->cache, path, true, &subgerr);
+        existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
             return;
