@@ -456,10 +456,10 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
     }
     else {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Adding to stat cache: %s", path);
-        stat_cache_value_set(config->cache, path, &value, &tmpgerr);
-        if (tmpgerr) {
-            log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
-            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
+        stat_cache_value_set(config->cache, path, &value, &subgerr1);
+        if (subgerr1) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr1->message);
+            g_propagate_prefixed_error(gerr, subgerr1, "getattr_propfind_callback: ");
             return;
         }
     }
