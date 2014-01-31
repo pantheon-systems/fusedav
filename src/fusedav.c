@@ -179,8 +179,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
 
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
         existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
-        if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
+        if (subgerr1) {
+            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
             return;
         }
 
@@ -257,9 +257,9 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     }
     else {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: CREATE %s (%lu)", path, status_code);
-        stat_cache_value_set(config->cache, path, &value, &subgerr);
-        if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
+        stat_cache_value_set(config->cache, path, &value, &subgerr1);
+        if (subgerr1) {
+            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
             return;
         }
     }
