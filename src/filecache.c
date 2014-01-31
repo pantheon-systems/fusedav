@@ -530,11 +530,13 @@ static void get_fresh_fd(filecache_t *cache,
             }
         }
         else if (code == 200) {
+            struct stat st;
             time_t elapsed_time;
             unsigned long latency;
             unsigned long count;
             // Archive the old temp file path for unlinking after replacement.
             char old_filename[PATH_MAX];
+            const char *sz;
             bool unlink_old = false;
 
             if (pdata == NULL) {
@@ -578,45 +580,56 @@ static void get_fresh_fd(filecache_t *cache,
                 unlink(old_filename);
                 log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
+            
+            if (fstat(sdata->fd, &st)) {
+                 log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_return_etag: fstat failed on %s", path);
+                goto finish;
+            }
+            
             elapsed_time = time(NULL) - start_time;
             if (st.st_size > XLG) {
-                TIMING(filecache_get_XLG_timing, elapsed_time);
-                BUMP(filecache_get_XLG_count);
-                latency = FETCH(filecache_get_XLG_timing);
-                count = FETCH(filecache_get_XLG_count);
+                TIMING(filecache_get_xlg_timing, elapsed_time);
+                BUMP(filecache_get_xlg_count);
+                latency = FETCH(filecache_get_xlg_timing);
+                count = FETCH(filecache_get_xlg_count);
+                sz = "XLG";
             }
             else if (st.st_size > LG) {
-                TIMING(filecache_get_LG_timing, elapsed_time);
-                BUMP(filecache_get_LG_count);
-                latency = FETCH(filecache_get_LG_timing);
-                count = FETCH(filecache_get_LG_count);
+                TIMING(filecache_get_lg_timing, elapsed_time);
+                BUMP(filecache_get_lg_count);
+                latency = FETCH(filecache_get_lg_timing);
+                count = FETCH(filecache_get_lg_count);
+                sz = "LG";
              }
             else if (st.st_size > MED) {
-                TIMING(filecache_get_MED_timing, elapsed_time);
-                BUMP(filecache_get_MED_count);
-                latency = FETCH(filecache_get_MED_timing);
-                count = FETCH(filecache_get_MED_count);
+                TIMING(filecache_get_med_timing, elapsed_time);
+                BUMP(filecache_get_med_count);
+                latency = FETCH(filecache_get_med_timing);
+                count = FETCH(filecache_get_med_count);
+                sz = "MED";
             }
             else if (st.st_size > SM) {
-                TIMING(filecache_get_SM_timing, elapsed_time);
-                BUMP(filecache_get_SM_count);
-                latency = FETCH(filecache_get_SM_timing);
-                count = FETCH(filecache_get_SM_count);
+                TIMING(filecache_get_sm_timing, elapsed_time);
+                BUMP(filecache_get_sm_count);
+                latency = FETCH(filecache_get_sm_timing);
+                count = FETCH(filecache_get_sm_count);
+                sz = "SM";
             }
             else if (st.st_size > XSM) {
-                TIMING(filecache_get_XSM_timing, elapsed_time);
-                BUMP(filecache_get_XSM_count);
-                latency = FETCH(filecache_get_XSM_timing);
-                count = FETCH(filecache_get_XSM_count);
+                TIMING(filecache_get_xsm_timing, elapsed_time);
+                BUMP(filecache_get_xsm_count);
+                latency = FETCH(filecache_get_xsm_timing);
+                count = FETCH(filecache_get_xsm_count);
+                sz = "XSM";
             }
             else {
-                TIMING(filecache_get_XXSM_timing, elapsed_time);
-                BUMP(filecache_get_XXSM_count);
-                latency = FETCH(filecache_get_XXSM_timing);
-                count = FETCH(filecache_get_XXSM_count);
+                TIMING(filecache_get_xxsm_timing, elapsed_time);
+                BUMP(filecache_get_xxsm_count);
+                latency = FETCH(filecache_get_xxsm_timing);
+                count = FETCH(filecache_get_xxsm_count);
+                sz = "XXSM";
             }
-            // JB Make DEBUG
-            log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_fresh_fd: GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
                 sz, st.st_size, path, elapsed_time, (latency / count));
         }
         else if (code == 404) {
@@ -948,7 +961,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         time_t elapsed_time;
         unsigned long latency;
         unsigned long count;
-        char *sz;
+        const char *sz;
         log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: retry_curl_easy_perform succeeds (fd=%d)", fd);
 
         // Ensure that it's a 2xx response code.
@@ -965,49 +978,48 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         }
         elapsed_time = time(NULL) - start_time;
         if (st.st_size > XLG) {
-            TIMING(filecache_put_XLG_timing, elapsed_time);
-            BUMP(filecache_put_XLG_count);
-            latency = FETCH(filecache_put_XLG_timing);
-            count = FETCH(filecache_put_XLG_count);
+            TIMING(filecache_put_xlg_timing, elapsed_time);
+            BUMP(filecache_put_xlg_count);
+            latency = FETCH(filecache_put_xlg_timing);
+            count = FETCH(filecache_put_xlg_count);
             sz = "XLG";
         }
         else if (st.st_size > LG) {
-            TIMING(filecache_put_LG_timing, elapsed_time);
-            BUMP(filecache_put_LG_count);
-            latency = FETCH(filecache_put_LG_timing);
-            count = FETCH(filecache_put_LG_count);
+            TIMING(filecache_put_lg_timing, elapsed_time);
+            BUMP(filecache_put_lg_count);
+            latency = FETCH(filecache_put_lg_timing);
+            count = FETCH(filecache_put_lg_count);
             sz = "LG";
          }
         else if (st.st_size > MED) {
-            TIMING(filecache_put_MED_timing, elapsed_time);
-            BUMP(filecache_put_MED_count);
-            latency = FETCH(filecache_put_MED_timing);
-            count = FETCH(filecache_put_MED_count);
+            TIMING(filecache_put_med_timing, elapsed_time);
+            BUMP(filecache_put_med_count);
+            latency = FETCH(filecache_put_med_timing);
+            count = FETCH(filecache_put_med_count);
             sz = "MED";
         }
         else if (st.st_size > SM) {
-            TIMING(filecache_put_SM_timing, elapsed_time);
-            BUMP(filecache_put_SM_count);
-            latency = FETCH(filecache_put_SM_timing);
-            count = FETCH(filecache_put_SM_count);
+            TIMING(filecache_put_sm_timing, elapsed_time);
+            BUMP(filecache_put_sm_count);
+            latency = FETCH(filecache_put_sm_timing);
+            count = FETCH(filecache_put_sm_count);
             sz = "SM";
         }
         else if (st.st_size > XSM) {
-            TIMING(filecache_put_XSM_timing, elapsed_time);
-            BUMP(filecache_put_XSM_count);
-            latency = FETCH(filecache_put_XSM_timing);
-            count = FETCH(filecache_put_XSM_count);
+            TIMING(filecache_put_xsm_timing, elapsed_time);
+            BUMP(filecache_put_xsm_count);
+            latency = FETCH(filecache_put_xsm_timing);
+            count = FETCH(filecache_put_xsm_count);
             sz = "XSM";
         }
         else {
-            TIMING(filecache_put_XXSM_timing, elapsed_time);
-            BUMP(filecache_put_XXSM_count);
-            latency = FETCH(filecache_put_XXSM_timing);
-            count = FETCH(filecache_put_XXSM_count);
+            TIMING(filecache_put_xxsm_timing, elapsed_time);
+            BUMP(filecache_put_xxsm_count);
+            latency = FETCH(filecache_put_xxsm_timing);
+            count = FETCH(filecache_put_xxsm_count);
             sz = "XXSM";
         }
-        // JB Make DEBUG
-        log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_fresh_fd: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
+        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
             sz, st.st_size, path, elapsed_time, (latency / count));
     }
 

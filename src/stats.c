@@ -240,19 +240,91 @@ void dump_stats(bool log, const char *cache_path) {
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  key2path:       %u", FETCH(filecache_key2path));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  get200count:    %u", FETCH(filecache_get200_count));
+    
+    snprintf(str, MAX_LINE_LEN, "  get_xxsm_count:    %u", FETCH(filecache_get_xxsm_count));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  get200totaltime: %u", FETCH(filecache_get200_timing));
+    snprintf(str, MAX_LINE_LEN, "  get_xxsm_totaltime: %u", FETCH(filecache_get_xxsm_timing));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  get200avelat    %u", (FETCH(filecache_get200_timing) / FETCH(filecache_put200_count)));
+    snprintf(str, MAX_LINE_LEN, "  get_xxsm_avelat    %u", (FETCH(filecache_get_xxsm_timing) / FETCH(filecache_get_xxsm_count)));
     print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  put200count:    %u", FETCH(filecache_put200_count));
+    
+    snprintf(str, MAX_LINE_LEN, "  get_xsm_count:    %u", FETCH(filecache_get_xsm_count));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  put200totaltime: %u", FETCH(filecache_put200_timing));
+    snprintf(str, MAX_LINE_LEN, "  get_xsm_totaltime: %u", FETCH(filecache_get_xsm_timing));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  put200avelat    %u", (FETCH(filecache_put200_timing) / FETCH(filecache_put200_count)));
+    snprintf(str, MAX_LINE_LEN, "  get_xsm_avelat    %u", (FETCH(filecache_get_xsm_timing) / FETCH(filecache_get_xsm_count)));
     print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-
+    
+    snprintf(str, MAX_LINE_LEN, "  get_sm_count:    %u", FETCH(filecache_get_sm_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_sm_totaltime: %u", FETCH(filecache_get_sm_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_sm_avelat    %u", (FETCH(filecache_get_sm_timing) / FETCH(filecache_get_sm_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  get_med_count:    %u", FETCH(filecache_get_med_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_med_totaltime: %u", FETCH(filecache_get_med_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_med_avelat    %u", (FETCH(filecache_get_med_timing) / FETCH(filecache_get_med_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  get_lg_count:    %u", FETCH(filecache_get_lg_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_lg_totaltime: %u", FETCH(filecache_get_lg_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_lg_avelat    %u", (FETCH(filecache_get_lg_timing) / FETCH(filecache_get_lg_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  get_xlg_count:    %u", FETCH(filecache_get_xlg_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_xlg_totaltime: %u", FETCH(filecache_get_xlg_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get_xlg_avelat    %u", (FETCH(filecache_get_xlg_timing) / FETCH(filecache_get_xlg_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  put_xxsm_count:    %u", FETCH(filecache_put_xxsm_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_xxsm_totaltime: %u", FETCH(filecache_put_xxsm_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_xxsm_avelat    %u", (FETCH(filecache_put_xxsm_timing) / FETCH(filecache_put_xxsm_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  put_xsm_count:    %u", FETCH(filecache_put_xsm_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_xsm_totaltime: %u", FETCH(filecache_put_xsm_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_xsm_avelat    %u", (FETCH(filecache_put_xsm_timing) / FETCH(filecache_put_xsm_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  put_sm_count:    %u", FETCH(filecache_put_sm_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_sm_totaltime: %u", FETCH(filecache_put_sm_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_sm_avelat    %u", (FETCH(filecache_put_sm_timing) / FETCH(filecache_put_sm_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  put_med_count:    %u", FETCH(filecache_put_med_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_med_totaltime: %u", FETCH(filecache_put_med_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_med_avelat    %u", (FETCH(filecache_put_med_timing) / FETCH(filecache_put_med_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  put_lg_count:    %u", FETCH(filecache_put_lg_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_lg_totaltime: %u", FETCH(filecache_put_lg_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_lg_avelat    %u", (FETCH(filecache_put_lg_timing) / FETCH(filecache_put_lg_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
+    snprintf(str, MAX_LINE_LEN, "  put_xlg_count:    %u", FETCH(filecache_put_xlg_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_xlg_totaltime: %u", FETCH(filecache_put_xlg_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put_xlg_avelat    %u", (FETCH(filecache_put_xlg_timing) / FETCH(filecache_put_xlg_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    
     snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  local_gen:      %u", FETCH(statcache_local_gen));
