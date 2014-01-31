@@ -241,7 +241,7 @@ static void create_file(struct filecache_sdata *sdata, const char *cache_path,
     // The local copy currently trumps the server one, no matter how old.
     pdata->last_server_update = 0;
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "create_file: Updating file cache for %d : %s : %s : timestamp %ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "create_file: Updating file cache for %d : %s : %s : timestamp %lu.", sdata->fd, path, pdata->filename, pdata->last_server_update);
     filecache_pdata_set(cache, path, pdata, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "create_file: ");
@@ -356,8 +356,10 @@ static void get_fresh_fd(filecache_t *cache,
     char response_filename[PATH_MAX] = "\0";
     int response_fd = -1;
     bool close_response_fd = true;
+    time_t start_time;
 
     BUMP(filecache_fresh_fd);
+    start_time = time(NULL);
 
     assert(pdatap);
     pdata = *pdatap;
@@ -496,7 +498,7 @@ static void get_fresh_fd(filecache_t *cache,
             // Mark the cache item as revalidated at the current time.
             pdata->last_server_update = time(NULL);
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %ul : etag %s.", path, pdata->filename, pdata->last_server_update, pdata->etag);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %lu : etag %s.", path, pdata->filename, pdata->last_server_update, pdata->etag);
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 304: ");
@@ -521,6 +523,7 @@ static void get_fresh_fd(filecache_t *cache,
             }
         }
         else if (code == 200) {
+            time_t elapsed_time;
             // Archive the old temp file path for unlinking after replacement.
             char old_filename[PATH_MAX];
             bool unlink_old = false;
@@ -549,7 +552,7 @@ static void get_fresh_fd(filecache_t *cache,
 
             sdata->fd = response_fd;
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %ul.", path, pdata->filename, pdata->last_server_update);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %lu.", path, pdata->filename, pdata->last_server_update);
             filecache_pdata_set(cache, path, pdata, &tmpgerr);
             if (tmpgerr) {
                 memset(sdata, 0, sizeof(struct filecache_sdata));
@@ -566,6 +569,12 @@ static void get_fresh_fd(filecache_t *cache,
                 unlink(old_filename);
                 log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
+            elapsed_time = time(NULL) - start_time;
+            TIMING(filecache_get200_timing, elapsed_time);
+            BUMP(filecache_get200_count);
+            // JB Make DEBUG
+            log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: Current:Average latency GET 200 for %s -- %lu :: %lu", path,
+                elapsed_time, (FETCH(filecache_get200_timing) / FETCH(filecache_get200_count)));
         }
         else if (code == 404) {
             struct stat_cache_value *value;
@@ -586,7 +595,7 @@ static void get_fresh_fd(filecache_t *cache,
                 
                 if (pdata) lsu = pdata->last_server_update;
                 
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %ul %ul %ul %ul); deleting...", 
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %lu %lu %lu %lu); deleting...", 
                     path, lg, sz, atime, lsu);
                     
                 stat_cache_delete(cache, path, NULL);
@@ -704,7 +713,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path,
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
 
     if (sdata->fd >= 0) {
-        if (pdata) log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: Setting fd to session data structure with fd %d for %s :: %s:%ul.", sdata->fd, path, pdata->filename, pdata->last_server_update);
+        if (pdata) log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: Setting fd to session data structure with fd %d for %s :: %s:%lu.", sdata->fd, path, pdata->filename, pdata->last_server_update);
         else log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: Setting fd to session data structure with fd %d for %s :: (no pdata).", sdata->fd, path);
         info->fh = (uint64_t) sdata;
         goto finish;
@@ -843,9 +852,11 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     struct curl_slist *slist = NULL;
     struct stat st;
     long response_code;
+    time_t start_time;
     FILE *fp;
 
     BUMP(filecache_return_etag);
+    start_time = time(NULL);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "enter: put_return_etag(,%s,%d,,)", path, fd);
 
@@ -891,6 +902,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         goto finish;
     }
     else {
+        time_t elapsed_time;
         log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: retry_curl_easy_perform succeeds (fd=%d)", fd);
 
         // Ensure that it's a 2xx response code.
@@ -905,6 +917,12 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
                 response_code);
             goto finish;
         }
+        elapsed_time = time(NULL) - start_time;
+        TIMING(filecache_put200_timing, elapsed_time);
+        BUMP(filecache_put200_count);
+        // JB Make DEBUG
+        log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_return_etag: Current:Average latency PUT 200 for %s -- %lu:%lu", path,
+            elapsed_time, (FETCH(filecache_put200_timing) / FETCH(filecache_put200_count)));
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "PUT returns etag: %s", etag);
@@ -1028,7 +1046,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
                 goto finish;
             }
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: PUT successful: %s : %s : old-timestamp: %ul: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: PUT successful: %s : %s : old-timestamp: %lu: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
 
             // If the PUT succeeded, the file isn't locally modified.
             sdata->modified = false;
@@ -1055,7 +1073,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             goto finish;
         }
     }
-    log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Updated stat cache %d:%s:%s:%ul", sdata->fd, path, pdata->filename, pdata->last_server_update);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Updated stat cache %d:%s:%s:%lu", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
 finish:
 
@@ -1267,7 +1285,7 @@ void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *
         return;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_pdata_move: Update last_server_update on %s: timestamp: %ul", pdata->filename, pdata->last_server_update);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_pdata_move: Update last_server_update on %s: timestamp: %lu", pdata->filename, pdata->last_server_update);
 
     filecache_pdata_set(cache, new_path, pdata, &tmpgerr);
     if (tmpgerr) {

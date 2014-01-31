@@ -51,11 +51,11 @@ struct size_s {
     int interval;
 };
 
-struct size_s sizes[] = { {"xl", 1024 * 1024 * 100, 40},
-                        {"lg", 1024 * 1024 * 10, 20},
-                        {"med", 1024 * 1024, 4},
-                        {"sm", 1024 * 100, 2},
-                        {"xs", 1024 * 10, 2}
+struct size_s sizes[] = { {"xl", 1024 * 1024 * 100 + 1, 120},
+                        {"lg", 1024 * 1024 * 10 + 1, 100},
+                        {"med", 1024 * 1024 + 1, 80},
+                        {"sm", 1024 * 100 + 1, 40},
+                        {"xs", 1024 * 10 + 1, 40}
                       };
 
 
@@ -86,7 +86,7 @@ static char randomchar() {
 }
 
 static int writeread(char *basename, int results[], time_t start_time, unsigned num_iters, unsigned interval,
-        time_t latencyResults[2][max_iters][collection_points]) {
+        time_t latencyResults[num_sizes][max_iters][collection_points]) {
     char *wbuf;
     char filename[PATH_MAX];
     int fd;
@@ -113,68 +113,81 @@ static int writeread(char *basename, int results[], time_t start_time, unsigned 
 
             if (doing_write) {
                 int bytes_written;
-                v_printf("write: ");
+                bool success = true;
+                v_printf("Write: %lu\n", time(NULL));
                 sprintf(filename, "%s-%s-%d", basename, sizes[idx].name, iter);
                 unlink(filename);
-                latencyResults[idx][iter][write_start] = time(NULL);
+                sleep(2); // So the delete and the create are not on the same second
                 fd = open(filename, O_RDWR | O_CREAT, 0640);
                 if (fd < 0) {
                     ++results[OpenErrors];
                     v_printf("OPEN ERROR: open failed on %s : %d %s\n", filename, errno, strerror(errno));
-                    latencyResults[idx][iter][write_end] = time(NULL);
+                    // No PUT on error; use sentinel values
+                    latencyResults[idx][iter][write_start] = 0;
+                    latencyResults[idx][iter][write_end] = 9999;
+                    success = false;
                 }
                 else {
-                    v_printf(".");
-                    v_printf("%d: %lu: ", idx, latencyResults[idx][iter][write_start]);
                     bytes_written = write(fd, wbuf, sizes[idx].size);
-                    latencyResults[idx][iter][write_end] = time(NULL);
-                    v_printf("%d: %lu: ", idx, latencyResults[idx][iter][write_end]);
                     if (bytes_written != sizes[idx].size) {
                         ++results[WriteErrors];
-                        v_printf("WRITE ERROR: bytes_written = %d, write_size = %d\n", bytes_written, sizes[idx].size);
+                        success = false;
+                        // v_printf("WRITE ERROR: bytes_written = %d, write_size = %d\n", bytes_written, sizes[idx].size);
                     }
                     else {
                         ++results[Writes];
-                        v_printf("Write Success: %s\n", filename);
+                        // v_printf("Write Success: %s\n", filename);
                     }
+                    // The PUT happens on the close
+                    latencyResults[idx][iter][write_start] = time(NULL);
+                    // v_printf("%s :: Write Start: %d: %lu\n", filename, idx, latencyResults[idx][iter][write_start]);
                     close(fd);
+                    latencyResults[idx][iter][write_end] = time(NULL);
+                    if (success) {
+                        v_printf("Write: %s :: %d: %lu :: %lu\n", filename, idx, latencyResults[idx][iter][write_start], latencyResults[idx][iter][write_end]);
+                    }
                 }
             }
             else {
                 int bytes_read;
+                int myerrno = ENOENT;
                 char *rbuf = wbuf;
-                v_printf("read: ");
+                v_printf("Read: %lu\n", time(NULL));
                 sprintf(filename, "%s-%s-%d", basename, sizes[idx].name, iter);
-                latencyResults[idx][iter][read_start] = time(NULL);
                 fd = -1;
-                for (int idx = 0; idx < 4, fd < 0; idx++) {
+                for (int jdx = 0; jdx < 60 && fd < 0; jdx++) {
+                    // If the error is something other than ENOENT, don't reset the start time
+                    if (myerrno == ENOENT) latencyResults[idx][iter][read_start] = time(NULL);
+                    // v_printf("%s :: Read Start: %d: %lu\n", filename, idx, latencyResults[idx][iter][read_start]);
+                    errno = 0;
                     fd = open(filename, O_RDWR , 0640);
+                    latencyResults[idx][iter][read_end] = time(NULL);
+                    // v_printf("%s :: Read Finish: %d: %lu : %lu errno: %d %s\n", filename, idx, latencyResults[idx][iter][read_start], latencyResults[idx][iter][read_end], errno, strerror(errno));
+                    myerrno = errno;
                     if (fd < 0) sleep(1);
                 }
                 if (fd < 0) {
                     ++results[OpenErrors];
                     v_printf("OPEN ERROR: open failed on %s : %d %s\n", filename, errno, strerror(errno));
-                    latencyResults[idx][iter][read_end] = time(NULL);
+                    // No GET on error; use sentinel values
+                    latencyResults[idx][iter][read_start] = 0;
+                    latencyResults[idx][iter][read_end] = 9999;
                 }
                 else {
-                    v_printf(".");
-                    v_printf("%d: %lu: ", idx, latencyResults[idx][iter][read_start]);
                     bytes_read = read(fd, rbuf, sizes[idx].size);
-                    latencyResults[idx][iter][read_end] = time(NULL);
-                    v_printf("%d: %lu: ", idx, latencyResults[idx][iter][read_end]);
                     if (bytes_read != sizes[idx].size) {
                         ++results[ReadErrors];
                         v_printf("READ ERROR: bytes_read = %d, read_size = %d : %d %s\n", bytes_read, sizes[idx].size, errno, strerror(errno));
                     }
                     else {
                         ++results[Reads];
-                        v_printf("Read Success: %s\n", filename);
+                        v_printf("Read: %s :: %d: %lu :: %lu\n", filename, idx, latencyResults[idx][iter][read_start], latencyResults[idx][iter][read_end]);
                     }
                     close(fd);
                 }
             }
             
-            v_printf("\n");
+            // v_printf("Calculating ...\n");
             start_time += sizes[idx].interval;
             current_time = time(NULL);
             sleep_time = start_time - current_time;
@@ -183,6 +196,7 @@ static int writeread(char *basename, int results[], time_t start_time, unsigned 
                 printf("Exiting ...\n");
                 return -1;
             }
+            v_printf("Sleeping %lu\n", sleep_time);
             sleep(sleep_time);
         }
     }
@@ -218,7 +232,7 @@ int main(int argc, char *argv[]) {
     time_t start_time = 0; // Need a start time to coordinate two processes
     int errors = 0;
     int results[ResultSize];
-    time_t latencyResults[2][max_iters][collection_points];
+    time_t latencyResults[num_sizes][max_iters][collection_points];
     bool fail = false;
 
     while ((opt = getopt (argc, argv, "vhi:t:")) != -1) {
@@ -256,7 +270,7 @@ int main(int argc, char *argv[]) {
     }
     else {
         doing_write = false;
-        start_time += 1; // Make reads start a second later; they will self-correct to start after the write has finished
+        start_time += 2; // Make reads start a second later; they will self-correct to start after the write has finished
     }
 
     for (int idx = 0; idx < ResultSize; idx++) {

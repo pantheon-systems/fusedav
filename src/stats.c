@@ -240,6 +240,18 @@ void dump_stats(bool log, const char *cache_path) {
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  key2path:       %u", FETCH(filecache_key2path));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get200count:    %u", FETCH(filecache_get200_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get200totaltime: %u", FETCH(filecache_get200_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  get200avelat    %u", (FETCH(filecache_get200_timing) / FETCH(filecache_put200_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put200count:    %u", FETCH(filecache_put200_count));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put200totaltime: %u", FETCH(filecache_put200_timing));
+    print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  put200avelat    %u", (FETCH(filecache_put200_timing) / FETCH(filecache_put200_count)));
+    print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
 
     snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
