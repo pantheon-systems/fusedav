@@ -433,8 +433,6 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
     value.st = st;
 
     if (status_code == 410) {
-        bool do_unlink = false;
-
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Deleting from stat cache: %s", path);
         stat_cache_delete(config->cache, path, &subgerr1);
         filecache_delete(config->cache, path, true, &subgerr2);
