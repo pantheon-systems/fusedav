@@ -45,6 +45,13 @@
 // Remove filecache files older than 8 days
 #define AGE_OUT_THRESHOLD 691200
 
+// Keeping track of file sizes processed
+#define XLG 100 * 1024 * 1024
+#define LG 10 * 1024 * 1024
+#define MED 1024 * 1024
+#define SM 100 * 1024
+#define XSM 10 * 1024
+
 // Entries for stat and file cache are in the ldb cache; fc: designates filecache entries
 static const char * filecache_prefix = "fc:";
 
@@ -524,6 +531,8 @@ static void get_fresh_fd(filecache_t *cache,
         }
         else if (code == 200) {
             time_t elapsed_time;
+            unsigned long latency;
+            unsigned long count;
             // Archive the old temp file path for unlinking after replacement.
             char old_filename[PATH_MAX];
             bool unlink_old = false;
@@ -570,11 +579,45 @@ static void get_fresh_fd(filecache_t *cache,
                 log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
             elapsed_time = time(NULL) - start_time;
-            TIMING(filecache_get200_timing, elapsed_time);
-            BUMP(filecache_get200_count);
+            if (st.st_size > XLG) {
+                TIMING(filecache_get_XLG_timing, elapsed_time);
+                BUMP(filecache_get_XLG_count);
+                latency = FETCH(filecache_get_XLG_timing);
+                count = FETCH(filecache_get_XLG_count);
+            }
+            else if (st.st_size > LG) {
+                TIMING(filecache_get_LG_timing, elapsed_time);
+                BUMP(filecache_get_LG_count);
+                latency = FETCH(filecache_get_LG_timing);
+                count = FETCH(filecache_get_LG_count);
+             }
+            else if (st.st_size > MED) {
+                TIMING(filecache_get_MED_timing, elapsed_time);
+                BUMP(filecache_get_MED_count);
+                latency = FETCH(filecache_get_MED_timing);
+                count = FETCH(filecache_get_MED_count);
+            }
+            else if (st.st_size > SM) {
+                TIMING(filecache_get_SM_timing, elapsed_time);
+                BUMP(filecache_get_SM_count);
+                latency = FETCH(filecache_get_SM_timing);
+                count = FETCH(filecache_get_SM_count);
+            }
+            else if (st.st_size > XSM) {
+                TIMING(filecache_get_XSM_timing, elapsed_time);
+                BUMP(filecache_get_XSM_count);
+                latency = FETCH(filecache_get_XSM_timing);
+                count = FETCH(filecache_get_XSM_count);
+            }
+            else {
+                TIMING(filecache_get_XXSM_timing, elapsed_time);
+                BUMP(filecache_get_XXSM_count);
+                latency = FETCH(filecache_get_XXSM_timing);
+                count = FETCH(filecache_get_XXSM_count);
+            }
             // JB Make DEBUG
-            log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: Current:Average latency GET 200 for %s -- %lu :: %lu", path,
-                elapsed_time, (FETCH(filecache_get200_timing) / FETCH(filecache_get200_count)));
+            log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_fresh_fd: GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
+                sz, st.st_size, path, elapsed_time, (latency / count));
         }
         else if (code == 404) {
             struct stat_cache_value *value;
@@ -903,6 +946,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     }
     else {
         time_t elapsed_time;
+        unsigned long latency;
+        unsigned long count;
+        char *sz;
         log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: retry_curl_easy_perform succeeds (fd=%d)", fd);
 
         // Ensure that it's a 2xx response code.
@@ -918,11 +964,51 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             goto finish;
         }
         elapsed_time = time(NULL) - start_time;
-        TIMING(filecache_put200_timing, elapsed_time);
-        BUMP(filecache_put200_count);
+        if (st.st_size > XLG) {
+            TIMING(filecache_put_XLG_timing, elapsed_time);
+            BUMP(filecache_put_XLG_count);
+            latency = FETCH(filecache_put_XLG_timing);
+            count = FETCH(filecache_put_XLG_count);
+            sz = "XLG";
+        }
+        else if (st.st_size > LG) {
+            TIMING(filecache_put_LG_timing, elapsed_time);
+            BUMP(filecache_put_LG_count);
+            latency = FETCH(filecache_put_LG_timing);
+            count = FETCH(filecache_put_LG_count);
+            sz = "LG";
+         }
+        else if (st.st_size > MED) {
+            TIMING(filecache_put_MED_timing, elapsed_time);
+            BUMP(filecache_put_MED_count);
+            latency = FETCH(filecache_put_MED_timing);
+            count = FETCH(filecache_put_MED_count);
+            sz = "MED";
+        }
+        else if (st.st_size > SM) {
+            TIMING(filecache_put_SM_timing, elapsed_time);
+            BUMP(filecache_put_SM_count);
+            latency = FETCH(filecache_put_SM_timing);
+            count = FETCH(filecache_put_SM_count);
+            sz = "SM";
+        }
+        else if (st.st_size > XSM) {
+            TIMING(filecache_put_XSM_timing, elapsed_time);
+            BUMP(filecache_put_XSM_count);
+            latency = FETCH(filecache_put_XSM_timing);
+            count = FETCH(filecache_put_XSM_count);
+            sz = "XSM";
+        }
+        else {
+            TIMING(filecache_put_XXSM_timing, elapsed_time);
+            BUMP(filecache_put_XXSM_count);
+            latency = FETCH(filecache_put_XXSM_timing);
+            count = FETCH(filecache_put_XXSM_count);
+            sz = "XXSM";
+        }
         // JB Make DEBUG
-        log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_return_etag: Current:Average latency PUT 200 for %s -- %lu:%lu", path,
-            elapsed_time, (FETCH(filecache_put200_timing) / FETCH(filecache_put200_count)));
+        log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_fresh_fd: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
+            sz, st.st_size, path, elapsed_time, (latency / count));
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "PUT returns etag: %s", etag);
