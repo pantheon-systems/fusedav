@@ -289,11 +289,11 @@ void dump_stats(bool log, const char *cache_path) {
     // Since the names are of variable lengths, the values don't line up.
     // Figure out a way to align
     for (int idx = 0; idx < latency_items; idx++) {
-        snprintf(str, MAX_LINE_LEN, "  %s_count: %lu", latency[idx].name, latency[idx].count);
+        snprintf(str, MAX_LINE_LEN, "  %s_count:     %lu", latency[idx].name, latency[idx].count);
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-        snprintf(str, MAX_LINE_LEN, "  %s_timing: %lu", latency[idx].name, latency[idx].timing);
+        snprintf(str, MAX_LINE_LEN, "  %s_timing:    %lu", latency[idx].name, latency[idx].timing);
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-        snprintf(str, MAX_LINE_LEN, "  %s_avelat: %lu", latency[idx].name, latency[idx].count > 0 ? (latency[idx].timing / latency[idx].count) : 0);
+        snprintf(str, MAX_LINE_LEN, "  %s_avelat:    %lu", latency[idx].name, latency[idx].count > 0 ? (latency[idx].timing / latency[idx].count) : 0);
         print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     }
     
