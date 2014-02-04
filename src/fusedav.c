@@ -1088,6 +1088,7 @@ finish:
 
 static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    const char *cache_uri = NULL;
     GError *gerr = NULL;
     GError *gerr2 = NULL;
     int ret = 0;
@@ -1100,7 +1101,8 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // We still need to close the file.
     
     if (path != NULL) {
-        bool wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+        if (config->using_peer_cache) cache_uri = config->cache_uri;
+        bool wrote_data = filecache_sync(config->cache, path, info, true, cache_uri, &gerr);
     
         // If we didn't write data, we either got an error, which we handle below, or there is no error,
         // so just fall through (not writable, not modified are examples)
@@ -1203,6 +1205,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
 static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    const char *cache_uri = NULL;
     GError *gerr = NULL;
     bool wrote_data;
 
@@ -1213,10 +1216,11 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_fsync(%s)", path ? path : "null path");
 
+    if (config->using_peer_cache) cache_uri = config->cache_uri;
     // If path is NULL because we are accessing a bare file descriptor,
     // let filecache_sync handle it since we need to get the file
     // descriptor there
-    wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+    wrote_data = filecache_sync(config->cache, path, info, true, cache_uri, &gerr);
     if (gerr) {
         return processed_gerror("dav_fsync: ", path, &gerr);
     }
@@ -1239,6 +1243,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
 
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    const char *cache_uri = NULL;
     GError *gerr = NULL;
 
     BUMP(dav_flush);
@@ -1252,7 +1257,8 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
         struct stat_cache_value value;
         memset(&value, 0, sizeof(struct stat_cache_value));
 
-        wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
+        if (config->using_peer_cache) cache_uri = config->cache_uri;
+        wrote_data = filecache_sync(config->cache, path, info, true, cache_uri, &gerr);
         if (gerr) {
             return processed_gerror("dav_flush: ", path, &gerr);
         }
@@ -1418,6 +1424,7 @@ static bool file_too_big(off_t fsz, off_t maxsz) {
 
 static int dav_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
+    const char *cache_uri = NULL;
     GError *gerr = NULL;
     ssize_t bytes_written;
     struct stat_cache_value value;
@@ -1442,7 +1449,8 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 
     if (path != NULL) {
         int fd;
-        filecache_sync(config->cache, path, info, false, &gerr);
+        if (config->using_peer_cache) cache_uri = config->cache_uri;
+        filecache_sync(config->cache, path, info, false, cache_uri, &gerr);
         if (gerr) {
             return processed_gerror("dav_write: ", path, &gerr);
         }
@@ -1476,6 +1484,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    const char *cache_uri = NULL;
     GError *gerr = NULL;
     int fd;
 
@@ -1491,8 +1500,9 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
         return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
 
+    if (config->using_peer_cache) cache_uri = config->cache_uri;
     // Let sync handle a NULL path
-    filecache_sync(config->cache, path, info, false, &gerr);
+    filecache_sync(config->cache, path, info, false, cache_uri, &gerr);
     if (gerr) {
         return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
@@ -1562,6 +1572,7 @@ static int dav_chmod(__unused const char *path, __unused mode_t mode) {
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    const char *cache_uri = NULL;
     GError *gerr = NULL;
     int fd;
 
@@ -1578,7 +1589,8 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
     // @TODO: Perform a chmod here based on mode.
 
-    filecache_sync(config->cache, path, info, false, &gerr);
+    if (config->using_peer_cache) cache_uri = config->cache_uri;
+    filecache_sync(config->cache, path, info, false, cache_uri, &gerr);
     if (gerr) {
         return processed_gerror("dav_create: ", path, &gerr);
     }
