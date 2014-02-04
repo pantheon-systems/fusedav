@@ -165,7 +165,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
 
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    GError *subgerr = NULL ;
+    GError *subgerr1 = NULL ;
+    GError *subgerr2 = NULL ;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -177,9 +178,9 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         struct stat_cache_value *existing;
 
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
-        existing = stat_cache_value_get(config->cache, path, true, &subgerr);
-        if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
+        existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
+        if (subgerr1) {
+            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
             return;
         }
 
@@ -241,17 +242,24 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         }
 
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "Removing path: %s", path);
-        stat_cache_delete(config->cache, path, &subgerr);
-        if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
-            return;
+        stat_cache_delete(config->cache, path, &subgerr1);
+        filecache_delete(config->cache, path, true, &subgerr2);
+        // If we need to combine 2 errors, use one of the error messages in the propagated prefix
+        if (subgerr1 && subgerr2) {
+            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: %s :: ", subgerr2->message);
+        } 
+        else if (subgerr1) {
+            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
+        } 
+        else if (subgerr2) {
+            g_propagate_prefixed_error(gerr, subgerr2, "getdir_propfind_callback: ");
         }
     }
     else {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: CREATE %s (%lu)", path, status_code);
-        stat_cache_value_set(config->cache, path, &value, &subgerr);
-        if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "getdir_propfind_callback: ");
+        stat_cache_value_set(config->cache, path, &value, &subgerr1);
+        if (subgerr1) {
+            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
             return;
         }
     }
@@ -417,29 +425,41 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         unsigned long status_code, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    GError *tmpgerr = NULL;
+    GError *subgerr1 = NULL;
+    GError *subgerr2 = NULL;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
     if (status_code == 410) {
-        bool do_unlink = false;
-        
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: Deleting from stat cache: %s", path);
-        common_unlink(path, do_unlink, &tmpgerr);
-        if (tmpgerr) {
-            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
-            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Deleting from stat cache: %s", path);
+        stat_cache_delete(config->cache, path, &subgerr1);
+        filecache_delete(config->cache, path, true, &subgerr2);
+
+        // If we need to combine 2 errors, use one of the error messages in the propagated prefix
+        if (subgerr1 && subgerr2) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s: %s", path, subgerr1->message, subgerr2->message);
+            g_propagate_prefixed_error(gerr, subgerr1, "getattr_propfind_callback: %s :: ", subgerr2->message);
+            return;
+        } 
+        else if (subgerr1) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr1->message);
+            g_propagate_prefixed_error(gerr, subgerr1, "getattr_propfind_callback: ");
+            return;
+        } 
+        else if (subgerr2) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr2->message);
+            g_propagate_prefixed_error(gerr, subgerr2, "getattr_propfind_callback: ");
             return;
         }
     }
     else {
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: Adding to stat cache: %s", path);
-        stat_cache_value_set(config->cache, path, &value, &tmpgerr);
-        if (tmpgerr) {
-            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "getattr_propfind_callback: %s: %s", path, tmpgerr->message);
-            g_propagate_prefixed_error(gerr, tmpgerr, "getattr_propfind_callback: ");
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Adding to stat cache: %s", path);
+        stat_cache_value_set(config->cache, path, &value, &subgerr1);
+        if (subgerr1) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr1->message);
+            g_propagate_prefixed_error(gerr, subgerr1, "getattr_propfind_callback: ");
             return;
         }
     }
