@@ -29,7 +29,7 @@
 #define STAT_CACHE_OLD_DATA 2
 #define STAT_CACHE_NO_DATA 1
 
-#define STAT_CACHE_NEGATIVE_TTL 3
+#define STAT_CACHE_NEGATIVE_TTL 2
 
 /* Since ultimately we return errno-like values, assign them here to our errors.
  * The only one is a leveldb error. Use EIO, since it indicates something unusual
