@@ -394,6 +394,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     else if (response_code == 404 && !inject_error(props_error_spropfindunkcode)) {
         GError *subgerr = NULL;
         // Tell the callback that the item is gone.
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: 410 response, 404.");
         memset(&state.rstate, 0, sizeof(struct response_state));
         state.callback(state.userdata, path, state.rstate.st, 410, &subgerr);
         if (subgerr) {

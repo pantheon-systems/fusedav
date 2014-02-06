@@ -68,6 +68,30 @@ struct statistics {
     unsigned filecache_init;
     unsigned filecache_path2key;
     unsigned filecache_key2path;
+    unsigned filecache_get_xxsm_timing;
+    unsigned filecache_get_xxsm_count;
+    unsigned filecache_get_xsm_timing;
+    unsigned filecache_get_xsm_count;
+    unsigned filecache_get_sm_timing;
+    unsigned filecache_get_sm_count;
+    unsigned filecache_get_med_timing;
+    unsigned filecache_get_med_count;
+    unsigned filecache_get_lg_timing;
+    unsigned filecache_get_lg_count;
+    unsigned filecache_get_xlg_timing;
+    unsigned filecache_get_xlg_count;
+    unsigned filecache_put_xxsm_timing;
+    unsigned filecache_put_xxsm_count;
+    unsigned filecache_put_xsm_timing;
+    unsigned filecache_put_xsm_count;
+    unsigned filecache_put_sm_timing;
+    unsigned filecache_put_sm_count;
+    unsigned filecache_put_med_timing;
+    unsigned filecache_put_med_count;
+    unsigned filecache_put_lg_timing;
+    unsigned filecache_put_lg_count;
+    unsigned filecache_put_xlg_timing;
+    unsigned filecache_put_xlg_count;
 
     unsigned statcache_local_gen;
     unsigned statcache_path2key;
@@ -92,6 +116,7 @@ struct statistics {
 
 extern struct statistics stats;
 
+#define TIMING(op, timing) __sync_fetch_and_add(&stats.op, (timing))
 #define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
 
