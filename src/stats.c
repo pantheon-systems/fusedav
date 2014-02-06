@@ -88,7 +88,6 @@ void dump_stats(bool log, const char *cache_path) {
         const char *name;
     };
     struct latency_s latency[latency_items];
-        
     char str[MAX_LINE_LEN];
     int fd = -1;
     
@@ -160,94 +159,94 @@ void dump_stats(bool log, const char *cache_path) {
 
     snprintf(str, MAX_LINE_LEN, "Operations:");
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  chmod:          %u", FETCH(dav_chmod));
+    snprintf(str, MAX_LINE_LEN, "  chmod:            %u", FETCH(dav_chmod));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  chown:          %u", FETCH(dav_chown));
+    snprintf(str, MAX_LINE_LEN, "  chown:            %u", FETCH(dav_chown));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  create:         %u", FETCH(dav_create));
+    snprintf(str, MAX_LINE_LEN, "  create:           %u", FETCH(dav_create));
     print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
-    snprintf(str, MAX_LINE_LEN, "  fsync:          %u", FETCH(dav_fsync));
+    snprintf(str, MAX_LINE_LEN, "  fsync:            %u", FETCH(dav_fsync));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  flush:          %u", FETCH(dav_flush));
+    snprintf(str, MAX_LINE_LEN, "  flush:            %u", FETCH(dav_flush));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  ftruncate:      %u", FETCH(dav_ftruncate));
+    snprintf(str, MAX_LINE_LEN, "  ftruncate:        %u", FETCH(dav_ftruncate));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  fgetattr:       %u", FETCH(dav_fgetattr));
+    snprintf(str, MAX_LINE_LEN, "  fgetattr:         %u", FETCH(dav_fgetattr));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  getattr:        %u", FETCH(dav_getattr));
+    snprintf(str, MAX_LINE_LEN, "  getattr:          %u", FETCH(dav_getattr));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  mkdir:          %u", FETCH(dav_mkdir));
+    snprintf(str, MAX_LINE_LEN, "  mkdir:            %u", FETCH(dav_mkdir));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  mknod:          %u", FETCH(dav_mknod));
+    snprintf(str, MAX_LINE_LEN, "  mknod:            %u", FETCH(dav_mknod));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  open:           %u", FETCH(dav_open));
+    snprintf(str, MAX_LINE_LEN, "  open:             %u", FETCH(dav_open));
     print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
-    snprintf(str, MAX_LINE_LEN, "  read:           %u", FETCH(dav_read));
+    snprintf(str, MAX_LINE_LEN, "  read:             %u", FETCH(dav_read));
     print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
-    snprintf(str, MAX_LINE_LEN, "  readdir:        %u", FETCH(dav_readdir));
+    snprintf(str, MAX_LINE_LEN, "  readdir:          %u", FETCH(dav_readdir));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  release:        %u", FETCH(dav_release));
+    snprintf(str, MAX_LINE_LEN, "  release:          %u", FETCH(dav_release));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  rename:         %u", FETCH(dav_rename));
+    snprintf(str, MAX_LINE_LEN, "  rename:           %u", FETCH(dav_rename));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  rmdir:          %u", FETCH(dav_rmdir));
+    snprintf(str, MAX_LINE_LEN, "  rmdir:            %u", FETCH(dav_rmdir));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  unlink:         %u", FETCH(dav_unlink));
+    snprintf(str, MAX_LINE_LEN, "  unlink:           %u", FETCH(dav_unlink));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  utimens:        %u", FETCH(dav_utimens));
+    snprintf(str, MAX_LINE_LEN, "  utimens:          %u", FETCH(dav_utimens));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  write:          %u", FETCH(dav_write));
+    snprintf(str, MAX_LINE_LEN, "  write:            %u", FETCH(dav_write));
     print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
     // PROPFIND request went to server
-    snprintf(str, MAX_LINE_LEN, "  pf-nonnegative: %u", FETCH(fusedav_nonnegative_cache));
+    snprintf(str, MAX_LINE_LEN, "  pf-nonnegative:   %u", FETCH(fusedav_nonnegative_cache));
     print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
     // PROPFIND request didn't go to server
-    snprintf(str, MAX_LINE_LEN, "  pf-negative:    %u", FETCH(fusedav_negative_cache));
+    snprintf(str, MAX_LINE_LEN, "  pf-negative:      %u", FETCH(fusedav_negative_cache));
     print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
 
-    snprintf(str, MAX_LINE_LEN, "  cache_file:     %u", FETCH(filecache_cache_file));
+    snprintf(str, MAX_LINE_LEN, "  cache_file:       %u", FETCH(filecache_cache_file));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  pdata_set:      %u", FETCH(filecache_pdata_set));
+    snprintf(str, MAX_LINE_LEN, "  pdata_set:        %u", FETCH(filecache_pdata_set));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  create_file:    %u", FETCH(filecache_create_file));
+    snprintf(str, MAX_LINE_LEN, "  create_file:      %u", FETCH(filecache_create_file));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  pdata_get:      %u", FETCH(filecache_pdata_get));
+    snprintf(str, MAX_LINE_LEN, "  pdata_get:        %u", FETCH(filecache_pdata_get));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  fresh_fd:       %u", FETCH(filecache_fresh_fd));
+    snprintf(str, MAX_LINE_LEN, "  fresh_fd:         %u", FETCH(filecache_fresh_fd));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  open:           %u", FETCH(filecache_open));
+    snprintf(str, MAX_LINE_LEN, "  open:             %u", FETCH(filecache_open));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  read:           %u", FETCH(filecache_read));
+    snprintf(str, MAX_LINE_LEN, "  read:             %u", FETCH(filecache_read));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  write:          %u", FETCH(filecache_write));
+    snprintf(str, MAX_LINE_LEN, "  write:            %u", FETCH(filecache_write));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  close:          %u", FETCH(filecache_close));
+    snprintf(str, MAX_LINE_LEN, "  close:            %u", FETCH(filecache_close));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  return_etag:    %u", FETCH(filecache_return_etag));
+    snprintf(str, MAX_LINE_LEN, "  return_etag:      %u", FETCH(filecache_return_etag));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  sync:           %u", FETCH(filecache_sync));
+    snprintf(str, MAX_LINE_LEN, "  sync:             %u", FETCH(filecache_sync));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  truncate:       %u", FETCH(filecache_truncate));
+    snprintf(str, MAX_LINE_LEN, "  truncate:         %u", FETCH(filecache_truncate));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  delete:         %u", FETCH(filecache_delete));
+    snprintf(str, MAX_LINE_LEN, "  delete:           %u", FETCH(filecache_delete));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  pdata_move:     %u", FETCH(filecache_pdata_move));
+    snprintf(str, MAX_LINE_LEN, "  pdata_move:       %u", FETCH(filecache_pdata_move));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  orphans:        %u", FETCH(filecache_orphans));
+    snprintf(str, MAX_LINE_LEN, "  orphans:          %u", FETCH(filecache_orphans));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  cleanup:        %u", FETCH(filecache_cleanup));
+    snprintf(str, MAX_LINE_LEN, "  cleanup:          %u", FETCH(filecache_cleanup));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  get_fd:         %u", FETCH(filecache_get_fd));
+    snprintf(str, MAX_LINE_LEN, "  get_fd:           %u", FETCH(filecache_get_fd));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  set_error:      %u", FETCH(filecache_set_error));
+    snprintf(str, MAX_LINE_LEN, "  set_error:        %u", FETCH(filecache_set_error));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  forensic:       %u", FETCH(filecache_forensic_haven));
+    snprintf(str, MAX_LINE_LEN, "  forensic:         %u", FETCH(filecache_forensic_haven));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  init:           %u", FETCH(filecache_init));
+    snprintf(str, MAX_LINE_LEN, "  init:             %u", FETCH(filecache_init));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  path2key:       %u", FETCH(filecache_path2key));
+    snprintf(str, MAX_LINE_LEN, "  path2key:         %u", FETCH(filecache_path2key));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  key2path:       %u", FETCH(filecache_key2path));
+    snprintf(str, MAX_LINE_LEN, "  key2path:         %u", FETCH(filecache_key2path));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
 
     latency[0].count = FETCH(filecache_get_xxsm_count);
@@ -269,11 +268,11 @@ void dump_stats(bool log, const char *cache_path) {
     latency[4].timing = FETCH(filecache_get_lg_timing);
     latency[5].timing = FETCH(filecache_get_xlg_timing);
     latency[6].timing = FETCH(filecache_put_xxsm_timing);
-    latency[8].timing = FETCH(filecache_put_xsm_timing);
-    latency[9].timing = FETCH(filecache_put_sm_timing);
-    latency[10].timing = FETCH(filecache_put_med_timing);
-    latency[11].timing = FETCH(filecache_put_lg_timing);
-    latency[12].timing = FETCH(filecache_put_xlg_timing);
+    latency[7].timing = FETCH(filecache_put_xsm_timing);
+    latency[8].timing = FETCH(filecache_put_sm_timing);
+    latency[9].timing = FETCH(filecache_put_med_timing);
+    latency[10].timing = FETCH(filecache_put_lg_timing);
+    latency[11].timing = FETCH(filecache_put_xlg_timing);
     latency[0].name = "get_xxsm";
     latency[1].name = "get_xsm";
     latency[2].name = "get_sm";
@@ -287,54 +286,56 @@ void dump_stats(bool log, const char *cache_path) {
     latency[10].name = "put_lg";
     latency[11].name = "put_xlgm";
 
+    // Since the names are of variable lengths, the values don't line up.
+    // Figure out a way to align
     for (int idx = 0; idx < latency_items; idx++) {
-        snprintf(str, MAX_LINE_LEN, "  %s_count: %lu", latency[idx].name, latency[idx].count);
+        snprintf(str, MAX_LINE_LEN, "  %s_count:     %lu", latency[idx].name, latency[idx].count);
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-        snprintf(str, MAX_LINE_LEN, "  %s_timing: %lu", latency[idx].name, latency[idx].timing);
+        snprintf(str, MAX_LINE_LEN, "  %s_timing:    %lu", latency[idx].name, latency[idx].timing);
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-        snprintf(str, MAX_LINE_LEN, "  %s_avelat: %lu", latency[idx].name, latency[idx].count > 0 ? (latency[idx].timing / latency[idx].count) : 0);
+        snprintf(str, MAX_LINE_LEN, "  %s_avelat:    %lu", latency[idx].name, latency[idx].count > 0 ? (latency[idx].timing / latency[idx].count) : 0);
         print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     }
-            
+    
     snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  local_gen:      %u", FETCH(statcache_local_gen));
+    snprintf(str, MAX_LINE_LEN, "  local_gen:        %u", FETCH(statcache_local_gen));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  path2key:       %u", FETCH(statcache_path2key));
+    snprintf(str, MAX_LINE_LEN, "  path2key:         %u", FETCH(statcache_path2key));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  key2path:       %u", FETCH(statcache_key2path));
+    snprintf(str, MAX_LINE_LEN, "  key2path:         %u", FETCH(statcache_key2path));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  open:           %u", FETCH(statcache_open));
+    snprintf(str, MAX_LINE_LEN, "  open:             %u", FETCH(statcache_open));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  close:          %u", FETCH(statcache_close));
+    snprintf(str, MAX_LINE_LEN, "  close:            %u", FETCH(statcache_close));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  value_get:      %u", FETCH(statcache_value_get));
+    snprintf(str, MAX_LINE_LEN, "  value_get:        %u", FETCH(statcache_value_get));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  updated_ch:     %u", FETCH(statcache_updated_ch));
+    snprintf(str, MAX_LINE_LEN, "  updated_ch:       %u", FETCH(statcache_updated_ch));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  read_updated:   %u", FETCH(statcache_read_updated));
+    snprintf(str, MAX_LINE_LEN, "  read_updated:     %u", FETCH(statcache_read_updated));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  value_set:      %u", FETCH(statcache_value_set));
+    snprintf(str, MAX_LINE_LEN, "  value_set:        %u", FETCH(statcache_value_set));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  delete:         %u", FETCH(statcache_delete));
+    snprintf(str, MAX_LINE_LEN, "  delete:           %u", FETCH(statcache_delete));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  del_parent:     %u", FETCH(statcache_del_parent));
+    snprintf(str, MAX_LINE_LEN, "  del_parent:       %u", FETCH(statcache_del_parent));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  iter_free:      %u", FETCH(statcache_iter_free));
+    snprintf(str, MAX_LINE_LEN, "  iter_free:        %u", FETCH(statcache_iter_free));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  iter_init:      %u", FETCH(statcache_iter_init));
+    snprintf(str, MAX_LINE_LEN, "  iter_init:        %u", FETCH(statcache_iter_init));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  iter_current:   %u", FETCH(statcache_iter_current));
+    snprintf(str, MAX_LINE_LEN, "  iter_current:     %u", FETCH(statcache_iter_current));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  iter_next:      %u", FETCH(statcache_iter_next));
+    snprintf(str, MAX_LINE_LEN, "  iter_next:        %u", FETCH(statcache_iter_next));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  enumerate:      %u", FETCH(statcache_enumerate));
+    snprintf(str, MAX_LINE_LEN, "  enumerate:        %u", FETCH(statcache_enumerate));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  has_child:      %u", FETCH(statcache_has_child));
+    snprintf(str, MAX_LINE_LEN, "  has_child:        %u", FETCH(statcache_has_child));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  delete_older:   %u", FETCH(statcache_delete_older));
+    snprintf(str, MAX_LINE_LEN, "  delete_older:     %u", FETCH(statcache_delete_older));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  prune:          %u", FETCH(statcache_prune));
+    snprintf(str, MAX_LINE_LEN, "  prune:            %u", FETCH(statcache_prune));
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
 }
 

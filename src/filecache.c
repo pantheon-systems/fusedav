@@ -902,7 +902,7 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 
 /* PUT's from fd to URI */
 /* Our modification to include etag support on put */
-static void put_return_etag(const char *path, int fd, char *etag, const char *cache_uri, GError **gerr) {
+static void put_return_etag(const char *path, int fd, char *etag, const char *cache_filename, const char *cache_uri, GError **gerr) {
     CURL *session;
     CURLcode res;
     struct curl_slist *slist = NULL;
@@ -945,10 +945,10 @@ static void put_return_etag(const char *path, int fd, char *etag, const char *ca
 
     if (cache_uri) {
         char *t_cache_uri = NULL;
-        asprintf(&t_cache_uri, "Cache-URI: %s", cache_uri);
+        asprintf(&t_cache_uri, "Cache-URI: %s/files/%s", cache_uri, basename(cache_filename));
         slist = curl_slist_append(slist, t_cache_uri);
+        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "put_return_etag: using_peer_cache %s", t_cache_uri);
         free(t_cache_uri);
-        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "put_return_etag: using_peer_cache %s", cache_uri);
     }
     
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
@@ -1125,7 +1125,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
-            put_return_etag(path, sdata->fd, pdata->etag, cache_uri, &tmpgerr);
+            put_return_etag(path, sdata->fd, pdata->etag, pdata->filename, cache_uri, &tmpgerr);
             
             // if we fail PUT for any reason, file will eventually go to forensic haven.
             // We err in put_return_etag on:
