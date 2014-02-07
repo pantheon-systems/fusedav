@@ -1357,7 +1357,6 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
         // If rename fails, put this in the .txt file
         failed_rename = true;
     }
-    free(bpath);
     // do not pass bname to free; basename() does not return a free'able address
     free(newpath);
     newpath = NULL; // reusing below
@@ -1395,6 +1394,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
 
 finish:
     if (fd >= 0) close(fd);
+    free(bpath);
     free(buf);
     free(newpath);
     free(pdata);
