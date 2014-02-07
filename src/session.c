@@ -153,7 +153,7 @@ static void print_ipaddr_pair(char *msg) {
     end = strstr(addr, "..");
     end[0] = '\0';
     // We print the key=value pair.
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
