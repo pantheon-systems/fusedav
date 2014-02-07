@@ -58,8 +58,11 @@ struct fill_info {
 
 #define SAINT_MODE_DURATION 10
 
-pthread_mutex_t last_failure_mutex = PTHREAD_MUTEX_INITIALIZER;
-static time_t last_failure = 0;
+// last_failure is used to determine saint_mode.
+// Keep it by thread, so that if one thread goes
+// into saint mode, the others won't think they're
+// in saint mode, too.
+static __thread time_t last_failure = 0;
 
 enum ignore_freshness {OFF, ALREADY_FRESH, SAINT_MODE}; 
 
@@ -70,9 +73,7 @@ static bool use_saint_mode(void) {
     struct timespec now;
     bool use_saint;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    pthread_mutex_lock(&last_failure_mutex);
     use_saint = (last_failure + SAINT_MODE_DURATION >= now.tv_sec);
-    pthread_mutex_unlock(&last_failure_mutex);
     return use_saint;
 }
 
@@ -80,9 +81,7 @@ static void set_saint_mode(void) {
     struct timespec now;
     log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Using saint mode for %lu seconds.", SAINT_MODE_DURATION);
     clock_gettime(CLOCK_MONOTONIC, &now);
-    pthread_mutex_lock(&last_failure_mutex);
     last_failure = now.tv_sec;
-    pthread_mutex_unlock(&last_failure_mutex);
 }
 
 // GError mechanisms
