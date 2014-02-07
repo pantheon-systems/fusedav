@@ -153,7 +153,7 @@ static void print_ipaddr_pair(char *msg) {
     end = strstr(addr, "..");
     end[0] = '\0';
     // We print the key=value pair.
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -581,6 +581,7 @@ int retry_curl_easy_perform(CURL *session) {
     
     res = curl_easy_perform(session);
     curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+    res = CURLE_COULDNT_CONNECT;
     while ((res != CURLE_OK || response_code >= 500) && iter < max_tries) {
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "retry_curl_easy_perform: res %d %s; response_code %d", res, curl_easy_strerror(res), response_code);
         // Force recreation of the random slist
@@ -588,6 +589,7 @@ int retry_curl_easy_perform(CURL *session) {
         res = curl_easy_perform(session);
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
         ++iter;
+        if (iter < 3) res = CURLE_COULDNT_CONNECT;
     }
     return res;
 }
