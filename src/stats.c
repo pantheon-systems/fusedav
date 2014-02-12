@@ -248,7 +248,7 @@ void dump_stats(bool log, const char *cache_path) {
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  key2path:         %u", FETCH(filecache_key2path));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    
+
     latency[0].count = FETCH(filecache_get_xxsm_count);
     latency[1].count = FETCH(filecache_get_xsm_count);
     latency[2].count = FETCH(filecache_get_sm_count);

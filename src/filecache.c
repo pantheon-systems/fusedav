@@ -96,7 +96,7 @@ void filecache_init(char *cache_path, GError **gerr) {
             return;
         }
     }
-    
+
     snprintf(path, PATH_MAX, "%s/files", cache_path);
     if (mkdir(path, 0770) == -1) {
         if (errno != EEXIST || inject_error(filecache_error_init2)) {
@@ -104,7 +104,7 @@ void filecache_init(char *cache_path, GError **gerr) {
             return;
         }
     }
-    
+
     snprintf(path, PATH_MAX, "%s/%s", cache_path, forensic_haven_dir);
     if (mkdir(path, 0770) == -1) {
         if (errno != EEXIST || inject_error(filecache_error_init3)) {
@@ -142,6 +142,7 @@ static char *path2key(const char *path) {
  */
 struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...) {
     va_list ap;
+    int ret;
 
     // If we are injecting errors, we can trigger enhanced logging by decrementing
     // the log level (LOG_INFO -> LOG_NOTICE)
@@ -152,9 +153,11 @@ struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int
         char *user_agent = NULL;
         char msg[81] = {0};
         slist = curl_slist_append(slist, "Log-To-Journal: true");
-        asprintf(&user_agent, "User-Agent: %s", get_user_agent());
-        slist = curl_slist_append(slist, user_agent);
-        free(user_agent);
+        ret = asprintf(&user_agent, "User-Agent: %s", get_user_agent());
+        if (ret != -1) {
+            slist = curl_slist_append(slist, user_agent);
+            free(user_agent);
+        }
         va_start(ap, format);
         vsnprintf(msg, 80, format, ap);
         log_print(log_level, section, msg);
@@ -446,12 +449,15 @@ static void get_fresh_fd(filecache_t *cache,
     }
 
     if (pdata) {
+        int ret;
         char *header = NULL;
 
         // In case we have stale cache data, set a header to aim for a 304.
-        asprintf(&header, "If-None-Match: %s", pdata->etag);
-        slist = curl_slist_append(slist, header);
-        free(header);
+        ret = asprintf(&header, "If-None-Match: %s", pdata->etag);
+        if (ret != -1) {
+            slist = curl_slist_append(slist, header);
+            free(header);
+        }
     }
     slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_id: %s", path);
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
@@ -489,7 +495,7 @@ static void get_fresh_fd(filecache_t *cache,
         // We should not get a 404 here; either the open included O_CREAT and we create a new
         // file, or the getattr/get_stat calls in fusedav.c should have detected the file was
         // missing and handled it there.
-        // Update on unexpected 404: one theoretical path is that a file gets opened and written to, 
+        // Update on unexpected 404: one theoretical path is that a file gets opened and written to,
         // but on the close (dav_flush/release), the PUT fails and the file never makes it to the server.
         // On opening again, the server will deliver this unexpected 404. Changes for forensic-haven
         // should prevent these errors in the future (2013-08-29)
@@ -580,12 +586,12 @@ static void get_fresh_fd(filecache_t *cache,
                 unlink(old_filename);
                 log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: 200: unlink old filename %s", old_filename);
             }
-            
+
             if (fstat(sdata->fd, &st)) {
                  log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "put_return_etag: fstat failed on %s", path);
                 goto finish;
             }
-            
+
             elapsed_time = time(NULL) - start_time;
             if (st.st_size > XLG) {
                 TIMING(filecache_get_xlg_timing, elapsed_time);
@@ -648,12 +654,12 @@ static void get_fresh_fd(filecache_t *cache,
                 time_t atime = value->st.st_atime;
                 off_t sz = value->st.st_size;
                 unsigned long lg = value->local_generation;
-                
+
                 if (pdata) lsu = pdata->last_server_update;
-                
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %lu %lu %lu %lu); deleting...", 
+
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "get_fresh_fd: 404 on file in cache %s, (lg sz tm lsu %lu %lu %lu %lu); deleting...",
                     path, lg, sz, atime, lsu);
-                    
+
                 stat_cache_delete(cache, path, NULL);
 
                 free(value);
@@ -849,7 +855,7 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_write: acquired shared file lock on fd %d", sdata->fd);
 
     bytes_written = pwrite(sdata->fd, buf, size, offset);
-    
+
     // If pwrite fails, file goes to forensic haven
     if (bytes_written < 0 || inject_error(filecache_error_writewrite)) {
         set_error(sdata, errno);
@@ -902,7 +908,7 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 
 /* PUT's from fd to URI */
 /* Our modification to include etag support on put */
-static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
+static void put_return_etag(const char *path, int fd, char *etag, const char *cache_filename, const char *cache_uri, GError **gerr) {
     CURL *session;
     CURLcode res;
     struct curl_slist *slist = NULL;
@@ -942,6 +948,21 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
 
     slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
+
+    if (cache_uri && cache_filename) {
+        char *t_cache_uri = NULL;
+        int ret;
+        ret = asprintf(&t_cache_uri, "Cache-URI: %s/files/%s", cache_uri, basename(cache_filename));
+        if (ret == -1) {
+            g_set_error(gerr, system_quark(), errno, "put_return_etag: creating cache_uri header failed");
+            goto finish;
+        }
+        slist = curl_slist_append(slist, t_cache_uri);
+        log_print(LOG_NOTICE, SECTION_FILECACHE_COMM, "put_return_etag: using_peer_cache %s", t_cache_uri);
+        free(t_cache_uri);
+    }
+    // else when we've completed converted to peer caching, else will signify an error
+
     curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
     // Set a header capture path.
@@ -1042,7 +1063,8 @@ finish:
 }
 
 // top-level sync call
-bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr) {
+bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info,
+        bool do_put, const char *cache_uri, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
     struct filecache_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
@@ -1066,7 +1088,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
         g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "filecache_sync: sdata is NULL");
         goto finish;
     }
-    
+
     // If we already have an error:
     // If we are about to try a PUT, just stop and return. This will cause dav_release to
     // cleanup, sending file to forensic haven.
@@ -1115,8 +1137,8 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
-            put_return_etag(path, sdata->fd, pdata->etag, &tmpgerr);
-            
+            put_return_etag(path, sdata->fd, pdata->etag, pdata->filename, cache_uri, &tmpgerr);
+
             // if we fail PUT for any reason, file will eventually go to forensic haven.
             // We err in put_return_etag on:
             // -- failure to get flock
@@ -1125,8 +1147,8 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             // -- curl response code not between 200 and 300
             // -- failure to release flock
             if (tmpgerr) {
-                /* Outside of calls to fsync itself, we call filecache_sync and PUT the file twice, 
-                 * once on dav_flush, then closely after on dav_release. If we call set_error on the 
+                /* Outside of calls to fsync itself, we call filecache_sync and PUT the file twice,
+                 * once on dav_flush, then closely after on dav_release. If we call set_error on the
                  * first one, we won't attempt the PUT on the second one. In case of cURL error,
                  * don't set_error, so if it fails on the dav_flush, it might still succeed on the
                  * dav_release.
@@ -1134,7 +1156,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
                  * set to false, so it doesn't do the PUT anyway.)
                  * This is a separate issue from whether or not the file goes to forensic haven.
                  * set_error really means, "If we see an error on write before we ever even attempt
-                 * to do the PUT, don't do the PUT." This is different from, "If we fail PUT on dav_flush, 
+                 * to do the PUT, don't do the PUT." This is different from, "If we fail PUT on dav_flush,
                  * do/don't try the PUT on dav_release."
                  */
                  // Don't set error on cURL error; if dav_flush fails, we can still try again on dav_release
@@ -1296,10 +1318,11 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     char *newpath = NULL;
     GError *subgerr = NULL;
     int fd = -1;
+    int ret;
     char *buf = NULL;
     ssize_t bytes_written;
     bool failed_rename = false;
-    
+
     BUMP(filecache_forensic_haven);
     log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_forensic_haven: cp %s p %s", cache_path, path);
 
@@ -1316,13 +1339,17 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
         g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_forensic_haven: pdata is NULL on %s", path);
         goto finish;
     }
-    
+
     // get name of cache file path
     bpath = strdup(pdata->filename);
     // get the base name of the cache file
     bname = basename(bpath);
     // Make a path name for the cache file but in the directory forensic-haven rather than files
-    asprintf(&newpath, "%s/%s/%s", cache_path, forensic_haven_dir, bname);
+    ret = asprintf(&newpath, "%s/%s/%s", cache_path, forensic_haven_dir, bname);
+    if (ret == -1) {
+        g_set_error(gerr, system_quark(), errno, "filecache_forensic_haven: asprintf failed on newpath 1");
+        goto finish;
+    }
     // Move the file to forensic-haven
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: doing rename(%s, %s)", pdata->filename, newpath);
     if (rename(pdata->filename, newpath) == -1) {
@@ -1330,14 +1357,17 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
         // If rename fails, put this in the .txt file
         failed_rename = true;
     }
-    free(bpath);
     // do not pass bname to free; basename() does not return a free'able address
     free(newpath);
     newpath = NULL; // reusing below
-    
+
     // Create the .txt file with information about the cache file we moved
     // It will have the same name as the cache file, with .txt appended
-    asprintf(&newpath, "%s/%s/%s.txt", cache_path, forensic_haven_dir, bname);
+    ret = asprintf(&newpath, "%s/%s/%s.txt", cache_path, forensic_haven_dir, bname);
+    if (ret == -1) {
+        g_set_error(gerr, system_quark(), errno, "filecache_forensic_haven: asprintf failed on newpath 2");
+        goto finish;
+    }
     fd = creat(newpath, 0600);
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: creat(%s) fd %d", newpath, fd);
     if (fd < 0) {
@@ -1345,11 +1375,15 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
         // Exit; no point in writing a file we couldn't create
         goto finish;
     }
-    
+
     // Put info into buf that will go into the .txt file
     // Currently path, cache file name, last server update, filesize, and whether the rename above failed
-    asprintf(&buf, "path: %s\ncache filename: %s\nlast_server_update: %lu\nfilesize: %lu\nfailed_rename %d\n", 
+    ret = asprintf(&buf, "path: %s\ncache filename: %s\nlast_server_update: %lu\nfilesize: %lu\nfailed_rename %d\n",
         path, pdata->filename, pdata->last_server_update, fsize, failed_rename);
+    if (ret == -1) {
+        g_set_error(gerr, system_quark(), errno, "filecache_forensic_haven: asprintf failed on buf");
+        goto finish;
+    }
     bytes_written = write(fd, buf, strlen(buf));
     log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: write (%s) of fd %d returns %d", newpath, fd, bytes_written);
     if (bytes_written < 0) {
@@ -1357,9 +1391,10 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
         g_set_error(gerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on write to %s", newpath);
         goto finish;
     }
-    
+
 finish:
     if (fd >= 0) close(fd);
+    free(bpath);
     free(buf);
     free(newpath);
     free(pdata);

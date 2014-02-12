@@ -187,6 +187,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, log_level_by_section, STRING),
         keytuple(fusedav, log_prefix, STRING),
         keytuple(fusedav, max_file_size, INT),
+        keytuple(fusedav, using_peer_cache, BOOL),
         {NULL, NULL, 0, 0}
         };
 
@@ -277,6 +278,9 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     config->nodaemon = false;
     config->max_file_size = 256; // 256M
     config->log_level = 5; // default log_level: LOG_NOTICE
+    // Temporary. While we transition to complete implementation of peer-caching,
+    // allow us to limit it to a few sites
+    config->using_peer_cache = false;
     
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
