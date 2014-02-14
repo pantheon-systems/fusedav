@@ -132,7 +132,7 @@ static void session_tsd_key_init(void) {
     pthread_key_create(&session_tsd_key, session_destroy);
 }
 
-/* We want to use the logging facility key=value to keep track of the 
+/* We want to use the logging facility key=value to keep track of the
  * node ip address we use when we use the filesystem domain. This
  * will help us know that we are accessing the nodes in a balanced way.
  * (We access the filesystem nodes via a domain which resolves to many
@@ -256,7 +256,7 @@ finish:
 }
 
 /* For reference, keep the different sockaddr structs available for inspection
- * 
+ *
  * struct addrinfo {
  *     int              ai_flags;
  *     int              ai_family;
@@ -267,32 +267,32 @@ finish:
  *     char            *ai_canonname;
  *     struct addrinfo *ai_next;
  * };
- * 
+ *
  * // All pointers to socket address structures are often cast to pointers
  * // to this type before use in various functions and system calls:
- * 
+ *
  * struct sockaddr {
  *     unsigned short    sa_family;    // address family, AF_xxx
  *     char              sa_data[14];  // 14 bytes of protocol address
  * };
- * 
- * 
+ *
+ *
  * // IPv4 AF_INET sockets:
- * 
+ *
  * struct sockaddr_in {
  *     short            sin_family;   // e.g. AF_INET, AF_INET6
  *     unsigned short   sin_port;     // e.g. htons(3490)
  *     struct in_addr   sin_addr;     // see struct in_addr, below
  *     char             sin_zero[8];  // zero this if you want to
  * };
- * 
+ *
  * struct in_addr {
  *     unsigned long s_addr;          // load with inet_pton()
  * };
- * 
- * 
+ *
+ *
  * // IPv6 AF_INET6 sockets:
- * 
+ *
  * struct sockaddr_in6 {
  *     u_int16_t       sin6_family;   // address family, AF_INET6
  *     u_int16_t       sin6_port;     // port number, Network Byte Order
@@ -300,11 +300,11 @@ finish:
  *     struct in6_addr sin6_addr;     // IPv6 address
  *     u_int32_t       sin6_scope_id; // Scope ID
  * };
- * 
+ *
  * struct in6_addr {
  *     unsigned char   s6_addr[16];   // load with inet_pton()
  * };
- * 
+ *
  */
 
 /* Construct an slist for curl to use with opt CURLOPT_RESOLVE.
@@ -332,7 +332,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
-    // Restrict getaddrinfo to returning just the types we want. This 
+    // Restrict getaddrinfo to returning just the types we want. This
     // turns out to be just SOCK_STREAM.
     // REVIEW: is this true?
     struct addrinfo hints;
@@ -491,12 +491,11 @@ static int construct_resolve_slist(CURL *session, bool force) {
     return res;
 }
 
-CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle) {
+CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
     int error;
-    bool force = false;
 
     if (temporary_handle) {
         session = session_get_temp_handle();
@@ -552,7 +551,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
     curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
-    error = construct_resolve_slist(session, force);
+    error = construct_resolve_slist(session, new_slist);
     /* If we get an error from construct_resolve_slist, we didn't set up the
      * randomized slist and call CURLOPT_RESOLVE. libcurl will revert to calling
      * getaddrinfo on its own, and use the first, sorted address it returns.
@@ -578,7 +577,7 @@ int retry_curl_easy_perform(CURL *session) {
     // REVIEW: How many retries should we do?
     // If we see certain errors, retry
     const int max_tries = 4;
-    
+
     res = curl_easy_perform(session);
     curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
     while ((res != CURLE_OK || response_code >= 500) && iter < max_tries) {
