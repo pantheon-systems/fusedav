@@ -663,6 +663,7 @@ static void get_fresh_fd(filecache_t *cache,
         else if (code >= 500) {
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "get_fresh_fd: %s connection error: %d; ", path, code);
             g_set_error(gerr, curl_quark(), ENETDOWN, "get_fresh_fd: connection error");
+            goto finish;
         }
         else {
             // Not sure what to do here; goto finish, or try the loop another time?
