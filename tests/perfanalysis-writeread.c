@@ -186,21 +186,20 @@ static int writeread(char *basename, int results[], time_t start_time, unsigned 
                     close(fd);
                 }
             }
-            
+
             // v_printf("Calculating ...\n");
             start_time += sizes[idx].interval;
             current_time = time(NULL);
             sleep_time = start_time - current_time;
             if (sleep_time < 0) {
                 printf("ERROR: The next start_time is in the past: st-%lu, ct-%lu\n", start_time, current_time);
-                printf("Exiting ...\n");
-                return -1;
+                sleep_time = 0; // Try to survive this
             }
             v_printf("Sleeping %lu\n", sleep_time);
             sleep(sleep_time);
         }
     }
-    
+
     return 0;
 }
 
@@ -283,7 +282,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (!fail) calculate_latencies(latencyResults, num_iters);
-    
+
     if (results[ReadErrors] > 0 || results[WriteErrors] > 0 || results[OpenErrors] > 0) {
         fail = true;
     }
