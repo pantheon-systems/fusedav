@@ -584,6 +584,7 @@ int retry_curl_easy_perform(CURL *session) {
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "retry_curl_easy_perform: res %d %s; response_code %d", res, curl_easy_strerror(res), response_code);
         // Force recreation of the random slist
         construct_resolve_slist(session, force);
+        curl_easy_setopt(session, CURLOPT_FRESH_CONNECT, 1);
         res = curl_easy_perform(session);
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
         ++iter;

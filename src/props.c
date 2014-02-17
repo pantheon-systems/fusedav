@@ -312,10 +312,15 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     char *header = NULL;
     char *query_string = NULL;
     long response_code;
+    int iter = 0;
 
     // Local variables for Expat and parsing.
     XML_Parser parser;
     struct propfind_state state;
+
+    // REVIEW: How many retries should we do?
+    // If we see certain errors, retry
+    const int max_tries = 4;
 
     int ret = -1;
 
@@ -364,6 +369,25 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     // Perform the request and parse the response.
     log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).", last_updated > 0 ? "progressive" : "complete", last_updated);
     res = curl_easy_perform(session);
+
+    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+    while ((res != CURLE_OK || response_code >= 500) && iter < max_tries) {
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "curl_easy_perform: res %d %s; response_code %d", res, curl_easy_strerror(res), response_code);
+        XML_ParserFree(parser);
+        memset(&state, 0, sizeof(struct propfind_state));
+        state.callback = results;
+        state.userdata = userdata;
+        state.failure = false;
+        state.session = session;
+        parser = XML_ParserCreateNS(NULL, '\0');
+        XML_SetUserData(parser, &state);
+        XML_SetElementHandler(parser, startElement, endElement);
+        XML_SetCharacterDataHandler(parser, characterDataHandler);
+        curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) parser);
+        res = curl_easy_perform(session);
+        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+        ++iter;
+    }
 
     if (res != CURLE_OK || inject_error(props_error_spropfindcurl)) {
         log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s", last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res));
