@@ -915,6 +915,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     long response_code;
     time_t start_time;
     FILE *fp;
+    int iter = 0;
+    const int max_tries = 4;
 
     BUMP(filecache_return_etag);
     start_time = time(NULL);
@@ -954,7 +956,17 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
     curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
-    res = retry_curl_easy_perform(session);
+    res = curl_easy_perform(session);
+
+    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+    while ((res != CURLE_OK || response_code >= 500) && iter < max_tries) {
+        fseek(fp, 0L, SEEK_SET);
+        log_print(LOG_WARNING, SECTION_FILECACHE_COMM, "curl_easy_perform: res %d %s; response_code %d", res, curl_easy_strerror(res), response_code);
+        curl_easy_setopt(session, CURLOPT_FRESH_CONNECT, 1);
+        res = curl_easy_perform(session);
+        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+        ++iter;
+    }
 
     fclose(fp);
 
