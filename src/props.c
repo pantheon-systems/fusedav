@@ -306,15 +306,13 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
         void *userdata, GError **gerr) {
     // Local variables for cURL.
-    CURL *session;
-    struct curl_slist *slist = NULL;
-    CURLcode res;
     char *header = NULL;
     char *query_string = NULL;
-    long response_code;
+    long response_code = 500; // seed it as bad so we can enter the loop
+    CURLcode res = CURLE_OK;
 
     // Local variables for Expat and parsing.
-    XML_Parser parser;
+    XML_Parser parser = NULL;
     struct propfind_state state;
 
     int ret = -1;
@@ -323,55 +321,68 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (last_updated > 0) {
         asprintf(&query_string, "changes_since=%lu", last_updated);
     }
-    session = session_request_init(path, query_string, false, false);
-    if (!session || inject_error(props_error_spropfindsession)) {
-        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
-        return ret;
+    for (int idx = 0; idx < max_retries && (res != CURLE_OK || response_code >= 500); idx++) {
+        CURL *session;
+        struct curl_slist *slist = NULL;
+        bool new_resolve_list;
+
+        if (idx == 0) new_resolve_list = false;
+        else new_resolve_list = true;
+
+        session = session_request_init(path, query_string, false, new_resolve_list);
+        if (!session || inject_error(props_error_spropfindsession)) {
+            g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
+            goto finish;
+        }
+
+        if (parser) XML_ParserFree(parser);
+
+        // Set a blank initial state, except for the callback.
+        memset(&state, 0, sizeof(struct propfind_state));
+        state.callback = results;
+        state.userdata = userdata;
+        state.failure = false;
+        state.session = session;
+
+        // Configure the parser.
+        parser = XML_ParserCreateNS(NULL, '\0');
+        XML_SetUserData(parser, &state);
+        XML_SetElementHandler(parser, startElement, endElement);
+        XML_SetCharacterDataHandler(parser, characterDataHandler);
+        curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) parser);
+        curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_parsing_callback);
+
+        // Add the Depth header and PROPFIND verb.
+        curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PROPFIND");
+        asprintf(&header, "Depth: %lu", depth);
+        slist = curl_slist_append(slist, header);
+        slist = curl_slist_append(slist, "Content-Type: text/xml");
+
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: %s", path);
+
+        free(header);
+        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+
+        // Send the PROPFIND body.
+        curl_easy_setopt(session, CURLOPT_POSTFIELDS,
+            "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
+            "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
+
+        // Perform the request and parse the response.
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).", last_updated > 0 ? "progressive" : "complete", last_updated);
+
+        res = curl_easy_perform(session);
+        if(res == CURLE_OK) {
+            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+        }
+        if (slist) curl_slist_free_all(slist);
     }
-    free(query_string);
-
-    // Set a blank initial state, except for the callback.
-    memset(&state, 0, sizeof(struct propfind_state));
-    state.callback = results;
-    state.userdata = userdata;
-    state.failure = false;
-    state.session = session;
-
-    // Configure the parser.
-    parser = XML_ParserCreateNS(NULL, '\0');
-    XML_SetUserData(parser, &state);
-    XML_SetElementHandler(parser, startElement, endElement);
-    XML_SetCharacterDataHandler(parser, characterDataHandler);
-    curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) parser);
-    curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_parsing_callback);
-
-    // Add the Depth header and PROPFIND verb.
-    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PROPFIND");
-    asprintf(&header, "Depth: %lu", depth);
-    slist = curl_slist_append(slist, header);
-    slist = curl_slist_append(slist, "Content-Type: text/xml");
-
-    slist = enhanced_logging(slist, LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: %s", path);
-
-    free(header);
-    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
-
-    // Send the PROPFIND body.
-    curl_easy_setopt(session, CURLOPT_POSTFIELDS,
-        "<?xml version=\"1.0\" encoding=\"utf-8\" ?>"
-        "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
-
-    // Perform the request and parse the response.
-    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).", last_updated > 0 ? "progressive" : "complete", last_updated);
-    res = curl_easy_perform(session);
 
     if (res != CURLE_OK || inject_error(props_error_spropfindcurl)) {
         log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s", last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res));
         g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: curl_easy_perform error %s.", curl_easy_strerror(res));
         goto finish;
     }
-
-    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
 
     // injected error props_error_spropfindunkcode will fall through to the else clause
     if (response_code == 207 && !inject_error(props_error_spropfindunkcode)) {
@@ -416,7 +427,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     ret = 0;
 
 finish:
-    curl_slist_free_all(slist);
+    free(query_string);
     XML_ParserFree(parser);
     return ret;
 }

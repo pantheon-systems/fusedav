@@ -564,29 +564,3 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 
     return session;
 }
-
-/* Allow us to retry curl_easy_perform in the presence of errors.
- * This is in conjunction with the way we get IP addresses that a
- * given domain resolves to and randomize them.
- */
-int retry_curl_easy_perform(CURL *session) {
-    CURLcode res;
-    long response_code;
-    bool force = true; // Force us to recreate the randomized slist for CURLOPT_RESOLVE
-    int iter = 0;
-    // REVIEW: How many retries should we do?
-    // If we see certain errors, retry
-    const int max_tries = 4;
-
-    res = curl_easy_perform(session);
-    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-    while ((res != CURLE_OK || response_code >= 500) && iter < max_tries) {
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "retry_curl_easy_perform: res %d %s; response_code %d", res, curl_easy_strerror(res), response_code);
-        // Force recreation of the random slist
-        construct_resolve_slist(session, force);
-        res = curl_easy_perform(session);
-        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        ++iter;
-    }
-    return res;
-}

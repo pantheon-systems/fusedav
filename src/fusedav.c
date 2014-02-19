@@ -45,6 +45,9 @@
 mode_t mask = 0;
 struct fuse* fuse = NULL;
 
+// Should equal the number of nodes in a valhalla cluster
+const int max_retries = 6;
+
 #define CLOCK_SKEW 10 // seconds
 
 // Run cache cleanup once a day.
@@ -56,33 +59,8 @@ struct fill_info {
     const char *root;
 };
 
-#define SAINT_MODE_DURATION 10
-
-// last_failure is used to determine saint_mode.
-// Keep it by thread, so that if one thread goes
-// into saint mode, the others won't think they're
-// in saint mode, too.
-static __thread time_t last_failure = 0;
-
-enum ignore_freshness {OFF, ALREADY_FRESH, SAINT_MODE};
-
 // forward reference to avoid dependency loop
 static void common_unlink(const char *path, bool do_unlink, GError **gerr);
-
-static bool use_saint_mode(void) {
-    struct timespec now;
-    bool use_saint;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    use_saint = (last_failure + SAINT_MODE_DURATION >= now.tv_sec);
-    return use_saint;
-}
-
-static void set_saint_mode(void) {
-    struct timespec now;
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Using saint mode for %lu seconds.", SAINT_MODE_DURATION);
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    last_failure = now.tv_sec;
-}
 
 // GError mechanisms
 static G_DEFINE_QUARK("FUSEDAV", fusedav)
@@ -198,30 +176,42 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
          * use that.
          */
         else if (existing && existing->updated == st.st_ctime) {
-            CURL *session;
-            int response_code;
-            int res;
-            bool temporary_handle = true;
+            CURL *session = NULL;
+            long response_code = 500; // seed it as bad so we can enter the loop
+            CURLcode res = CURLE_OK;
 
             free(existing);
 
-            if (!(session = session_request_init(path, NULL, temporary_handle, false)) || inject_error(fusedav_error_propfindsession)) {
-                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
+            for (int idx = 0; idx < max_retries && (res != CURLE_OK || response_code >= 500); idx++) {
+                bool temporary_handle = true; // self-documenting
+                bool new_resolve_list;
+
+                if (idx == 0) new_resolve_list = false;
+                else new_resolve_list = true;
+
+                if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
+                    g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
+                    return;
+                }
+
+                // This makes a "HEAD" call
+                curl_easy_setopt(session, CURLOPT_NOBODY, 1);
+
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
+                res = curl_easy_perform(session);
+                if(res == CURLE_OK) {
+                    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+                }
+            }
+
+            if (session) session_temp_handle_destroy(session);
+
+            if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: curl failed: %s : rc: %ld\n",
+                    curl_easy_strerror(res), response_code);
                 return;
             }
 
-            // This makes a "HEAD" call
-            curl_easy_setopt(session, CURLOPT_NOBODY, 1);
-
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
-            res = retry_curl_easy_perform(session);
-            if(res != CURLE_OK || inject_error(fusedav_error_propfindhead)) {
-                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: saw 410; HEAD failed: %s\n", curl_easy_strerror(res));
-                return;
-            }
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-
-            session_temp_handle_destroy(session);
             if (response_code >= 400 && response_code < 500) {
                 // fall through to delete
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; executed HEAD; file doesn't exist: %s", path);
@@ -234,7 +224,9 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 }
                 else {
                     // On error, prefer retaining a file which should be deleted over deleting a file which should be retained
-                    g_set_error(gerr, fusedav_quark(), EINVAL, "getdir_propfind_callback(%s): saw 410; HEAD returns unexpected response from curl %d", path, response_code);
+                    g_set_error(gerr, fusedav_quark(), EINVAL,
+                        "getdir_propfind_callback(%s): saw 410; HEAD returns unexpected response from curl %ld",
+                        path, response_code);
                 }
                 return;
             }
@@ -387,11 +379,6 @@ static int dav_readdir(
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
-    // If we are in grace mode, we don't do the freshness check. In this case,
-    // stat_cache_enumerate can only return either success, or no data available, which is not really an error
-    if (config->grace && use_saint_mode())
-        ignore_freshness = true;
-
     // First, attempt to hit the cache.
     ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
     if (ret < 0) {
@@ -402,12 +389,7 @@ static int dav_readdir(
         log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_readdir: Updating directory: %s", path);
         update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
         if (gerr) {
-            if (!config->grace) {
-                return processed_gerror("dav_readdir: failed to update directory: ", path, &gerr);
-            }
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_DIR, "Failed to update directory: %s : using grace : %d %s", path, gerr->code, strerror(gerr->code));
-            set_saint_mode();
-            g_clear_error(&gerr);
+            return processed_gerror("dav_readdir: failed to update directory: ", path, &gerr);
         }
 
         // Output the new data, skipping any cache freshness checks
@@ -466,29 +448,13 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
 
 /* The calls to this function are pretty well prescribed, in get_stat(), but if called elsewhere,
  * could be problematic.
- * If called, and stat_cache_value_get returns NULL (not in cache), we have to interpret
- * what that means and how to handle it based on the circumstances in the place we are
- * calling it from. If we have already done what is necessary to update the stat cache,
- * i.e. done a PROPFIND, then a NULL from stat_cache_value_get really means that the item
- * is not present, and ENOENT is appropriate. We do this by setting skip_freshness_check to
- * ALREADY_FRESH.
- * We might also want to skip the freshness check if we are in saint mode. We do this by
- * setting skip_freshness_check to SAINT_MODE. If the item is not in the stat cache, we
- * don't know if it really exists (on another binding) or not, so we return something
- * other than ENOENT. Here, we return ENETDOWN, indicating a network problem, which is exactly
- * what causes us to go into saint mode in the first place.
- * If we don't have a reason for skipping the freshness check, and the item is not already
- * in the stat cache, we assume that the item was expired (in fact, it might not have been
- * present at all), and allow the program logic to try to find or update the item.
  */
-static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore_freshness skip_freshness_check, GError **gerr) {
+static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore_freshness, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *response;
     GError *tmpgerr = NULL;
-    // If skipping is not OFF, then it is on for some reason (SAINT_MODE or ALREADY_FRESH)
-    bool ignoring_freshness = (skip_freshness_check != OFF);
 
-    response = stat_cache_value_get(config->cache, path, ignoring_freshness, &tmpgerr);
+    response = stat_cache_value_get(config->cache, path, ignore_freshness, &tmpgerr);
 
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat_from_cache: ");
@@ -499,16 +465,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
     if (response == NULL) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: NULL response from stat_cache_value_get for path %s.", path);
 
-        // If we're skipping the check because we're in saint mode and the item is not in the cache,
-        // then return ENETDOWN. If we return ENOENT, we are potentially lying since the item
-        // may in fact exist, just on another binding which we can't reach to find out
-        if (skip_freshness_check == SAINT_MODE || inject_error(fusedav_error_statignorefreshnesssaint)) {
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: In saint mode, ignoring freshness and sending -ENETDOWN for path %s.", path);
-            memset(stbuf, 0, sizeof(struct stat));
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "get_stat_from_cache: ");
-            return -1;
-        }
-        else if (skip_freshness_check == ALREADY_FRESH || inject_error(fusedav_error_statignorefreshness)) {
+        if (ignore_freshness || inject_error(fusedav_error_statignorefreshness)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Ignoring freshness and sending -ENOENT for path %s.", path);
             memset(stbuf, 0, sizeof(struct stat));
             g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
@@ -523,7 +480,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
     *stbuf = response->st;
     print_stat(stbuf, "stat_cache_value_get response");
     free(response);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, skip_freshness_check, stbuf->st_mode ? "0" : "ENOENT");
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, ignore_freshness, stbuf->st_mode ? "0" : "ENOENT");
     if (stbuf->st_mode == 0 || inject_error(fusedav_error_statstmode)) {
         g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: stbuf mode is 0: ");
         return -1;
@@ -539,7 +496,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
-    enum ignore_freshness skip_freshness_check = OFF;
+    bool skip_freshness_check = false;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -560,10 +517,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
 
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Used constructed stat data for base directory.");
         return;
-    }
-
-    if (config->grace && use_saint_mode()) {
-        skip_freshness_check = SAINT_MODE;
     }
 
     // Check if we can directly hit this entry in the stat cache.
@@ -607,7 +560,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
 
         // The propfind succeeded, so if the item does not exist, then it is ENOENT.
         // Don't check for whether we are in saint mode
-        skip_freshness_check = ALREADY_FRESH;
+        skip_freshness_check = true;
         get_stat_from_cache(path, stbuf, skip_freshness_check, &subgerr);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
@@ -640,21 +593,15 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         // In that case, skip the progressive propfind and go straight to complete propfind
         update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
         if (subgerr) {
-            // If the error is non-ENETDOWN or grace is off, fail.
-            if (subgerr->code != ENETDOWN || !config->grace) {
-                g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
-                goto fail;
-            }
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "get_stat: Attempting recovery with grace from error %s on path %s.", subgerr->message, path);
-            g_clear_error(&subgerr);
-            set_saint_mode();
+            g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
+            goto fail;
         }
     } else {
         BUMP(fusedav_negative_cache);
     }
 
     // Try again to hit the file in the stat cache.
-    skip_freshness_check = ALREADY_FRESH;
+    skip_freshness_check = true;
     ret = get_stat_from_cache(path, stbuf, skip_freshness_check, &tmpgerr);
     if (tmpgerr) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
@@ -760,7 +707,6 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     struct stat st;
     GError *gerr2 = NULL;
     GError *gerr3 = NULL;
-    CURLcode res;
 
     get_stat(path, &st, &gerr2);
     if (gerr2) {
@@ -774,23 +720,38 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     }
 
     if (do_unlink) {
-        CURL *session;
-        struct curl_slist *slist = NULL;
+        CURLcode res = CURLE_OK;
+        long response_code = 500; // seed it as bad so we can enter the loop
 
-        if (!(session = session_request_init(path, NULL, false, false)) || inject_error(fusedav_error_cunlinksession)) {
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
-            return;
+        for (int idx = 0; idx < max_retries && (res != CURLE_OK || response_code >= 500); idx++) {
+            CURL *session;
+            struct curl_slist *slist = NULL;
+            bool new_resolve_list;
+
+            if (idx == 0) new_resolve_list = false;
+            else new_resolve_list = true;
+
+            slist = NULL;
+            if (!(session = session_request_init(path, NULL, false, new_resolve_list)) || inject_error(fusedav_error_cunlinksession)) {
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
+                return;
+            }
+
+            curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
+
+            slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: %s", path);
+            if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
+            res = curl_easy_perform(session);
+            if(res == CURLE_OK) {
+                curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+            }
+
+            if (slist) curl_slist_free_all(slist);
         }
 
-        curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
-
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: %s", path);
-        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
-
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
-        res = retry_curl_easy_perform(session);
-        if (slist) curl_slist_free_all(slist);
-        if(res != CURLE_OK || inject_error(fusedav_error_cunlinkcurl)) {
+        if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: DELETE failed: %s\n", curl_easy_strerror(res));
             return;
         }
@@ -838,9 +799,8 @@ static int dav_rmdir(const char *path) {
     char fn[PATH_MAX];
     bool has_child;
     struct stat st;
-    CURL *session;
-    CURLcode res;
-    struct curl_slist *slist = NULL;
+    long response_code = 500; // seed it as bad so we can enter the loop
+    CURLcode res = CURLE_OK;
 
     BUMP(dav_rmdir);
 
@@ -869,21 +829,37 @@ static int dav_rmdir(const char *path) {
         return -ENOTEMPTY;
     }
 
-    if (!(session = session_request_init(fn, NULL, false, false))) {
-        log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
-        return -ENETDOWN;
+    for (int idx = 0; idx < max_retries && (res != CURLE_OK || response_code >= 500); idx++) {
+        CURL *session;
+        struct curl_slist *slist = NULL;
+        bool new_resolve_list;
+
+        if (idx == 0) new_resolve_list = false;
+        else new_resolve_list = true;
+
+        slist = NULL;
+
+        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
+            return -ENETDOWN;
+        }
+
+        curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
+
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
+        if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+
+        res = curl_easy_perform(session);
+        if(res == CURLE_OK) {
+            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+        }
+
+        if (slist) curl_slist_free_all(slist);
     }
 
-    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
-
-    slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
-    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
-
-    res = retry_curl_easy_perform(session);
-    if (slist) curl_slist_free_all(slist);
-    if (res != CURLE_OK) {
+    if (res != CURLE_OK || response_code >= 500) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): DELETE failed: %s", path, curl_easy_strerror(res));
-        return -ENOENT;
+        return -ENETDOWN;
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_rmdir: removed(%s)", path);
@@ -906,10 +882,9 @@ static int dav_mkdir(const char *path, mode_t mode) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     char fn[PATH_MAX];
-    CURL *session;
-    CURLcode res;
-    struct curl_slist *slist = NULL;
     GError *gerr = NULL;
+    long response_code = 500; // seed it as bad so we can enter the loop
+    CURLcode res = CURLE_OK;
 
     BUMP(dav_mkdir);
 
@@ -917,21 +892,36 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     snprintf(fn, sizeof(fn), "%s/", path);
 
-    if (!(session = session_request_init(fn, NULL, false, false))) {
-        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
-        return -ENETDOWN;
+    for (int idx = 0; idx < max_retries && (res != CURLE_OK || response_code >= 500); idx++) {
+        CURL *session;
+        struct curl_slist *slist = NULL;
+        bool new_resolve_list;
+
+        if (idx == 0) new_resolve_list = false;
+        else new_resolve_list = true;
+
+        slist = NULL;
+
+        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
+            log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
+            return -ENETDOWN;
+        }
+
+        curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
+
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
+        if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+
+        res = curl_easy_perform(session);
+        if(res == CURLE_OK) {
+            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+        }
+        if (slist) curl_slist_free_all(slist);
     }
 
-    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
-
-    slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
-    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
-
-    res = retry_curl_easy_perform(session);
-    if (slist) curl_slist_free_all(slist);
-    if (res != CURLE_OK) {
+    if (res != CURLE_OK || response_code >= 500) {
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): MKCOL failed: %s", path, curl_easy_strerror(res));
-        return -ENOENT;
+        return -ENETDOWN;
     }
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -954,9 +944,6 @@ static int dav_mkdir(const char *path, mode_t mode) {
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char *header = NULL;
-    CURL *session;
-    struct curl_slist *slist = NULL;
-    CURLcode res;
     GError *gerr = NULL;
     int server_ret = -EIO;
     int local_ret = -EIO;
@@ -965,6 +952,8 @@ static int dav_rename(const char *from, const char *to) {
     char fn[PATH_MAX];
     char *escaped_to;
     struct stat_cache_value *entry = NULL;
+    long response_code = 500; // seed it as bad so we can enter the loop
+    CURLcode res = CURLE_OK;
 
     BUMP(dav_rename);
 
@@ -984,47 +973,61 @@ static int dav_rename(const char *from, const char *to) {
         from = fn;
     }
 
-    if (!(session = session_request_init(from, NULL, false, false))) {
-        log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
-        goto finish;
-    }
+    // JB See below about silent failures
+    for (int idx = 0; idx < max_retries && (res != CURLE_OK || response_code >= 500); idx++) {
+        CURL *session;
+        struct curl_slist *slist = NULL;
+        bool new_resolve_list;
 
-    curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MOVE");
+        if (idx == 0) new_resolve_list = false;
+        else new_resolve_list = true;
 
-    // Add the destination header.
-    // @TODO: Better error handling on failure.
-    escaped_to = escape_except_slashes(session, to);
-    asprintf(&header, "Destination: %s%s", get_base_url(), escaped_to);
-    curl_free(escaped_to);
-    slist = curl_slist_append(slist, header);
-    free(header);
+        slist = NULL;
 
-    slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: %s to %s", from, to);
-
-    curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
-
-    /* move:
-     * succeeds: mv 'from' to 'to', delete 'from'
-     * fails with 404: may be doing the move on an open file, so this may be ok
-     *                 mv 'from' to 'to', delete 'from'
-     * fails, not 404: error, exit
-     */
-    // Do the server side move
-
-    res = retry_curl_easy_perform(session);
-    if(res != CURLE_OK) {
-        long response_code;
-        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        if (response_code == 404 || response_code == 500) {
-            // We allow silent failures because we might have done a rename before the
-            // file ever made it to the server
-            log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with 404, recoverable: %s", curl_easy_strerror(res));
-            // Allow the error code -EIO to percolate down, we need to pass the local move
-        }
-        else {
-            log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed: %s", curl_easy_strerror(res));
+        if (!(session = session_request_init(from, NULL, false, new_resolve_list))) {
+            log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
             goto finish;
         }
+
+        curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MOVE");
+
+        // Add the destination header.
+        // @TODO: Better error handling on failure.
+        escaped_to = escape_except_slashes(session, to);
+        asprintf(&header, "Destination: %s%s", get_base_url(), escaped_to);
+        curl_free(escaped_to);
+        slist = curl_slist_append(slist, header);
+        free(header);
+
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: %s to %s", from, to);
+
+        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+
+        /* move:
+         * succeeds: mv 'from' to 'to', delete 'from'
+         * fails with 404: may be doing the move on an open file, so this may be ok
+         *                 mv 'from' to 'to', delete 'from'
+         * fails, not 404: error, exit
+         */
+        // Do the server side move
+
+        res = curl_easy_perform(session);
+        if(res == CURLE_OK) {
+            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
+        }
+        if (slist) curl_slist_free_all(slist);
+    }
+
+    if (response_code == 404) {
+        // We allow silent failures because we might have done a rename before the
+        // file ever made it to the server
+        log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with 404, recoverable: %s", curl_easy_strerror(res));
+        // Allow the error code -EIO to percolate down, we need to pass the local move
+    }
+
+    if(res != CURLE_OK || response_code >= 500) {
+        log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed: %s", curl_easy_strerror(res));
+        goto finish;
     }
     else {
         server_ret = 0;
@@ -1077,7 +1080,6 @@ finish:
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
 
     free(entry);
-    curl_slist_free_all(slist);
 
     // if either the server move or the local move succeed, we return success
     if (server_ret == 0 || local_ret == 0)
@@ -1301,25 +1303,14 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
 static void do_open(const char *path, struct fuse_file_info *info, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
-    bool used_grace;
-    unsigned grace_level = 0;
 
     assert(info);
 
-    if (config->grace) {
-        if (use_saint_mode())
-            grace_level = 2;
-        else
-            grace_level = 1;
-    }
-    filecache_open(config->cache_path, config->cache, path, info, grace_level, &used_grace, &tmpgerr);
+    filecache_open(config->cache_path, config->cache, path, info, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
         return;
     }
-
-    if (used_grace)
-        set_saint_mode();
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "do_open: after filecache_open");
 

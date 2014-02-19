@@ -22,13 +22,14 @@
 #include <stdbool.h>
 #include <curl/curl.h>
 
+extern const int max_retries;
+
 int session_config_init(char *base, char *ca_cert, char *client_cert);
 CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist);
 CURL *session_get_handle(void);
 void session_config_free(void);
 const char *get_base_url(void);
 char *escape_except_slashes(CURL *session, const char *path);
-int retry_curl_easy_perform(CURL *session);
 void session_temp_handle_destroy(CURL *session);
 
 #endif
