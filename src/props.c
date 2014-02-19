@@ -321,7 +321,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (last_updated > 0) {
         asprintf(&query_string, "changes_since=%lu", last_updated);
     }
-    for (int idx = 0; idx < max_retries && (res != CURLE_OK || response_code >= 500); idx++) {
+    for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
         bool new_resolve_list;
@@ -376,6 +376,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
         }
         if (slist) curl_slist_free_all(slist);
+
+        log_filesystem_nodes("simple_propfind", session, res, response_code, idx, path);
     }
 
     if (res != CURLE_OK || inject_error(props_error_spropfindcurl)) {
@@ -427,6 +429,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     ret = 0;
 
 finish:
+    log_print(LOG_INFO, SECTION_ENHANCED, "simple_propfind: fusedav-propfinds:1|c");
     free(query_string);
     XML_ParserFree(parser);
     return ret;

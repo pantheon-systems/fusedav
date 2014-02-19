@@ -19,7 +19,10 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
-#define SECTION_DEFAULT 0
+// REVIEW
+// Use SECTION_ENHANCED to log as INFO but always have it log.
+// fusedav.conf will now have LOG_SECTIONS=6 to enable logging at INFO for log entries tagged with SECTION_ENHANCED
+#define SECTION_ENHANCED 0
 
 #define SECTION_FUSEDAV_DEFAULT 1
 #define SECTION_FUSEDAV_OUTPUT 2

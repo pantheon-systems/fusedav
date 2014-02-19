@@ -153,7 +153,7 @@ static void print_ipaddr_pair(char *msg) {
     end = strstr(addr, "..");
     end[0] = '\0';
     // We print the key=value pair.
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -438,6 +438,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]", prelist[count - 1], count - 1);
     }
 
+    // We use a global
+    if (count > num_filesystem_server_nodes) num_filesystem_server_nodes = count;
+
     // Randomize!
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand(ts.tv_nsec * ts.tv_sec);
@@ -559,8 +562,29 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
      * the load across the multiple nodes.
      */
     if (error) {
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_request_init: Error creating randomized resolve slist; libcurl can survive but with load imbalance");
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
+            "session_request_init: Error creating randomized resolve slist; libcurl can survive but with load imbalance");
     }
 
     return session;
+}
+
+void log_filesystem_nodes(const char *fcn_name, const CURL *session, const CURLcode res, const long response_code,
+        const int iter, const char *path) {
+    char *node_addr = NULL;
+
+    // REVIEW! KYLE! Any ideas?
+    // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
+    // print, but at INFO will be easier to filter out
+    curl_easy_getinfo(session, CURLINFO_EFFECTIVE_URL, &node_addr);
+    // Track curl accesses to this filesystem node
+    log_print(LOG_INFO, SECTION_ENHANCED,
+        "%s: curl iter %d on path %s -- filesystem-host-%s:1|c", fcn_name, iter, path, node_addr);
+    if (res != CURLE_OK || response_code >= 500) {
+        // Track errors
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "%s: curl iter %d on node %s on path %s -- filesystem-host-%s-failed:1|c", fcn_name, iter, node_addr, path);
+    }
+    free(node_addr);
+
 }
