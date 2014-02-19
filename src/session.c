@@ -438,8 +438,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]", prelist[count - 1], count - 1);
     }
 
-    // We use a global
-    if (count > num_filesystem_server_nodes) num_filesystem_server_nodes = count;
+    // Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
+    // returned by getaddrinfo, but are afraid that will cause too much load if the cluster is having difficulties
+    // if (count > num_filesystem_server_nodes) num_filesystem_server_nodes = count;
 
     // Randomize!
     clock_gettime(CLOCK_MONOTONIC, &ts);
