@@ -309,8 +309,6 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
         void *userdata, GError **gerr) {
     // Local variables for cURL.
-    char *header = NULL;
-    char *query_string = NULL;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
 
@@ -326,21 +324,24 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
 
-    // Set up the request handle.
-    if (last_updated > 0) {
-        asprintf(&query_string, "changes_since=%lu", last_updated);
-    }
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
+        char *header = NULL;
+        char *query_string = NULL;
         bool new_resolve_list;
 
         if (idx == 0) new_resolve_list = false;
         else new_resolve_list = true;
 
+        // Set up the request handle.
+        if (last_updated > 0) {
+            asprintf(&query_string, "changes_since=%lu", last_updated);
+        }
         session = session_request_init(path, query_string, false, new_resolve_list);
         if (!session || inject_error(props_error_spropfindsession)) {
             g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
+            free(query_string);
             goto finish;
         }
 
@@ -370,6 +371,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         slist = enhanced_logging(slist, LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: %s", path);
 
         free(header);
+        header = NULL;
         curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
         // Send the PROPFIND body.
@@ -378,7 +380,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
         // Perform the request and parse the response.
-        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).", last_updated > 0 ? "progressive" : "complete", last_updated);
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
+            last_updated > 0 ? "progressive" : "complete", last_updated);
 
         res = curl_easy_perform(session);
         if(res == CURLE_OK) {
@@ -386,7 +389,9 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         }
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("simple_propfind", session, res, response_code, idx, path);
+        log_filesystem_nodes("simple_propfind", res, response_code, idx, path);
+        free(query_string);
+        query_string = NULL;
     }
 
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
@@ -442,7 +447,6 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
 
 finish:
     log_print(LOG_INFO, SECTION_ENHANCED, "simple_propfind: fusedav-propfinds:1|c");
-    free(query_string);
     XML_ParserFree(parser);
     return ret;
 }

@@ -31,6 +31,6 @@ void session_config_free(void);
 const char *get_base_url(void);
 char *escape_except_slashes(CURL *session, const char *path);
 void session_temp_handle_destroy(CURL *session);
-void log_filesystem_nodes(const char *fcn_name, const CURL *session, const CURLcode res, const long response_code, const int iter, const char *path);
+void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path);
 
 #endif

@@ -503,7 +503,7 @@ static void get_fresh_fd(filecache_t *cache,
             set_saint_mode();
         }
 
-        log_filesystem_nodes("get_fresh_fd", session, res, response_code, idx, path);
+        log_filesystem_nodes("get_fresh_fd", res, response_code, idx, path);
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
@@ -978,7 +978,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         }
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("put_return_etag", session, res, response_code, idx, path);
+        log_filesystem_nodes("put_return_etag", res, response_code, idx, path);
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {

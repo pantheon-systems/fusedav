@@ -53,6 +53,14 @@ static pthread_key_t session_tsd_key;
 // error-prone
 static __thread struct curl_slist *resolve_slist = NULL;
 
+// Should equal the minimum number of nodes in a valhalla cluster.
+// It needs some value to start, but will be adjusted in call to getaddrinfo
+int num_filesystem_server_nodes = 2;
+
+// Grab the node address out of the curl message and keep track for later logging
+#define LOGSTRSZ 80
+static __thread char nodeaddr[LOGSTRSZ];
+
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
@@ -141,19 +149,19 @@ static void session_tsd_key_init(void) {
  * "Trying <ip addr>...". Kind of clunky since the message can change. Do
  * we have a better way?
  */
-#define LOGSTRSZ 80
 static void print_ipaddr_pair(char *msg) {
-    char addr[LOGSTRSZ];
+    // nodeaddr is global so it can be reused in later logging
     char *end;
     // msg+9 takes us past "  Trying ". We assume the ip addr starts there.
-    strncpy(addr, msg + 9, LOGSTRSZ);
-    addr[LOGSTRSZ - 1] = '\0'; // Just make sure it's null terminated
+    strncpy(nodeaddr, msg + 9, LOGSTRSZ);
+    nodeaddr[LOGSTRSZ - 1] = '\0'; // Just make sure it's null terminated
     // end finds the first two dots after the ip addr. We put a zero there
     // to turn the original string into just the IP addr.
-    end = strstr(addr, "..");
+    end = strstr(nodeaddr, "..");
     end[0] = '\0';
     // We print the key=value pair.
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
+    // TEMPORARY! Change back to INFO
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -570,25 +578,24 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     return session;
 }
 
-void log_filesystem_nodes(const char *fcn_name, const CURL *session, const CURLcode res, const long response_code,
+void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code,
         const int iter, const char *path) {
-    char *node_addr = NULL;
 
-    // REVIEW! KYLE! Any ideas?
+    // Track curl accesses to this filesystem node
     // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
     // print, but at INFO will be easier to filter out
-    curl_easy_getinfo(session, CURLINFO_EFFECTIVE_URL, &node_addr);
-    // Track curl accesses to this filesystem node
-    // FIX ME! JERRY! call to CURLINFO_EFFECTIVE_URL returns
-    // https://valhalla.onebox.panth.io:448/sites/0b3c50d4-b2bf-420e-b706-55dcde8827e2/environments/dev/files/?changes_since=1392872868
-    // Not just the IP addr. Dan! Fix in the morning!
     log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s -- filesystem-host-%s:1|c", fcn_name, iter, path, "JB" /*node_addr*/);
-    if (res != CURLE_OK || response_code >= 500) {
+        "%s: curl iter %d on path %s -- filesystem-host-%s:1|c", fcn_name, iter, path, nodeaddr);
+    if (res != CURLE_OK) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on node %s on path %s -- filesystem-host-%s-failed:1|c", fcn_name, iter, "JB" /*node_addr*/, path);
+            "%s: curl iter %d on path %s; %s :: %lu -- filesystem-host-%s-failed:1|c",
+            fcn_name, iter, path, curl_easy_strerror(res), -1, nodeaddr);
     }
-    free(node_addr);
-
+    if (res != CURLE_OK || response_code >= 500) {
+        // Track errors
+        log_print(LOG_WARNING, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s; %s :: %lu -- filesystem-host-%s-failed:1|c",
+            fcn_name, iter, path, "no curl error", response_code, nodeaddr);
+    }
 }

@@ -45,10 +45,6 @@
 mode_t mask = 0;
 struct fuse* fuse = NULL;
 
-// Should equal the minimum number of nodes in a valhalla cluster.
-// It needs some value to start, but will be adjusted in call to getaddrinfo
-int num_filesystem_server_nodes = 3;
-
 #define CLOCK_SKEW 10 // seconds
 
 // Run cache cleanup once a day.
@@ -209,7 +205,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                     curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
                 }
 
-                log_filesystem_nodes("getdir_propfind_callback", session, res, response_code, idx, path);
+                log_filesystem_nodes("getdir_propfind_callback", res, response_code, idx, path);
             }
 
             if (session) session_temp_handle_destroy(session);
@@ -764,7 +760,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
             if (slist) curl_slist_free_all(slist);
 
-            log_filesystem_nodes("common_unlink", session, res, response_code, idx, path);
+            log_filesystem_nodes("common_unlink", res, response_code, idx, path);
         }
 
         if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
@@ -878,7 +874,7 @@ static int dav_rmdir(const char *path) {
 
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("dav_rmdir", session, res, response_code, idx, path);
+        log_filesystem_nodes("dav_rmdir", res, response_code, idx, path);
     }
 
     if (res != CURLE_OK || response_code >= 500) {
@@ -948,7 +944,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
         }
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("dav_mkdir", session, res, response_code, idx, path);
+        log_filesystem_nodes("dav_mkdir", res, response_code, idx, path);
     }
 
     if (res != CURLE_OK || response_code >= 500) {
@@ -976,14 +972,12 @@ static int dav_mkdir(const char *path, mode_t mode) {
 // REVIEW! JERRY! Check that this wasn't broken
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
-    char *header = NULL;
     GError *gerr = NULL;
     int server_ret = -EIO;
     int local_ret = -EIO;
     int fd = -1;
     struct stat st;
     char fn[PATH_MAX];
-    char *escaped_to;
     struct stat_cache_value *entry = NULL;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
@@ -1012,6 +1006,8 @@ static int dav_rename(const char *from, const char *to) {
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
+        char *header = NULL;
+        char *escaped_to;
         bool new_resolve_list;
 
         if (idx == 0) new_resolve_list = false;
@@ -1031,8 +1027,10 @@ static int dav_rename(const char *from, const char *to) {
         escaped_to = escape_except_slashes(session, to);
         asprintf(&header, "Destination: %s%s", get_base_url(), escaped_to);
         curl_free(escaped_to);
+        escaped_to = NULL;
         slist = curl_slist_append(slist, header);
         free(header);
+        header = NULL;
 
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: %s to %s", from, to);
 
@@ -1046,7 +1044,7 @@ static int dav_rename(const char *from, const char *to) {
         }
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("dav_rename", session, res, response_code, idx, to);
+        log_filesystem_nodes("dav_rename", res, response_code, idx, to);
     }
 
     /* move:
