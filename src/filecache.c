@@ -944,7 +944,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     // If we're in saint mode, skip the PUT altogether
     for (int idx = 0;
-         !use_saint_mode() && idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500);
+         idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500);
          idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
@@ -956,6 +956,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         session = session_request_init(path, NULL, false, new_resolve_list);
 
         fp = fdopen(dup(fd), "r");
+        fseek(fp, 0L, SEEK_SET);
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
         curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
