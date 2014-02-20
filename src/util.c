@@ -61,6 +61,13 @@ char *path_parent(const char *uri) {
     return strndup(uri, (pnt - uri) + 1);
 }
 
+/* saint mode means two things:
+ * 1. If in saint mode, avoid going to server
+ * 2. If in saint mode, where possible, assume local state is correct.
+ * Regarding (2), propfinds should succeed, as should GETs (as if 304).
+ * PUTs and anything which requires creating or updating state or content
+ * will fail, but fail early.
+ */
 // last_failure is used to determine saint_mode.
 // Keep it by thread, so that if one thread goes
 // into saint mode, the others won't think they're
@@ -77,7 +84,8 @@ bool use_saint_mode(void) {
 
 void set_saint_mode(void) {
     struct timespec now;
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Using saint mode for %lu seconds.", SAINT_MODE_DURATION);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+        "Using saint mode for %lu seconds. saint_mode:1|c", SAINT_MODE_DURATION);
     clock_gettime(CLOCK_MONOTONIC, &now);
     last_failure = now.tv_sec;
 }

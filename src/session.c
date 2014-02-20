@@ -55,6 +55,11 @@ static __thread struct curl_slist *resolve_slist = NULL;
 
 // Should equal the minimum number of nodes in a valhalla cluster.
 // It needs some value to start, but will be adjusted in call to getaddrinfo
+// NB. Currently hard-coded to 2. We want to prevent overwhelming server in
+// case of sick server nodes.
+// If one node is unresponsive, we will rescramble the resolve list and
+// expect a different node to try the second time. This will clear the thread
+// of continuing to target a bad node.
 int num_filesystem_server_nodes = 2;
 
 // Grab the node address out of the curl message and keep track for later logging
@@ -160,8 +165,7 @@ static void print_ipaddr_pair(char *msg) {
     end = strstr(nodeaddr, "..");
     end[0] = '\0';
     // We print the key=value pair.
-    // TEMPORARY! Change back to INFO
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
