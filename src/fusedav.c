@@ -69,9 +69,10 @@ static int processed_gerror(const char *prefix, const char *path, GError **pgerr
     GError *gerr = *pgerr;
     log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s", prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
     ret = -gerr->code;
-    // REVIEW! NICK! Not sure about logging here. We'll get a separate variable for each error type.
-    // Most will be ENETDOWN or ENOENT, but sometimes any of a number of errnos
-    log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav-error-%d:1|c", -ret);
+    if (gerr->code == ENOENT) log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-ENOENT:1|c");
+    else if (gerr->code == ENETDOWN) log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-ENETDOWN:1|c");
+    else if (gerr->code == EIO) log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-EIO:1|c");
+    else log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-OTHER:1|c");
     g_clear_error(pgerr);
     return ret;
 }
@@ -473,7 +474,12 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, bool ignore
         if (ignore_freshness || inject_error(fusedav_error_statignorefreshness)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Ignoring freshness and sending -ENOENT for path %s.", path);
             memset(stbuf, 0, sizeof(struct stat));
-            g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
+            if (use_saint_mode()) {
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "get_stat_from_cache: ");
+            }
+            else {
+                g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
+            }
             return -1;
         }
         // else we're not skipping the freshness check and maybe the item is in the cache but just out of date
@@ -564,8 +570,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Zero-depth PROPFIND succeeded: %s", path);
 
         // The propfind succeeded, so if the item does not exist, then it is ENOENT.
-        // Don't check for whether we are in saint mode
         skip_freshness_check = true;
+        // If in saint mode and the item wasn't already in the stat cache, this will return ENETDOWN.
         get_stat_from_cache(path, stbuf, skip_freshness_check, &subgerr);
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
@@ -607,6 +613,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
 
     // Try again to hit the file in the stat cache.
     skip_freshness_check = true;
+    // If in saint mode and the item wasn't already in the stat cache, this will return ENETDOWN.
     ret = get_stat_from_cache(path, stbuf, skip_freshness_check, &tmpgerr);
     if (tmpgerr) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
@@ -1355,7 +1362,7 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
 static int dav_open(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
     BUMP(dav_open);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_open: fusedav-opens:1|c");
+    log_print(LOG_INFO, SECTION_ENHANCED, "dav_open: fusedav.opens:1|c");
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will

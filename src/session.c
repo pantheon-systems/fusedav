@@ -164,6 +164,10 @@ static void print_ipaddr_pair(char *msg) {
     // to turn the original string into just the IP addr.
     end = strstr(nodeaddr, "..");
     end[0] = '\0';
+    // Change dots in addr to underscore for logging
+    for (end = nodeaddr; *end != '\0'; end++) {
+        if (*end == '.') *end = '_';
+    }
     // We print the key=value pair.
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
 }
@@ -589,17 +593,17 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
     // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
     // print, but at INFO will be easier to filter out
     log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s -- filesystem-host-%s:1|c", fcn_name, iter, path, nodeaddr);
+        "%s: curl iter %d on path %s -- fusedav.server-%s.attempts:1|c", fcn_name, iter, path, nodeaddr);
     if (res != CURLE_OK) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- filesystem-host-%s-failed:1|c",
+            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
             fcn_name, iter, path, curl_easy_strerror(res), -1, nodeaddr);
     }
-    if (res != CURLE_OK || response_code >= 500) {
+    else if (response_code >= 500) {
         // Track errors
         log_print(LOG_WARNING, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- filesystem-host-%s-failed:1|c",
+            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
             fcn_name, iter, path, "no curl error", response_code, nodeaddr);
     }
 }

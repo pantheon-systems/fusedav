@@ -85,7 +85,7 @@ bool use_saint_mode(void) {
 void set_saint_mode(void) {
     struct timespec now;
     log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
-        "Using saint mode for %lu seconds. saint_mode:1|c", SAINT_MODE_DURATION);
+        "Using saint mode for %lu seconds. fusedav.saint_mode:1|c", SAINT_MODE_DURATION);
     clock_gettime(CLOCK_MONOTONIC, &now);
     last_failure = now.tv_sec;
 }

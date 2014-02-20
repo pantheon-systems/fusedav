@@ -446,7 +446,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     ret = 0;
 
 finish:
-    log_print(LOG_INFO, SECTION_ENHANCED, "simple_propfind: fusedav-propfinds:1|c");
+    log_print(LOG_INFO, SECTION_ENHANCED, "simple_propfind: fusedav.%s-propfinds:1|c", last_updated > 0 ? "progressive" : "complete");
     XML_ParserFree(parser);
     return ret;
 }
