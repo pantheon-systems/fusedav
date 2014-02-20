@@ -1408,7 +1408,7 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
     GError *gerr = NULL;
 
     BUMP(dav_read);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_read: fusedav-reads:1|c");
+    log_print(LOG_INFO, SECTION_ENHANCED, "dav_read: fusedav.reads:1|c");
 
     // We might get a null path if we are reading from a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1457,7 +1457,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     struct stat_cache_value value;
 
     BUMP(dav_write);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_writes: fusedav-writes:1|c");
+    log_print(LOG_INFO, SECTION_ENHANCED, "dav_write: fusedav.writes:1|c");
 
     // We might get a null path if we are writing to a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1601,7 +1601,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     int fd;
 
     BUMP(dav_create);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_create: fusedav-creates:1|c");
+    log_print(LOG_INFO, SECTION_ENHANCED, "dav_create: fusedav.creates:1|c");
 
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);
