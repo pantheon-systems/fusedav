@@ -579,12 +579,15 @@ void log_filesystem_nodes(const char *fcn_name, const CURL *session, const CURLc
     // print, but at INFO will be easier to filter out
     curl_easy_getinfo(session, CURLINFO_EFFECTIVE_URL, &node_addr);
     // Track curl accesses to this filesystem node
+    // FIX ME! JERRY! call to CURLINFO_EFFECTIVE_URL returns
+    // https://valhalla.onebox.panth.io:448/sites/0b3c50d4-b2bf-420e-b706-55dcde8827e2/environments/dev/files/?changes_since=1392872868
+    // Not just the IP addr. Dan! Fix in the morning!
     log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s -- filesystem-host-%s:1|c", fcn_name, iter, path, node_addr);
+        "%s: curl iter %d on path %s -- filesystem-host-%s:1|c", fcn_name, iter, path, "JB" /*node_addr*/);
     if (res != CURLE_OK || response_code >= 500) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on node %s on path %s -- filesystem-host-%s-failed:1|c", fcn_name, iter, node_addr, path);
+            "%s: curl iter %d on node %s on path %s -- filesystem-host-%s-failed:1|c", fcn_name, iter, "JB" /*node_addr*/, path);
     }
     free(node_addr);
 
