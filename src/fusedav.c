@@ -60,6 +60,8 @@ struct fill_info {
     const char *root;
 };
 
+enum ignore_freshness {OFF, ALREADY_FRESH, SAINT_MODE};
+
 // forward reference to avoid dependency loop
 static void common_unlink(const char *path, bool do_unlink, GError **gerr);
 
@@ -213,6 +215,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             if (session) session_temp_handle_destroy(session);
 
             if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
+                set_saint_mode();
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: curl failed: %s : rc: %ld\n",
                     curl_easy_strerror(res), response_code);
                 return;
@@ -729,6 +732,11 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         CURLcode res = CURLE_OK;
         long response_code = 500; // seed it as bad so we can enter the loop
 
+        if (use_saint_mode()) {
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: already in saint mode");
+            return;
+        }
+
         for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
             CURL *session;
             struct curl_slist *slist = NULL;
@@ -760,6 +768,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         }
 
         if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
+            set_saint_mode();
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: DELETE failed: %s\n", curl_easy_strerror(res));
             return;
         }
@@ -813,6 +822,11 @@ static int dav_rmdir(const char *path) {
     BUMP(dav_rmdir);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_rmdir(%s)", path);
+
+    if (use_saint_mode()) {
+        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): already in saint mode", path);
+        return -ENETDOWN;
+    }
 
     get_stat(path, &st, &gerr);
     if (gerr) {
@@ -868,6 +882,7 @@ static int dav_rmdir(const char *path) {
     }
 
     if (res != CURLE_OK || response_code >= 500) {
+        set_saint_mode();
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): DELETE failed: %s", path, curl_easy_strerror(res));
         return -ENETDOWN;
     }
@@ -899,6 +914,11 @@ static int dav_mkdir(const char *path, mode_t mode) {
     BUMP(dav_mkdir);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
+
+    if (use_saint_mode()) {
+        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): already in saint mode", path);
+        return -ENETDOWN;
+    }
 
     snprintf(fn, sizeof(fn), "%s/", path);
 
@@ -969,6 +989,8 @@ static int dav_rename(const char *from, const char *to) {
     CURLcode res = CURLE_OK;
 
     BUMP(dav_rename);
+
+    // TODO: PUNT on doing use_saint_mode here for now.
 
     assert(from);
     assert(to);

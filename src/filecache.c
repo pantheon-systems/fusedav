@@ -378,7 +378,11 @@ static void get_fresh_fd(filecache_t *cache,
     // the server.
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
     // If the file is in-use (last_server_update = 0) we use the local file and don't go to the server.
-    if (pdata != NULL && ( (flags & O_TRUNC) || (pdata->last_server_update == 0 || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL))) {
+    // If we're in saint mode, don't go to the server
+    if (pdata != NULL &&
+            ((flags & O_TRUNC) ||
+            (pdata->last_server_update == 0 || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL) ||
+            (use_saint_mode()))) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
 
         // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
@@ -436,6 +440,11 @@ static void get_fresh_fd(filecache_t *cache,
         goto finish;
     }
 
+    if (use_saint_mode()) {
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: already in saint mode and no local file exists.");
+        goto finish;
+    }
+
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
@@ -488,10 +497,17 @@ static void get_fresh_fd(filecache_t *cache,
             curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
         }
 
+        // If we have a network error on an earlier pass, set_saint_mode
+        // and see if we can serve locally on a subsequent path
+        if ((res != CURLE_OK || response_code >= 500)) {
+            set_saint_mode();
+        }
+
         log_filesystem_nodes("get_fresh_fd", session, res, response_code, idx, path);
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
+        set_saint_mode();
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: curl_easy_perform is not CURLE_OK or 500: %s",
             curl_easy_strerror(res));
         goto finish;
@@ -898,6 +914,14 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     CURLcode res = CURLE_OK;
 
     BUMP(filecache_return_etag);
+
+    // Fail early
+    if (use_saint_mode()) {
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: already in saint mode, fail operation: %s",
+            curl_easy_strerror(res));
+        goto finish;
+    }
+
     start_time = time(NULL);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "enter: put_return_etag(,%s,%d,,)", path, fd);
@@ -918,7 +942,10 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "put_return_etag: file size %d", st.st_size);
 
-    for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
+    // If we're in saint mode, skip the PUT altogether
+    for (int idx = 0;
+         !use_saint_mode() && idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500);
+         idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
         bool new_resolve_list;
@@ -955,6 +982,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {
+        // Set saint mode, but treat as an error
+        set_saint_mode();
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: retry_curl_easy_perform is not CURLE_OK: %s", curl_easy_strerror(res));
         goto finish;
     }

@@ -40,6 +40,9 @@
 // GError mechanisms
 static G_DEFINE_QUARK(PROP, props)
 
+// Really an indeterminate error, so use EIO as catchall
+#define E_SC_PROPSERR EIO
+
 struct response_state {
     char path[PATH_MAX];
     unsigned long status_code;
@@ -317,6 +320,12 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
 
     int ret = -1;
 
+    // If in saint mode, pretend there are no changes and succeed
+    if (use_saint_mode()) {
+        ret = 0;
+        goto finish;
+    }
+
     // Set up the request handle.
     if (last_updated > 0) {
         asprintf(&query_string, "changes_since=%lu", last_updated);
@@ -380,9 +389,12 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         log_filesystem_nodes("simple_propfind", session, res, response_code, idx, path);
     }
 
-    if (res != CURLE_OK || inject_error(props_error_spropfindcurl)) {
-        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s", last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res));
-        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: curl_easy_perform error %s.", curl_easy_strerror(res));
+    if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
+        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s rc: %lu",
+            last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
+        // Go into saint mode. Treat it as a success.
+        set_saint_mode();
+        ret = 0;
         goto finish;
     }
 
@@ -391,13 +403,13 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         // Finalize parsing.
         if (state.failure || inject_error(props_error_spropfindstatefailure)) {
             log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
-            g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
+            g_set_error(gerr, props_quark(), E_SC_PROPSERR, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
             goto finish;
         }
 
         if (XML_Parse(parser, NULL, 0, 1) == 0 || inject_error(props_error_spropfindxmlparse)) {
             int error_code = XML_GetErrorCode(parser);
-            g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+            g_set_error(gerr, props_quark(), E_SC_PROPSERR, "simple_propfind: Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
             goto finish;
         }
         else {
@@ -421,7 +433,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
     else {
-        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind: (%s) PROPFIND failed with response code: %lu", last_updated > 0 ? "progressive" : "complete", response_code);
+        g_set_error(gerr, props_quark(), E_SC_PROPSERR, "simple_propfind: (%s) PROPFIND failed with response code: %lu", last_updated > 0 ? "progressive" : "complete", response_code);
         goto finish;
     }
 
