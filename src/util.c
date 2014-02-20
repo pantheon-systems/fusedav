@@ -30,33 +30,64 @@
 #include "log.h"
 #include "log_sections.h"
 
+#define SAINT_MODE_DURATION 10
+
 // Return value is allocated and must be freed.
 char *path_parent(const char *uri) {
     size_t len = strlen(uri);
     const char *pnt = uri + len - 1;
-    
+
     // find previous slash
     while (pnt > uri && *pnt != '/') {
         pnt--;
-	}
-	
-	// Move up past the trailing slash. But if we are already at the 
-	// beginning of uri (aka at the root directory's slash), don't move
-	// past it.
-	if (pnt > uri) {
-		pnt--;
-	}
-	
-	// If there are no slashes in the string and we get to the front of the 
-	// string and the first character is not a slash, then we don't have a 
-	// legitimate directory to return
+    }
+
+    // Move up past the trailing slash. But if we are already at the
+    // beginning of uri (aka at the root directory's slash), don't move
+    // past it.
+    if (pnt > uri) {
+        pnt--;
+    }
+
+    // If there are no slashes in the string and we get to the front of the
+    // string and the first character is not a slash, then we don't have a
+    // legitimate directory to return
     if (pnt == uri && *pnt != '/') {
         return NULL;
-	}
+    }
 
-	// Returns everything up to but not including the last slash in the string
-	// But if the slash is the first character, return it.
+    // Returns everything up to but not including the last slash in the string
+    // But if the slash is the first character, return it.
     return strndup(uri, (pnt - uri) + 1);
+}
+
+/* saint mode means two things:
+ * 1. If in saint mode, avoid going to server
+ * 2. If in saint mode, where possible, assume local state is correct.
+ * Regarding (2), propfinds should succeed, as should GETs (as if 304).
+ * PUTs and anything which requires creating or updating state or content
+ * will fail, but fail early.
+ */
+// last_failure is used to determine saint_mode.
+// Keep it by thread, so that if one thread goes
+// into saint mode, the others won't think they're
+// in saint mode, too.
+static __thread time_t last_failure = 0;
+
+bool use_saint_mode(void) {
+    struct timespec now;
+    bool use_saint;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    use_saint = (last_failure + SAINT_MODE_DURATION >= now.tv_sec);
+    return use_saint;
+}
+
+void set_saint_mode(void) {
+    struct timespec now;
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+        "Using saint mode for %lu seconds. fusedav.saint_mode:1|c", SAINT_MODE_DURATION);
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    last_failure = now.tv_sec;
 }
 
 #if INJECT_ERRORS
@@ -69,7 +100,7 @@ char *path_parent(const char *uri) {
 // The list of inject_error locations
 static bool *inject_error_list = NULL;
 
-// specific error tests. 
+// specific error tests.
 /* This test's main use is to ensure that we don't cause serious errors,
  * e.g. segv, when we process a gerr. It just randomly sets an error.
  * Of course, if the program running doesn't hit that point in the code
@@ -83,12 +114,12 @@ static void rand_test(void) {
         int tdx;
         // Sleep 11 seconds between injections
         sleep(11);
-    
+
         // Figure out which error location to set
         tdx = rand() % inject_error_count;
-        
+
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
-    
+
         // Make the new location true but turn off the locations for the old location.
         inject_error_list[tdx] = true;
         inject_error_list[fdx] = false;
@@ -105,14 +136,14 @@ static void enhanced_logging_test(void) {
     for (int iter = 0; iter < iters; iter++) {
         // Sleep 11 seconds between injections
         sleep(11);
-    
+
         // flop between writewrite and no_error
-        
+
         if (tdx == no_error) tdx = filecache_error_enhanced_logging;
         else tdx = no_error;
-        
+
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
-    
+
         // Make the new location true but turn off the locations for the old location.
         inject_error_list[tdx] = true;
         inject_error_list[fdx] = false;
@@ -129,14 +160,14 @@ static void writewrite_test(void) {
     for (int iter = 0; iter < iters; iter++) {
         // Sleep 11 seconds between injections
         sleep(11);
-    
+
         // flop between writewrite and no_error
-        
+
         if (tdx == no_error) tdx = filecache_error_writewrite;
         else tdx = no_error;
-        
+
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
-    
+
         // Make the new location true but turn off the locations for the old location.
         inject_error_list[tdx] = true;
         inject_error_list[fdx] = false;
@@ -167,12 +198,12 @@ static void propfind_test(void) {
         for (int idx = 0; error_name[idx].error != -1; idx++) {
             const char *name;
             int tdx;
-    
+
             tdx = error_name[idx].error;
             name = error_name[idx].name;
-    
+
             log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
-    
+
             // Make the new location true but turn off the locations for the old location.
             inject_error_list[tdx] = true;
             inject_error_list[fdx] = false;
@@ -182,7 +213,7 @@ static void propfind_test(void) {
     }
 }
 
-/* test conditions which might or might not land a file in the forensic haven 
+/* test conditions which might or might not land a file in the forensic haven
  * This is a pretty extensive test of the filecache errors, but not a complete one.
  */
 static void filecache_forensic_haven_test(void) {
@@ -236,12 +267,12 @@ static void filecache_forensic_haven_test(void) {
         for (int idx = 0; error_name[idx].error != -1; idx++) {
             const char *name;
             int tdx;
-    
+
             tdx = error_name[idx].error;
             name = error_name[idx].name;
-                
+
             log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d (%s)", inject_error_count, fdx, tdx, name);
-        
+
             // Make the new location true but turn off the locations for the old location.
             inject_error_list[tdx] = true;
             inject_error_list[fdx] = false;
@@ -277,20 +308,20 @@ void *inject_error_mechanism(__unused void *ptr) {
 
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting rand_test");
         rand_test();
-        
+
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting filecache_forensic_haven_test");
         filecache_forensic_haven_test();
-        
+
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting writewrite_test");
         writewrite_test();
-        
+
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting propfind_test");
         propfind_test();
-        
+
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting fusedav_triggers_vallhalla_logging");
         enhanced_logging_test();
     }
-    
+
     free(inject_error_list);
     return NULL;
 }

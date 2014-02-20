@@ -53,6 +53,19 @@ static pthread_key_t session_tsd_key;
 // error-prone
 static __thread struct curl_slist *resolve_slist = NULL;
 
+// Should equal the minimum number of nodes in a valhalla cluster.
+// It needs some value to start, but will be adjusted in call to getaddrinfo
+// NB. Currently hard-coded to 2. We want to prevent overwhelming server in
+// case of sick server nodes.
+// If one node is unresponsive, we will rescramble the resolve list and
+// expect a different node to try the second time. This will clear the thread
+// of continuing to target a bad node.
+int num_filesystem_server_nodes = 2;
+
+// Grab the node address out of the curl message and keep track for later logging
+#define LOGSTRSZ 80
+static __thread char nodeaddr[LOGSTRSZ];
+
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
@@ -141,19 +154,22 @@ static void session_tsd_key_init(void) {
  * "Trying <ip addr>...". Kind of clunky since the message can change. Do
  * we have a better way?
  */
-#define LOGSTRSZ 80
 static void print_ipaddr_pair(char *msg) {
-    char addr[LOGSTRSZ];
+    // nodeaddr is global so it can be reused in later logging
     char *end;
     // msg+9 takes us past "  Trying ". We assume the ip addr starts there.
-    strncpy(addr, msg + 9, LOGSTRSZ);
-    addr[LOGSTRSZ - 1] = '\0'; // Just make sure it's null terminated
+    strncpy(nodeaddr, msg + 9, LOGSTRSZ);
+    nodeaddr[LOGSTRSZ - 1] = '\0'; // Just make sure it's null terminated
     // end finds the first two dots after the ip addr. We put a zero there
     // to turn the original string into just the IP addr.
-    end = strstr(addr, "..");
+    end = strstr(nodeaddr, "..");
     end[0] = '\0';
+    // Change dots in addr to underscore for logging
+    for (end = nodeaddr; *end != '\0'; end++) {
+        if (*end == '.') *end = '_';
+    }
     // We print the key=value pair.
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", addr);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -438,6 +454,10 @@ static int construct_resolve_slist(CURL *session, bool force) {
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]", prelist[count - 1], count - 1);
     }
 
+    // Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
+    // returned by getaddrinfo, but are afraid that will cause too much load if the cluster is having difficulties
+    // if (count > num_filesystem_server_nodes) num_filesystem_server_nodes = count;
+
     // Randomize!
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand(ts.tv_nsec * ts.tv_sec);
@@ -559,34 +579,31 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
      * the load across the multiple nodes.
      */
     if (error) {
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_request_init: Error creating randomized resolve slist; libcurl can survive but with load imbalance");
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
+            "session_request_init: Error creating randomized resolve slist; libcurl can survive but with load imbalance");
     }
 
     return session;
 }
 
-/* Allow us to retry curl_easy_perform in the presence of errors.
- * This is in conjunction with the way we get IP addresses that a
- * given domain resolves to and randomize them.
- */
-int retry_curl_easy_perform(CURL *session) {
-    CURLcode res;
-    long response_code;
-    bool force = true; // Force us to recreate the randomized slist for CURLOPT_RESOLVE
-    int iter = 0;
-    // REVIEW: How many retries should we do?
-    // If we see certain errors, retry
-    const int max_tries = 4;
+void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code,
+        const int iter, const char *path) {
 
-    res = curl_easy_perform(session);
-    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-    while ((res != CURLE_OK || response_code >= 500) && iter < max_tries) {
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "retry_curl_easy_perform: res %d %s; response_code %d", res, curl_easy_strerror(res), response_code);
-        // Force recreation of the random slist
-        construct_resolve_slist(session, force);
-        res = curl_easy_perform(session);
-        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        ++iter;
+    // Track curl accesses to this filesystem node
+    // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
+    // print, but at INFO will be easier to filter out
+    log_print(LOG_INFO, SECTION_ENHANCED,
+        "%s: curl iter %d on path %s -- fusedav.server-%s.attempts:1|c", fcn_name, iter, path, nodeaddr);
+    if (res != CURLE_OK) {
+        // Track errors
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
+            fcn_name, iter, path, curl_easy_strerror(res), -1, nodeaddr);
     }
-    return res;
+    else if (response_code >= 500) {
+        // Track errors
+        log_print(LOG_WARNING, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
+            fcn_name, iter, path, "no curl error", response_code, nodeaddr);
+    }
 }
