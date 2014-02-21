@@ -61,12 +61,10 @@ char *path_parent(const char *uri) {
     return strndup(uri, (pnt - uri) + 1);
 }
 
-/* saint mode means two things:
- * 1. If in saint mode, avoid going to server
+/* saint mode means:
+ * 1. If in saint mode, scramble resolve list we pass to curl to get a connection to a new node
  * 2. If in saint mode, where possible, assume local state is correct.
  * Regarding (2), propfinds should succeed, as should GETs (as if 304).
- * PUTs and anything which requires creating or updating state or content
- * will fail, but fail early.
  */
 // last_failure is used to determine saint_mode.
 // Keep it by thread, so that if one thread goes
@@ -74,18 +72,22 @@ char *path_parent(const char *uri) {
 // in saint mode, too.
 static __thread time_t last_failure = 0;
 
+// saint mode is now a trigger for rescrambling the resolve list
+// unset after use
 bool use_saint_mode(void) {
     struct timespec now;
     bool use_saint;
     clock_gettime(CLOCK_MONOTONIC, &now);
     use_saint = (last_failure + SAINT_MODE_DURATION >= now.tv_sec);
+    // Unset saint mode by putting last_failure far enough in the past to not trigger on use_saint_mode
+    if (use_saint) last_failure -= (SAINT_MODE_DURATION + 1);
     return use_saint;
 }
 
 void set_saint_mode(void) {
     struct timespec now;
     log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
-        "Using saint mode for %lu seconds. fusedav.saint_mode:1|c", SAINT_MODE_DURATION);
+        "Setting saint mode for %lu seconds. fusedav.saint_mode:1|c", SAINT_MODE_DURATION);
     clock_gettime(CLOCK_MONOTONIC, &now);
     last_failure = now.tv_sec;
 }
