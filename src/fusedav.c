@@ -189,7 +189,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 bool temporary_handle = true; // self-documenting
                 bool new_resolve_list;
 
-                if (idx == 0) new_resolve_list = false;
+                // If already in saint mode, scramble the list; with each failure, rescramble
+                if (idx == 0) new_resolve_list = use_saint_mode();
                 else new_resolve_list = true;
 
                 if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
@@ -735,17 +736,13 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         CURLcode res = CURLE_OK;
         long response_code = 500; // seed it as bad so we can enter the loop
 
-        if (use_saint_mode()) {
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: already in saint mode");
-            return;
-        }
-
         for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
             CURL *session;
             struct curl_slist *slist = NULL;
             bool new_resolve_list;
 
-            if (idx == 0) new_resolve_list = false;
+            // If already in saint mode, scramble the list; with each failure, rescramble
+            if (idx == 0) new_resolve_list = use_saint_mode();
             else new_resolve_list = true;
 
             slist = NULL;
@@ -826,11 +823,6 @@ static int dav_rmdir(const char *path) {
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_rmdir(%s)", path);
 
-    if (use_saint_mode()) {
-        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): already in saint mode", path);
-        return -ENETDOWN;
-    }
-
     get_stat(path, &st, &gerr);
     if (gerr) {
         return processed_gerror("dav_rmdir: ", path, &gerr);
@@ -859,7 +851,8 @@ static int dav_rmdir(const char *path) {
         struct curl_slist *slist = NULL;
         bool new_resolve_list;
 
-        if (idx == 0) new_resolve_list = false;
+        // If already in saint mode, scramble the list; with each failure, rescramble
+        if (idx == 0) new_resolve_list = use_saint_mode();
         else new_resolve_list = true;
 
         slist = NULL;
@@ -918,11 +911,6 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
 
-    if (use_saint_mode()) {
-        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): already in saint mode", path);
-        return -ENETDOWN;
-    }
-
     snprintf(fn, sizeof(fn), "%s/", path);
 
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
@@ -930,7 +918,8 @@ static int dav_mkdir(const char *path, mode_t mode) {
         struct curl_slist *slist = NULL;
         bool new_resolve_list;
 
-        if (idx == 0) new_resolve_list = false;
+        // If already in saint mode, scramble the list; with each failure, rescramble
+        if (idx == 0) new_resolve_list = use_saint_mode();
         else new_resolve_list = true;
 
         slist = NULL;

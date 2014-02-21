@@ -379,6 +379,8 @@ static void get_fresh_fd(filecache_t *cache,
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
     // If the file is in-use (last_server_update = 0) we use the local file and don't go to the server.
     // If we're in saint mode, don't go to the server
+    // REVIEW: for now keeping use_saint_mode. Before even trying curl_easy_perform, if in saint mode
+    // just use what's local
     if (pdata != NULL &&
             ((flags & O_TRUNC) ||
             (pdata->last_server_update == 0 || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL) ||
@@ -440,17 +442,13 @@ static void get_fresh_fd(filecache_t *cache,
         goto finish;
     }
 
-    if (use_saint_mode()) {
-        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: already in saint mode and no local file exists.");
-        goto finish;
-    }
-
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
         bool new_resolve_list;
 
-        if (idx == 0) new_resolve_list = false;
+        // If already in saint mode, scramble the list; with each failure, rescramble
+        if (idx == 0) new_resolve_list = use_saint_mode();
         else new_resolve_list = true;
 
         // These will be -1 and [0] = '\0' on idx 0; but subsequent iterations we need to clean up from previous time
@@ -915,13 +913,6 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     BUMP(filecache_return_etag);
 
-    // Fail early
-    if (use_saint_mode()) {
-        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: already in saint mode, fail operation: %s",
-            curl_easy_strerror(res));
-        goto finish;
-    }
-
     start_time = time(NULL);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "enter: put_return_etag(,%s,%d,,)", path, fd);
@@ -950,7 +941,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         struct curl_slist *slist = NULL;
         bool new_resolve_list;
 
-        if (idx == 0) new_resolve_list = false;
+        // If already in saint mode, scramble the list; with each failure, rescramble
+        if (idx == 0) new_resolve_list = use_saint_mode();
         else new_resolve_list = true;
 
         session = session_request_init(path, NULL, false, new_resolve_list);
