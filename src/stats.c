@@ -73,7 +73,7 @@ static void malloc_stats_output(void *cbopaque, const char *s) {
     if (stripped[len - 1] == '\n')
         stripped[len - 1] = '\0';
     stripped[len] = '\0';
-    
+
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, stripped);
 
 }
@@ -90,10 +90,10 @@ void dump_stats(bool log, const char *cache_path) {
     struct latency_s latency[latency_items];
     char str[MAX_LINE_LEN];
     int fd = -1;
-    
+
     log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: Enter %s :: logging -- %d", cache_path, log);
     if (!log) {
-        /* The path to the cache stats directory looks like this. 
+        /* The path to the cache stats directory looks like this.
          * /srv/bindings/11e4ce335f8240a88b4d5c88a00af3c8/cache/stats/20131203211358
          */
         char stat_path[STAT_PATH_SIZE];
@@ -101,13 +101,13 @@ void dump_stats(bool log, const char *cache_path) {
         char fname[STAT_PATH_SIZE];
         time_t tm;
         unsigned int stat_path_remaining;
-        
+
         // If we have no cache path, we can't write, so punt
         if (!cache_path) {
             log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "dump_stats: error: no cache path to create stats directory");
             return;
         }
-        
+
         /* We're being pretty loose with errors here. If we fail, the job just
          * doesn't get done, but the damage is minimal.
          */
@@ -148,12 +148,12 @@ void dump_stats(bool log, const char *cache_path) {
             return; // If we can't open the file, no point in continuing
         }
     }
-    
+
     mallctl("prof.dump", NULL, NULL, NULL, 0);
 
     snprintf(str, MAX_LINE_LEN, "Caught SIGUSR2. Printing status.");
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    
+
     // Use cbopaque to pass in fd, if there is one
     malloc_stats_print(malloc_stats_output, (void *)(long)fd, "");
 
@@ -248,7 +248,7 @@ void dump_stats(bool log, const char *cache_path) {
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  key2path:         %u", FETCH(filecache_key2path));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
-    
+
     latency[0].count = FETCH(filecache_get_xxsm_count);
     latency[1].count = FETCH(filecache_get_xsm_count);
     latency[2].count = FETCH(filecache_get_sm_count);
@@ -290,13 +290,13 @@ void dump_stats(bool log, const char *cache_path) {
     // Figure out a way to align
     for (int idx = 0; idx < latency_items; idx++) {
         snprintf(str, MAX_LINE_LEN, "  %s_count:     %lu", latency[idx].name, latency[idx].count);
-        print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+        print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
         snprintf(str, MAX_LINE_LEN, "  %s_timing:    %lu", latency[idx].name, latency[idx].timing);
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
         snprintf(str, MAX_LINE_LEN, "  %s_avelat:    %lu", latency[idx].name, latency[idx].count > 0 ? (latency[idx].timing / latency[idx].count) : 0);
         print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     }
-    
+
     snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  local_gen:        %u", FETCH(statcache_local_gen));
