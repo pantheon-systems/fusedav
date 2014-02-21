@@ -980,8 +980,6 @@ static int dav_rename(const char *from, const char *to) {
 
     BUMP(dav_rename);
 
-    // TODO: PUNT on doing use_saint_mode here for now.
-
     assert(from);
     assert(to);
 
@@ -1006,7 +1004,8 @@ static int dav_rename(const char *from, const char *to) {
         char *escaped_to;
         bool new_resolve_list;
 
-        if (idx == 0) new_resolve_list = false;
+        // If already in saint mode, scramble the list; with each failure, rescramble
+        if (idx == 0) new_resolve_list = use_saint_mode();
         else new_resolve_list = true;
 
         slist = NULL;
