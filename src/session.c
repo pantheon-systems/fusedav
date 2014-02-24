@@ -390,10 +390,12 @@ static int construct_resolve_slist(CURL *session, bool force) {
     hints.ai_socktype = SOCK_STREAM;
 
     // get list from getaddrinfo
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calling getaddrinfo with %s %s", filesystem_domain, filesystem_port);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calling getaddrinfo with %s %s",
+        filesystem_domain, filesystem_port);
     res = getaddrinfo(filesystem_domain, filesystem_port, &hints, &aihead);
     if(res) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)", res, gai_strerror(res));
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)",
+            res, gai_strerror(res));
         // This is an error. We do not set CURLOPT_RESOLVE, so libcurl will
         // do its default thing. If its call to getaddrinfo succeeds, the
         // first IP will be used (breaks load balancing).  If it fails as it does here,
@@ -413,9 +415,8 @@ static int construct_resolve_slist(CURL *session, bool force) {
      * However, if the previous connection is still good, libcurl will continue
      * to use it in spite of the new order of addresses in the list. (This is good.)
      */
-    for (ai = aihead; ai != NULL; ai = ai->ai_next) {
+    for (ai = aihead; ai != NULL && count < MAX_NODES; ai = ai->ai_next) {
         // Holds the string we are constructing
-        // char ipstr[IPSTR_SZ];
         char ipaddr[IPSTR_SZ];
 
         prelist[count] = calloc(IPSTR_SZ, 1);
@@ -427,7 +428,6 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
         // The domain comes first, followed by a colon per libcurl's requirement
         strncpy(prelist[count], filesystem_domain, IPSTR_SZ);
-        prelist[count][IPSTR_SZ - 1] = '\0'; // Just make sure it's null terminated
         strcat(prelist[count], ":");
 
         // The port and colon come next.
@@ -489,8 +489,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
                 for (char *end = current_connection; *end != '\0'; end++) {
                     if (*end == '_') *end = '.';
                 }
-                prelist[count] = NULL; // sentinel
             }
+            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s",
+                prelist[pick]);
             // We are trying to put the current_connection at the bottom of the list
             while (!strcmp(prelist[pick], current_connection)) {
                 pick = rand() % (count - idx);
@@ -498,10 +499,12 @@ static int construct_resolve_slist(CURL *session, bool force) {
         }
 
         resolve_slist = curl_slist_append(resolve_slist, prelist[pick]);
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s",
+            prelist[pick]);
         // fill in the gap for the item just removed.
+        free(prelist[pick]);
+        prelist[pick] = NULL;
         for (int jdx = pick; jdx < count; jdx++) {
-            free(prelist[jdx]);
             prelist[jdx] = prelist[jdx + 1];
         }
     }
@@ -516,7 +519,8 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // on its own, and return the unsorted, unbalanced, first entry.
 
     finish:
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Sending resolve_slist (%p) to curl", resolve_slist);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Sending resolve_slist (%p) to curl",
+        resolve_slist);
     curl_easy_setopt(session, CURLOPT_RESOLVE, resolve_slist);
 
     return res;
@@ -608,8 +612,8 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
     if (res != CURLE_OK) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
-            fcn_name, iter, path, curl_easy_strerror(res), -1, nodeaddr);
+            "%s: curl iter %d on path %s; %s :: %s -- fusedav.server-%s.failures:1|c",
+            fcn_name, iter, path, curl_easy_strerror(res), "no rc", nodeaddr);
     }
     else if (response_code >= 500) {
         // Track errors
