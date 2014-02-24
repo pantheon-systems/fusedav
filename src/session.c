@@ -344,7 +344,7 @@ finish:
 static int construct_resolve_slist(CURL *session, bool force) {
     // This will hold the ip addresses in the order they get returned from gethostaddr; later to be randomized
     // for resolve_slist.
-    char prelist[MAX_NODES][IPSTR_SZ];
+    char *prelist[MAX_NODES + 1] = {NULL};
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
@@ -415,43 +415,53 @@ static int construct_resolve_slist(CURL *session, bool force) {
      */
     for (ai = aihead; ai != NULL; ai = ai->ai_next) {
         // Holds the string we are constructing
-        char ipstr[IPSTR_SZ];
+        // char ipstr[IPSTR_SZ];
         char ipaddr[IPSTR_SZ];
 
+        prelist[count] = calloc(IPSTR_SZ, 1);
+        if (!prelist[count]) {
+            log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calloc fails: %d (%s)",
+                errno, strerror(errno));
+            return res;
+        }
+
         // The domain comes first, followed by a colon per libcurl's requirement
-        strncpy(ipstr, filesystem_domain, IPSTR_SZ);
-        ipstr[IPSTR_SZ - 1] = '\0'; // Just make sure it's null terminated
-        strcat(ipstr, ":");
+        strncpy(prelist[count], filesystem_domain, IPSTR_SZ);
+        prelist[count][IPSTR_SZ - 1] = '\0'; // Just make sure it's null terminated
+        strcat(prelist[count], ":");
 
         // The port and colon come next.
-        strcat(ipstr, filesystem_port);
-        strcat(ipstr, ":");
+        strcat(prelist[count], filesystem_port);
+        strcat(prelist[count], ":");
 
         // An IPv4 struct
         if (ai->ai_family == AF_INET) {
             if(!inet_ntop(ai->ai_family, &(((struct sockaddr_in *)ai->ai_addr)->sin_addr), ipaddr, IPSTR_SZ)) {
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET): %d %s", errno, strerror(errno));
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET): %d %s",
+                    errno, strerror(errno));
                 continue;
             }
         }
         // An IPv6 struct
         else if (ai->ai_family == AF_INET6) {
             if(!inet_ntop(ai->ai_family, &(((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr), ipaddr, IPSTR_SZ)) {
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET6): %d %s", errno, strerror(errno));
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET6): %d %s",
+                    errno, strerror(errno));
                 continue;
             }
         }
         else {
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ai_family not IPv4 nor IVv6 [%d]", ai->ai_family);
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ai_family not IPv4 nor IVv6 [%d]",
+                ai->ai_family);
             continue;
         }
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ipaddr is %s", ipaddr);
 
         // Store the string in our "pre" list. It will be in sorted order. We randomize later
-        strcpy(prelist[count], ipstr);
         strcat(prelist[count], ipaddr);
         ++count;
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]", prelist[count - 1], count - 1);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]",
+            prelist[count - 1], count - 1);
     }
 
     // Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
@@ -461,38 +471,39 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // Randomize!
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand(ts.tv_nsec * ts.tv_sec);
+
     // Count is the number of addresses we processed above
     for (int idx = 0; idx < count; idx++) {
-        bool found = false;
         // The random one we will take
         int pick;
-        // Which element we are at
-        int iter = 0;
         pick = rand() % (count - idx);
-        for (int jdx = 0; jdx < count; jdx++) {
-            /* When we find the entry we remove it and put it next in the slist which
-             * we will pass to curl_easy_setopt. We then "zero out" the entry. Effectively,
-             * we are shortening the list, without moving all the elements.
-             * There is assuredly a more efficient way to do this (we are O(n2)), but
-             * we only expect small numbers of nodes that we will process here.
-             */
-            // If this is a non-zero entry in prelist and the pick equals the iter,
-            // we have found our match!
-            if (pick == iter && prelist[jdx][0] != '\0') {
-                // add it to the slist
-                resolve_slist = curl_slist_append(resolve_slist, prelist[jdx]);
-                log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s [%d]", prelist[jdx], iter);
-                // zero it out so it won't be seen in the future
-                prelist[jdx][0] = '\0';
-                // This is just a sanity check in case this code is defective and we need to report the error
-                found = true;
-                break;
+
+        // If force, we assume we are remaking the list because the current connection is bad.
+        // We try to force this entry to the bottom of the list
+        if (force && (idx < (count - 1))) {
+            char current_connection[LOGSTRSZ];
+            if (idx == 0) {
+                // nodeaddr is the most recently accessed ip addr of a filesystem node
+                // However, for logging purposes, we replaced dots with underscores, so make them dots again
+                strncpy(current_connection, nodeaddr, strlen(nodeaddr));
+                for (char *end = current_connection; *end != '\0'; end++) {
+                    if (*end == '_') *end = '.';
+                }
+                prelist[count] = NULL; // sentinel
             }
-            // The iter increments if the current entry is a non-zero one
-            if (prelist[jdx][0] != '\0') ++iter;
+            // We are trying to put the current_connection at the bottom of the list
+            while (!strcmp(prelist[pick], current_connection)) {
+                pick = rand() % (count - idx);
+            }
         }
-        // This should only happen if I'm a chucklehead
-        if (!found) log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Item for resolve_slist not found::Count:idx:pick:iter %d:%d:%d:%d", count, idx, pick, iter);
+
+        resolve_slist = curl_slist_append(resolve_slist, prelist[pick]);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
+        // fill in the gap for the item just removed.
+        for (int jdx = pick; jdx < count; jdx++) {
+            free(prelist[jdx]);
+            prelist[jdx] = prelist[jdx + 1];
+        }
     }
 
     // If we got here, we are golden!
