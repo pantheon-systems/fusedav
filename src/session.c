@@ -589,11 +589,19 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code,
         const int iter, const char *path) {
 
+    static __thread unsigned long count;
+
     // Track curl accesses to this filesystem node
     // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
     // print, but at INFO will be easier to filter out
-    log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s -- fusedav.server-%s.attempts:1|c", fcn_name, iter, path, nodeaddr);
+    // We're overloading the journal, so only log ever 100th time
+    // TODO: set a timer on count and log if timer has expired even if 100 hasn't been reached
+    ++count;
+    if (count >= 100) {
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s -- fusedav.server-%s.attempts:%lu|c", fcn_name, iter, path, nodeaddr, count);
+            count = 0;
+    }
     if (res != CURLE_OK) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
