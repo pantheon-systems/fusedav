@@ -93,7 +93,9 @@ void aggregate_log_print(unsigned int log_level, unsigned int section, const cha
         *count1 = 0;
         if (previous_time) *previous_time = current_time;
         if (description2 && count2) {
-            log_print(log_level, section, "%s: %s:%lu|c", name, description2, *count2);
+            // Cheating. We just know that the second value is a latency total which needs to
+            // be passed through as an average latency.
+            log_print(log_level, section, "%s: %s:%lu|c", name, description2, (*count2 / *count1));
             *count2 = 0;
         }
     }
