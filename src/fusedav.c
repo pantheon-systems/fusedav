@@ -1353,7 +1353,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
 
     BUMP(dav_open);
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_open", "fusedav.opens", &count, 1, &previous_time);
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_open", &previous_time, "fusedav.opens", &count, 1, NULL, NULL, 0);
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
@@ -1402,7 +1402,7 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
 
     BUMP(dav_read);
 
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_read", "fusedav.reads", &count, 1, &previous_time);
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_read", &previous_time, "fusedav.reads", &count, 1, NULL, NULL, 0);
 
     // We might get a null path if we are reading from a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1453,7 +1453,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     static __thread time_t previous_time = 0;
 
     BUMP(dav_write);
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_write", "fusedav.writes", &count, 1, &previous_time);
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_write", &previous_time, "fusedav.writes", &count, 1, NULL, NULL, 0);
 
     // We might get a null path if we are writing to a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1599,7 +1599,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     int fd;
 
     BUMP(dav_create);
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_create", "fusedav.creates", &count, 1, &previous_time);
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_create", &previous_time, "fusedav.creates", &count, 1, NULL, NULL, 0);
 
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);

@@ -61,8 +61,9 @@ char *path_parent(const char *uri) {
     return strndup(uri, (pnt - uri) + 1);
 }
 
-bool aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, const char *description,
-        unsigned long *count, unsigned long value, time_t *previous_time) {
+void aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
+        const char *description1, unsigned long *count1, unsigned long value1,
+        const char *description2, unsigned long *count2, unsigned long value2) {
     // Print every 100th access
     const unsigned long count_trigger = 100;
     // Print every 60th second
@@ -70,7 +71,8 @@ bool aggregate_log_print(unsigned int log_level, unsigned int section, const cha
     time_t current_time;
     bool print_it = false;
 
-    *count += value;
+    *count1 += value1;
+    if (count2) *count2 += value2;
     // Track curl accesses to this filesystem node
     // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
     // print, but at INFO will be easier to filter out
@@ -86,16 +88,16 @@ bool aggregate_log_print(unsigned int log_level, unsigned int section, const cha
         print_it = true;
     }
     // Also print if we have exceeded count
-    if (print_it || *count >= count_trigger) {
-        log_print(log_level, section, "%s: %s:%lu|c", name, description, *count);
-        *count = 0;
+    if (print_it || *count1 >= count_trigger) {
+        log_print(log_level, section, "%s: %s:%lu|c", name, description1, *count1);
+        *count1 = 0;
         if (previous_time) *previous_time = current_time;
-        print_it = true;
+        if (description2 && count2) {
+            log_print(log_level, section, "%s: %s:%lu|c", name, description2, *count2);
+            *count2 = 0;
+        }
     }
-    else {
-        print_it = false;
-    }
-    return print_it;
+    return;
 }
 
 /* saint mode means:
