@@ -450,6 +450,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
 finish:
     asprintf(&description, "fusedav.%s-propfinds", last_updated > 0 ? "progressive" : "complete");
     aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "simple_propfind", description, &count, 1, &previous_time);
+    free(description);
     XML_ParserFree(parser);
     return ret;
 }
