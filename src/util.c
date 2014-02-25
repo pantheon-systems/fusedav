@@ -90,14 +90,17 @@ void aggregate_log_print(unsigned int log_level, unsigned int section, const cha
     // Also print if we have exceeded count
     if (print_it || *count1 >= count_trigger) {
         log_print(log_level, section, "%s: %s:%lu|c", name, description1, *count1);
-        *count1 = 0;
-        if (previous_time) *previous_time = current_time;
         if (description2 && count2) {
+            unsigned long result;
             // Cheating. We just know that the second value is a latency total which needs to
             // be passed through as an average latency.
-            log_print(log_level, section, "%s: %s:%lu|c", name, description2, (*count2 / *count1));
+            if (*count1 == 0) result = 0;
+            else result = (*count2 / *count1);
+            log_print(log_level, section, "%s: %s:%lu|c", name, description2, result);
             *count2 = 0;
         }
+        *count1 = 0;
+        if (previous_time) *previous_time = current_time;
     }
     return;
 }
