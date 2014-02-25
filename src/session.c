@@ -66,6 +66,8 @@ int num_filesystem_server_nodes = 2;
 #define LOGSTRSZ 80
 static __thread char nodeaddr[LOGSTRSZ];
 
+static __thread time_t session_start_time;
+
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
@@ -133,7 +135,8 @@ void session_config_free(void) {
 
 static void session_destroy(void *s) {
     CURL *session = s;
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL session.");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
+        "Destroying cURL session -- fusedav.sessions:-1|c fusedav.session-duration:%lu|c", time(NULL) - session_start_time);
 
     assert(s);
     // Before we go, make sure we've printed the number of curl accesses we accumulated
@@ -205,7 +208,10 @@ CURL *session_get_handle(void) {
     if ((session = pthread_getspecific(session_tsd_key)))
         return session;
 
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session.");
+    // Keep track of start time so we can track how long sessions stay open
+    session_start_time = time(NULL);
+
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.sessions:1|c");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
@@ -627,5 +633,10 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_WARNING, SECTION_ENHANCED,
             "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
             fcn_name, iter, path, "no curl error", response_code, nodeaddr);
+    }
+    // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
+    else if (iter > 0) {
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s -- fusedav.server-%s.recoveries:1|c", fcn_name, iter, path, nodeaddr);
     }
 }
