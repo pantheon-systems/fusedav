@@ -73,6 +73,7 @@ static char *client_certificate = NULL;
 static char *base_url = NULL;
 static char *filesystem_domain = NULL;
 static char *filesystem_port = NULL;
+static char *filesystem_cluster = NULL;
 
 const char *get_base_url(void) {
     return base_url;
@@ -82,6 +83,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     size_t base_len;
     UriParserStateA state;
     UriUriA uri;
+    char *firstdot = NULL;
 
     assert(base);
 
@@ -121,8 +123,18 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
 
     filesystem_domain = strndup(uri.hostText.first, uri.hostText.afterLast - uri.hostText.first);
     filesystem_port = strndup(uri.portText.first, uri.portText.afterLast - uri.portText.first);
+    firstdot = strchr(uri.hostText.first, '.');
+    if (firstdot) {
+        filesystem_cluster = strndup(uri.hostText.first, firstdot - uri.hostText.first);
+    }
+    else {
+        /* Failure */
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse finding cluster name: %s", base);
+        asprintf(&filesystem_cluster, "unknown");
+    }
     uriFreeUriMembersA(&uri);
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_config_init: domain :: port: %s :: %s", filesystem_domain, filesystem_port);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: domain (%s) :: port (%s) :: cluster (%s)",
+        filesystem_domain, filesystem_port, filesystem_cluster);
 
     return 0;
 }
@@ -617,7 +629,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
     // Also print if we have exceeded count
     if (print_it || count >= count_trigger) {
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "curl iter %d on path %s -- fusedav.server-%s.attempts:%lu|c", iter, path, nodeaddr, count);
+            "curl iter %d on path %s -- fusedav.%s.server-%s.attempts:%lu|c", iter, path, filesystem_cluster, nodeaddr, count);
         count = 0;
         previous_time = current_time;
     }
@@ -625,18 +637,18 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
     if (res != CURLE_OK) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %s -- fusedav.server-%s.failures:1|c",
-            fcn_name, iter, path, curl_easy_strerror(res), "no rc", nodeaddr);
+            "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures:1|c",
+            fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
     }
     else if (response_code >= 500) {
         // Track errors
         log_print(LOG_WARNING, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
-            fcn_name, iter, path, "no curl error", response_code, nodeaddr);
+            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures:1|c",
+            fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
     }
     // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
     else if (iter > 0) {
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s -- fusedav.server-%s.recoveries:1|c", fcn_name, iter, path, nodeaddr);
+            "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries:1|c", fcn_name, iter, path, filesystem_cluster, nodeaddr);
     }
 }
