@@ -134,7 +134,10 @@ void session_config_free(void) {
 static void session_destroy(void *s) {
     CURL *session = s;
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL session.");
+
     assert(s);
+    // Before we go, make sure we've printed the number of curl accesses we accumulated
+    log_filesystem_nodes("session_destroy", CURLE_OK, 0, 999, "no path");
     // Free the resolve_slist before exiting the session
     curl_slist_free_all(resolve_slist);
     curl_easy_cleanup(session);
@@ -588,25 +591,36 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code,
         const int iter, const char *path) {
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
+    // Print every 100th access
+    const unsigned long count_trigger = 100;
+    // Print every 60th second
+    const time_t time_trigger = 60;
+    time_t current_time;
+    bool print_it;
 
-    static __thread unsigned long count;
-
+    ++count;
     // Track curl accesses to this filesystem node
     // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
     // print, but at INFO will be easier to filter out
-    // We're overloading the journal, so only log ever 100th time
-    // TODO: set a timer on count and log if timer has expired even if 100 hasn't been reached
-    ++count;
-    if (count >= 100) {
+    // We're overloading the journal, so only log every print_count_trigger count or every print_interval time
+    current_time = time(NULL);
+    // Always print the first one. Then print if our interval has expired
+    print_it = (previous_time == 0) || (current_time - previous_time >= time_trigger);
+    // Also print if we have exceeded count
+    if (print_it || count >= count_trigger) {
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s -- fusedav.server-%s.attempts:%lu|c", fcn_name, iter, path, nodeaddr, count);
-            count = 0;
+            "curl iter %d on path %s -- fusedav.server-%s.attempts:%lu|c", iter, path, nodeaddr, count);
+        count = 0;
+        previous_time = current_time;
     }
+
     if (res != CURLE_OK) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
-            fcn_name, iter, path, curl_easy_strerror(res), -1, nodeaddr);
+            "%s: curl iter %d on path %s; %s :: %s -- fusedav.server-%s.failures:1|c",
+            fcn_name, iter, path, curl_easy_strerror(res), "no rc", nodeaddr);
     }
     else if (response_code >= 500) {
         // Track errors

@@ -29,6 +29,8 @@
 #include <stdbool.h>
 
 char *path_parent(const char *uri);
+bool aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, const char *description,
+    unsigned long *count, unsigned long value, time_t *previous_time);
 bool use_saint_mode(void);
 void set_saint_mode(void);
 

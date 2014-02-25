@@ -225,7 +225,8 @@ static void endElement(void *userData, const XML_Char *name) {
         struct tm t;
         strptime(state->estate.current_data, "%FT%H:%M:%S%z", &t);
         state->rstate.st.st_ctime = mktime(&t);
-        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "DAV:creationdate: %s (ctime: %lu)", state->estate.current_data, state->rstate.st.st_ctime);
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "DAV:creationdate: %s (ctime: %lu)",
+            state->estate.current_data, state->rstate.st.st_ctime);
     }
     else if (strcmp(name, "DAV:response") == 0) {
         GError *subgerr = NULL;
@@ -258,11 +259,13 @@ static void endElement(void *userData, const XML_Char *name) {
         state->rstate.st.st_uid = getuid();
         state->rstate.st.st_gid = getgid();
 
-        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "endElement: Response for path: %s (code %lu, size, %lu)", state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
+        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "endElement: Response for path: %s (code %lu, size, %lu)",
+            state->rstate.path, state->rstate.status_code, state->rstate.st.st_size);
         state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code, &subgerr);
         if (subgerr) {
             // There's no mechanism to pass gerr back from endElement, so just print here
-            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "endElement: Error from callback (%d : %s)", subgerr->code, subgerr->message);
+            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "endElement: Error from callback (%d : %s)",
+                subgerr->code, subgerr->message);
             // Fall through, we still want to reset response state
         }
 
@@ -308,6 +311,9 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
 
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
         void *userdata, GError **gerr) {
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
+    char *description = NULL;
     // Local variables for cURL.
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
@@ -442,7 +448,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     ret = 0;
 
 finish:
-    log_print(LOG_INFO, SECTION_ENHANCED, "simple_propfind: fusedav.%s-propfinds:1|c", last_updated > 0 ? "progressive" : "complete");
+    asprintf(&description, "fusedav.%s-propfinds", last_updated > 0 ? "progressive" : "complete");
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "simple_propfind", description, &count, 1, &previous_time);
     XML_ParserFree(parser);
     return ret;
 }

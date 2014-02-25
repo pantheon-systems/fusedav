@@ -61,6 +61,43 @@ char *path_parent(const char *uri) {
     return strndup(uri, (pnt - uri) + 1);
 }
 
+bool aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, const char *description,
+        unsigned long *count, unsigned long value, time_t *previous_time) {
+    // Print every 100th access
+    const unsigned long count_trigger = 100;
+    // Print every 60th second
+    const time_t time_trigger = 60;
+    time_t current_time;
+    bool print_it = false;
+
+    *count += value;
+    // Track curl accesses to this filesystem node
+    // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
+    // print, but at INFO will be easier to filter out
+    // We're overloading the journal, so only log every print_count_trigger count or every print_interval time
+    current_time = time(NULL);
+
+    // if previous_time is NULL then this is a pair to an earlier call, and we always print it
+    if (previous_time != NULL) {
+        // Always print the first one. Then print if our interval has expired
+        print_it = (*previous_time == 0) || (current_time - *previous_time >= time_trigger);
+    }
+    else {
+        print_it = true;
+    }
+    // Also print if we have exceeded count
+    if (print_it || *count >= count_trigger) {
+        log_print(log_level, section, "%s: %s:%lu|c", name, description, *count);
+        *count = 0;
+        if (previous_time) *previous_time = current_time;
+        print_it = true;
+    }
+    else {
+        print_it = false;
+    }
+    return print_it;
+}
+
 /* saint mode means:
  * 1. If in saint mode, scramble resolve list we pass to curl to get a connection to a new node
  * 2. If in saint mode, where possible, assume local state is correct.
