@@ -61,6 +61,50 @@ char *path_parent(const char *uri) {
     return strndup(uri, (pnt - uri) + 1);
 }
 
+void aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
+        const char *description1, unsigned long *count1, unsigned long value1,
+        const char *description2, long *count2, long value2) {
+    // Print every 100th access
+    const unsigned long count_trigger = 100;
+    // Print every 60th second
+    const time_t time_trigger = 60;
+    time_t current_time;
+    bool print_it = false;
+
+    *count1 += value1;
+    if (count2) *count2 += value2;
+    // Track curl accesses to this filesystem node
+    // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
+    // print, but at INFO will be easier to filter out
+    // We're overloading the journal, so only log every print_count_trigger count or every print_interval time
+    current_time = time(NULL);
+
+    // if previous_time is NULL then this is a pair to an earlier call, and we always print it
+    if (previous_time != NULL) {
+        // Always print the first one. Then print if our interval has expired
+        print_it = (*previous_time == 0) || (current_time - *previous_time >= time_trigger);
+    }
+    else {
+        print_it = true;
+    }
+    // Also print if we have exceeded count
+    if (print_it || *count1 >= count_trigger) {
+        log_print(log_level, section, "%s: %s:%lu|c", name, description1, *count1);
+        if (description2 && count2) {
+            long result;
+            // Cheating. We just know that the second value is a latency total which needs to
+            // be passed through as an average latency.
+            if (*count1 == 0) result = 0;
+            else result = (*count2 / *count1);
+            log_print(log_level, section, "%s: %s:%ld|c", name, description2, result);
+            *count2 = 0;
+        }
+        *count1 = 0;
+        if (previous_time) *previous_time = current_time;
+    }
+    return;
+}
+
 /* saint mode means:
  * 1. If in saint mode, scramble resolve list we pass to curl to get a connection to a new node
  * 2. If in saint mode, where possible, assume local state is correct.
