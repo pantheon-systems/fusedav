@@ -359,8 +359,7 @@ static void get_fresh_fd(filecache_t *cache,
     char response_filename[PATH_MAX] = "\0";
     int response_fd = -1;
     bool close_response_fd = true;
-    struct timespec now;
-    long start_time;
+    struct timespec start_time;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
     static __thread unsigned long lgcount = 0;
@@ -372,8 +371,7 @@ static void get_fresh_fd(filecache_t *cache,
 
     BUMP(filecache_fresh_fd);
 
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    start_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
 
     assert(pdatap);
     pdata = *pdatap;
@@ -572,6 +570,7 @@ static void get_fresh_fd(filecache_t *cache,
     else if (response_code == 200) {
         struct stat st;
         long elapsed_time;
+        struct timespec now;
         unsigned long latency;
         unsigned long count;
         // Archive the old temp file path for unlinking after replacement.
@@ -626,10 +625,16 @@ static void get_fresh_fd(filecache_t *cache,
             goto finish;
         }
 
+        /* Get the time into now.
+         * Subtract seconds since start_time and multiply by 1000 to get ms.
+         * Subtract nanoseconds since start_time and divide by a million to get ms.
+         * ns count might be negative (now is 3s and 100 million ns, start was 1 sec and 800 million ns.
+         * Seconds is now 2 (*1000);
+         * ns is now -700 (800 million ns - 100 million ns divided by a million.
+         * 2000 - 700 = 1300 ms, or 1s 300ms, which is correct for 3.1 - 1.8)
+         */
         clock_gettime(CLOCK_MONOTONIC, &now);
-        elapsed_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
-        elapsed_time -= start_time;
-        elapsed_time /= (1000 * 1000); // turn it into milliseconds
+        elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
 
         if (st.st_size > XLG) {
             TIMING(filecache_get_xlg_timing, elapsed_time);
@@ -953,11 +958,10 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 /* Our modification to include etag support on put */
 static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     struct stat st;
-    long start_time;
+    struct timespec start_time;
     FILE *fp;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
-    struct timespec now;
     static __thread unsigned long lpcount = 0;
     static __thread long lplatency = 0;
     static __thread time_t lptime = 0;
@@ -967,8 +971,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     BUMP(filecache_return_etag);
 
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    start_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "enter: put_return_etag(,%s,%d,,)", path, fd);
 
@@ -1037,6 +1040,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     }
     else {
         long elapsed_time;
+        struct timespec now;
         unsigned long latency;
         unsigned long count;
         const char *sz;
@@ -1054,10 +1058,17 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
                 response_code);
             goto finish;
         }
+
+        /* Get the time into now.
+         * Subtract seconds since start_time and multiply by 1000 to get ms.
+         * Subtract nanoseconds since start_time and divide by a million to get ms.
+         * ns count might be negative (now is 3s and 100 million ns, start was 1 sec and 800 million ns.
+         * Seconds is now 2 (*1000);
+         * ns is now -700 (800 million ns - 100 million ns divided by a million.
+         * 2000 - 700 = 1300 ms, or 1s 300ms, which is correct for 3.1 - 1.8)
+         */
         clock_gettime(CLOCK_MONOTONIC, &now);
-        elapsed_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
-        elapsed_time -= start_time;
-        elapsed_time /= (1000 * 1000); // turn it into milliseconds
+        elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
 
         if (st.st_size > XLG) {
             TIMING(filecache_put_xlg_timing, elapsed_time);
