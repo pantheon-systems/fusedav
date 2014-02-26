@@ -63,7 +63,7 @@ char *path_parent(const char *uri) {
 
 void aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
         const char *description1, unsigned long *count1, unsigned long value1,
-        const char *description2, unsigned long *count2, unsigned long value2) {
+        const char *description2, long *count2, long value2) {
     // Print every 100th access
     const unsigned long count_trigger = 100;
     // Print every 60th second
@@ -91,12 +91,12 @@ void aggregate_log_print(unsigned int log_level, unsigned int section, const cha
     if (print_it || *count1 >= count_trigger) {
         log_print(log_level, section, "%s: %s:%lu|c", name, description1, *count1);
         if (description2 && count2) {
-            unsigned long result;
+            long result;
             // Cheating. We just know that the second value is a latency total which needs to
             // be passed through as an average latency.
             if (*count1 == 0) result = 0;
             else result = (*count2 / *count1);
-            log_print(log_level, section, "%s: %s:%lu|c", name, description2, result);
+            log_print(log_level, section, "%s: %s:%ld|c", name, description2, result);
             *count2 = 0;
         }
         *count1 = 0;

@@ -360,20 +360,20 @@ static void get_fresh_fd(filecache_t *cache,
     int response_fd = -1;
     bool close_response_fd = true;
     struct timespec now;
-    time_t start_time;
+    long start_time;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
     static __thread unsigned long lgcount = 0;
-    static __thread unsigned long lglatency = 0;
+    static __thread long lglatency = 0;
     static __thread time_t lgtime = 0;
     static __thread unsigned long sgcount = 0;
-    static __thread unsigned long sglatency = 0;
+    static __thread long sglatency = 0;
     static __thread time_t sgtime = 0;
 
     BUMP(filecache_fresh_fd);
 
     clock_gettime(CLOCK_MONOTONIC, &now);
-    start_time = now.tv_nsec;
+    start_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
 
     assert(pdatap);
     pdata = *pdatap;
@@ -568,7 +568,7 @@ static void get_fresh_fd(filecache_t *cache,
     }
     else if (response_code == 200) {
         struct stat st;
-        time_t elapsed_time;
+        long elapsed_time;
         unsigned long latency;
         unsigned long count;
         // Archive the old temp file path for unlinking after replacement.
@@ -624,7 +624,8 @@ static void get_fresh_fd(filecache_t *cache,
         }
 
         clock_gettime(CLOCK_MONOTONIC, &now);
-        elapsed_time = now.tv_nsec - start_time;
+        elapsed_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
+        elapsed_time -= start_time;
         elapsed_time /= (1000 * 1000); // turn it into milliseconds
 
         if (st.st_size > XLG) {
@@ -930,22 +931,22 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 /* Our modification to include etag support on put */
 static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     struct stat st;
-    time_t start_time;
+    long start_time;
     FILE *fp;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
     struct timespec now;
     static __thread unsigned long lpcount = 0;
-    static __thread unsigned long lplatency = 0;
+    static __thread long lplatency = 0;
     static __thread time_t lptime = 0;
     static __thread unsigned long spcount = 0;
-    static __thread unsigned long splatency = 0;
+    static __thread long splatency = 0;
     static __thread time_t sptime = 0;
 
     BUMP(filecache_return_etag);
 
     clock_gettime(CLOCK_MONOTONIC, &now);
-    start_time = now.tv_nsec;
+    start_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "enter: put_return_etag(,%s,%d,,)", path, fd);
 
@@ -1013,7 +1014,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         goto finish;
     }
     else {
-        time_t elapsed_time;
+        long elapsed_time;
         unsigned long latency;
         unsigned long count;
         const char *sz;
@@ -1031,7 +1032,11 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
                 response_code);
             goto finish;
         }
-        elapsed_time = time(NULL) - start_time;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        elapsed_time = (now.tv_sec * (1000 * 1000 * 1000)) + now.tv_nsec;
+        elapsed_time -= start_time;
+        elapsed_time /= (1000 * 1000); // turn it into milliseconds
+
         if (st.st_size > XLG) {
             TIMING(filecache_put_xlg_timing, elapsed_time);
             BUMP(filecache_put_xlg_count);

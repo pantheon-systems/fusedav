@@ -133,7 +133,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
         asprintf(&filesystem_cluster, "unknown");
     }
     uriFreeUriMembersA(&uri);
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: domain (%s) :: port (%s) :: cluster (%s)",
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: host (%s) :: port (%s) :: cluster (%s)",
         filesystem_domain, filesystem_port, filesystem_cluster);
 
     return 0;
@@ -152,7 +152,7 @@ static void session_destroy(void *s) {
 
     assert(s);
     // Before we go, make sure we've printed the number of curl accesses we accumulated
-    log_filesystem_nodes("session_destroy", CURLE_OK, 0, 999, "no path");
+    log_filesystem_nodes("session_destroy", CURLE_OK, 0, 0, "no path");
     // Free the resolve_slist before exiting the session
     curl_slist_free_all(resolve_slist);
     curl_easy_cleanup(session);
@@ -607,8 +607,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     return session;
 }
 
-void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code,
-        const int iter, const char *path) {
+void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path) {
     static __thread unsigned long count = 0;
     static __thread time_t previous_time = 0;
     // Print every 100th access

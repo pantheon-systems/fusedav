@@ -31,7 +31,7 @@
 char *path_parent(const char *uri);
 void aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
     const char *description1, unsigned long *count1, unsigned long value1,
-    const char *description2, unsigned long *count2, unsigned long value2);
+    const char *description2, long *count2, long value2);
 bool use_saint_mode(void);
 void set_saint_mode(void);
 
