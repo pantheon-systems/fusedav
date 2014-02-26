@@ -155,6 +155,7 @@ static void session_destroy(void *s) {
     log_filesystem_nodes("session_destroy", CURLE_OK, 0, 0, "no path");
     // Free the resolve_slist before exiting the session
     curl_slist_free_all(resolve_slist);
+    resolve_slist = NULL;
     curl_easy_cleanup(session);
 }
 
@@ -212,13 +213,20 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
     return 0;
 }
 
-CURL *session_get_handle(void) {
+static CURL *session_get_handle(bool new_handle) {
     CURL *session;
 
     pthread_once(&session_once, session_tsd_key_init);
 
-    if ((session = pthread_getspecific(session_tsd_key)))
-        return session;
+    if ((session = pthread_getspecific(session_tsd_key))) {
+        if (new_handle) {
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_get_handle: destroying old handle and creating a new one");
+            session_destroy(session);
+        }
+        else {
+            return session;
+        }
+    }
 
     // Keep track of start time so we can track how long sessions stay open
     session_start_time = time(NULL);
@@ -503,6 +511,11 @@ static int construct_resolve_slist(CURL *session, bool force) {
         // We try to force this entry to the bottom of the list
         if (force && (idx < (count - 1))) {
             char current_connection[LOGSTRSZ];
+            char port_str[16]; // long enough to hold port and a colon.
+            char *pick_addr;
+            int retries = 0;
+            const int max_retries = 4;
+
             if (idx == 0) {
                 // nodeaddr is the most recently accessed ip addr of a filesystem node
                 // However, for logging purposes, we replaced dots with underscores, so make them dots again
@@ -510,18 +523,34 @@ static int construct_resolve_slist(CURL *session, bool force) {
                 for (char *end = current_connection; *end != '\0'; end++) {
                     if (*end == '_') *end = '.';
                 }
+                // Get a string which matches that part of the string we pass to curl which just precedes the ip addr
+                // That would be port:
+                strncpy(port_str, filesystem_port, strlen(port_str));
+                strcat(port_str, ":");
+                log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: current_connection is %s; port_str is %s",
+                    current_connection, port_str);
             }
-            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s",
-                prelist[pick]);
             // We are trying to put the current_connection at the bottom of the list
-            while (!strcmp(prelist[pick], current_connection)) {
+            // The string is valhalla.onebox.panth.io:448:127.0.0.23
+            // and we want 127.0.0.23
+            // IPv6 localhost is valhalla.onebox.panth.io:448:::1, so handle this
+            pick_addr = strstr(prelist[pick], port_str);
+            pick_addr += strlen(port_str); // move past the port_str itself. Now we are at the beginning of the address
+            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: pick_addr: %s current_connection: %s",
+                pick_addr, current_connection);
+            // With low probability, we might always get the same pick, so use retries for an exit strategy
+            while (!strcmp(pick_addr, current_connection) && (retries < max_retries)) {
                 pick = rand() % (count - idx);
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getting new pick for bad link: %s",
+                    current_connection);
+                pick_addr = strrchr(prelist[pick], ':');
+                ++pick_addr;
+                ++retries;
             }
         }
 
         resolve_slist = curl_slist_append(resolve_slist, prelist[pick]);
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s",
-            prelist[pick]);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
         // fill in the gap for the item just removed.
         free(prelist[pick]);
         prelist[pick] = NULL;
@@ -557,7 +586,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         session = session_get_temp_handle();
     }
     else {
-        session = session_get_handle();
+        session = session_get_handle(new_slist);
     }
 
     if (!session) {
