@@ -66,11 +66,14 @@ int num_filesystem_server_nodes = 2;
 #define LOGSTRSZ 80
 static __thread char nodeaddr[LOGSTRSZ];
 
+static __thread time_t session_start_time;
+
 static char *ca_certificate = NULL;
 static char *client_certificate = NULL;
 static char *base_url = NULL;
 static char *filesystem_domain = NULL;
 static char *filesystem_port = NULL;
+static char *filesystem_cluster = NULL;
 
 const char *get_base_url(void) {
     return base_url;
@@ -80,6 +83,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     size_t base_len;
     UriParserStateA state;
     UriUriA uri;
+    char *firstdot = NULL;
 
     assert(base);
 
@@ -119,8 +123,18 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
 
     filesystem_domain = strndup(uri.hostText.first, uri.hostText.afterLast - uri.hostText.first);
     filesystem_port = strndup(uri.portText.first, uri.portText.afterLast - uri.portText.first);
+    firstdot = strchr(uri.hostText.first, '.');
+    if (firstdot) {
+        filesystem_cluster = strndup(uri.hostText.first, firstdot - uri.hostText.first);
+    }
+    else {
+        /* Failure */
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse finding cluster name: %s", base);
+        asprintf(&filesystem_cluster, "unknown");
+    }
     uriFreeUriMembersA(&uri);
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_config_init: domain :: port: %s :: %s", filesystem_domain, filesystem_port);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: host (%s) :: port (%s) :: cluster (%s)",
+        filesystem_domain, filesystem_port, filesystem_cluster);
 
     return 0;
 }
@@ -133,8 +147,12 @@ void session_config_free(void) {
 
 static void session_destroy(void *s) {
     CURL *session = s;
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL session.");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
+        "Destroying cURL session -- fusedav.sessions:-1|c fusedav.session-duration:%lu|c", time(NULL) - session_start_time);
+
     assert(s);
+    // Before we go, make sure we've printed the number of curl accesses we accumulated
+    log_filesystem_nodes("session_destroy", CURLE_OK, 0, 0, "no path");
     // Free the resolve_slist before exiting the session
     curl_slist_free_all(resolve_slist);
     curl_easy_cleanup(session);
@@ -202,7 +220,10 @@ CURL *session_get_handle(void) {
     if ((session = pthread_getspecific(session_tsd_key)))
         return session;
 
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session.");
+    // Keep track of start time so we can track how long sessions stay open
+    session_start_time = time(NULL);
+
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.sessions:1|c");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
@@ -586,24 +607,47 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     return session;
 }
 
-void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code,
-        const int iter, const char *path) {
+void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path) {
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
+    // Print every 100th access
+    const unsigned long count_trigger = 100;
+    // Print every 60th second
+    const time_t time_trigger = 60;
+    time_t current_time;
+    bool print_it;
 
+    ++count;
     // Track curl accesses to this filesystem node
     // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
     // print, but at INFO will be easier to filter out
-    log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s -- fusedav.server-%s.attempts:1|c", fcn_name, iter, path, nodeaddr);
+    // We're overloading the journal, so only log every print_count_trigger count or every print_interval time
+    current_time = time(NULL);
+    // Always print the first one. Then print if our interval has expired
+    print_it = (previous_time == 0) || (current_time - previous_time >= time_trigger);
+    // Also print if we have exceeded count
+    if (print_it || count >= count_trigger) {
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "curl iter %d on path %s -- fusedav.%s.server-%s.attempts:%lu|c", iter, path, filesystem_cluster, nodeaddr, count);
+        count = 0;
+        previous_time = current_time;
+    }
+
     if (res != CURLE_OK) {
         // Track errors
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
-            fcn_name, iter, path, curl_easy_strerror(res), -1, nodeaddr);
+            "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures:1|c",
+            fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
     }
     else if (response_code >= 500) {
         // Track errors
         log_print(LOG_WARNING, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.server-%s.failures:1|c",
-            fcn_name, iter, path, "no curl error", response_code, nodeaddr);
+            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures:1|c",
+            fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
+    }
+    // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
+    else if (iter > 0) {
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries:1|c", fcn_name, iter, path, filesystem_cluster, nodeaddr);
     }
 }

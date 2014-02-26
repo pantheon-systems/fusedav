@@ -1348,9 +1348,12 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
 }
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
     GError *gerr = NULL;
+
     BUMP(dav_open);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_open: fusedav.opens:1|c");
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_open", &previous_time, "fusedav.opens", &count, 1, NULL, NULL, 0);
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
@@ -1393,10 +1396,13 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
 
 static int dav_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
     GError *gerr = NULL;
 
     BUMP(dav_read);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_read: fusedav.reads:1|c");
+
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_read", &previous_time, "fusedav.reads", &count, 1, NULL, NULL, 0);
 
     // We might get a null path if we are reading from a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1443,9 +1449,11 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     GError *gerr = NULL;
     ssize_t bytes_written;
     struct stat_cache_value value;
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
 
     BUMP(dav_write);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_write: fusedav.writes:1|c");
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_write", &previous_time, "fusedav.writes", &count, 1, NULL, NULL, 0);
 
     // We might get a null path if we are writing to a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1585,11 +1593,13 @@ static int dav_chmod(__unused const char *path, __unused mode_t mode) {
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
     GError *gerr = NULL;
     int fd;
 
     BUMP(dav_create);
-    log_print(LOG_INFO, SECTION_ENHANCED, "dav_create: fusedav.creates:1|c");
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_create", &previous_time, "fusedav.creates", &count, 1, NULL, NULL, 0);
 
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);
