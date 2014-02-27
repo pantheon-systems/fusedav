@@ -513,15 +513,14 @@ static int construct_resolve_slist(CURL *session, bool force) {
             }
             else {
                 prelist[count] = ipstr;
+                ++count;
             }
         }
         // Store the string in our "pre" list. It will be in sorted order. We randomize later
         else {
             prelist[count] = ipstr;
+            ++count;
         }
-        ++count;
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]",
-            prelist[count - 1], count - 1);
     }
 
     // Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
@@ -542,10 +541,17 @@ static int construct_resolve_slist(CURL *session, bool force) {
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
         // fill in the gap for the item just removed.
         sortedlist[idx] = prelist[pick];
-        for (int jdx = pick; jdx < count; jdx++) {
+        // REVIEW: clang says:
+        // session.c:544:51: warning: Potential memory leak
+        //   for (int jdx = pick; jdx < (count - idx); jdx++) {
+        //                                             ^~~
+        for (int jdx = pick; jdx < (count - idx); jdx++) {
+            // FIX ME! revert to DEBUG
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: (%d %d) %d <- %d %s", count, idx, jdx, jdx + 1, prelist[jdx + 1]);
             prelist[jdx] = prelist[jdx + 1];
         }
     }
+
     if (broken_connection_str) {
         resolve_slist = curl_slist_append(resolve_slist, broken_connection_str);
         sortedlist[count] = broken_connection_str;
