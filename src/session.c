@@ -374,6 +374,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // This will hold the ip addresses in the order they get returned from gethostaddr; later to be randomized
     // for resolve_slist.
     char *prelist[MAX_NODES + 1] = {NULL};
+    char *broken_connection_str = NULL;
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
@@ -446,22 +447,24 @@ static int construct_resolve_slist(CURL *session, bool force) {
      */
     for (ai = aihead; ai != NULL && count < MAX_NODES; ai = ai->ai_next) {
         // Holds the string we are constructing
+        char *ipstr;
         char ipaddr[IPSTR_SZ];
+        char *current_connection = NULL;
 
-        prelist[count] = calloc(IPSTR_SZ, 1);
-        if (!prelist[count]) {
+        ipstr = calloc(IPSTR_SZ, 1);
+        if (!ipstr) {
             log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calloc fails: %d (%s)",
                 errno, strerror(errno));
             return res;
         }
 
         // The domain comes first, followed by a colon per libcurl's requirement
-        strncpy(prelist[count], filesystem_domain, IPSTR_SZ);
-        strcat(prelist[count], ":");
+        strncpy(ipstr, filesystem_domain, IPSTR_SZ);
+        strcat(ipstr, ":");
 
         // The port and colon come next.
-        strcat(prelist[count], filesystem_port);
-        strcat(prelist[count], ":");
+        strcat(ipstr, filesystem_port);
+        strcat(ipstr, ":");
 
         // An IPv4 struct
         if (ai->ai_family == AF_INET) {
@@ -486,8 +489,32 @@ static int construct_resolve_slist(CURL *session, bool force) {
         }
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ipaddr is %s", ipaddr);
 
+        strcat(ipstr, ipaddr);
+
+        // If force, we assume the current connection is bad and we want to move it to the bottom of the list.
+        // Set current connnection.
+        if (force) {
+            if (current_connection == NULL) {
+                current_connection = calloc(IPSTR_SZ, 1);
+                strncpy(current_connection, nodeaddr, strlen(nodeaddr));
+                // nodeaddr has had its dots overwritten with underscores for logging. Put the dots back
+                for (char *end = current_connection; *end != '\0'; end++) {
+                    if (*end == '_') *end = '.';
+                }
+            }
+            // If the ipaddr we just processed is the same as the current connection, store it in broken connection
+            // We will put it at the bottom of the list later
+            if (!strcmp(current_connection, ipaddr)) {
+                broken_connection_str = ipstr;
+            }
+            else {
+                prelist[count] = ipstr;
+            }
+        }
         // Store the string in our "pre" list. It will be in sorted order. We randomize later
-        strcat(prelist[count], ipaddr);
+        else {
+            prelist[count] = ipstr;
+        }
         ++count;
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]",
             prelist[count - 1], count - 1);
@@ -507,48 +534,6 @@ static int construct_resolve_slist(CURL *session, bool force) {
         int pick;
         pick = rand() % (count - idx);
 
-        // If force, we assume we are remaking the list because the current connection is bad.
-        // We try to force this entry to the bottom of the list
-        if (force && (idx < (count - 1))) {
-            char current_connection[LOGSTRSZ];
-            char port_str[16]; // long enough to hold port and a colon.
-            char *pick_addr;
-            int retries = 0;
-            const int max_retries = 4;
-
-            if (idx == 0) {
-                // nodeaddr is the most recently accessed ip addr of a filesystem node
-                // However, for logging purposes, we replaced dots with underscores, so make them dots again
-                strncpy(current_connection, nodeaddr, strlen(nodeaddr));
-                for (char *end = current_connection; *end != '\0'; end++) {
-                    if (*end == '_') *end = '.';
-                }
-                // Get a string which matches that part of the string we pass to curl which just precedes the ip addr
-                // That would be port:
-                strncpy(port_str, filesystem_port, strlen(port_str));
-                strcat(port_str, ":");
-                log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: current_connection is %s; port_str is %s",
-                    current_connection, port_str);
-            }
-            // We are trying to put the current_connection at the bottom of the list
-            // The string is valhalla.onebox.panth.io:448:127.0.0.23
-            // and we want 127.0.0.23
-            // IPv6 localhost is valhalla.onebox.panth.io:448:::1, so handle this
-            pick_addr = strstr(prelist[pick], port_str);
-            pick_addr += strlen(port_str); // move past the port_str itself. Now we are at the beginning of the address
-            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: pick_addr: %s current_connection: %s",
-                pick_addr, current_connection);
-            // With low probability, we might always get the same pick, so use retries for an exit strategy
-            while (!strcmp(pick_addr, current_connection) && (retries < max_retries)) {
-                pick = rand() % (count - idx);
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getting new pick for bad link: %s",
-                    current_connection);
-                pick_addr = strrchr(prelist[pick], ':');
-                ++pick_addr;
-                ++retries;
-            }
-        }
-
         resolve_slist = curl_slist_append(resolve_slist, prelist[pick]);
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
         // fill in the gap for the item just removed.
@@ -557,6 +542,10 @@ static int construct_resolve_slist(CURL *session, bool force) {
         for (int jdx = pick; jdx < count; jdx++) {
             prelist[jdx] = prelist[jdx + 1];
         }
+    }
+    if (broken_connection_str) {
+        resolve_slist = curl_slist_append(resolve_slist, broken_connection_str);
+        free(broken_connection_str);
     }
 
     // If we got here, we are golden!
