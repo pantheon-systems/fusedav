@@ -377,7 +377,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     char *sortedlist[MAX_NODES + 1] = {NULL}; // Mostly for debugging
     char *broken_connection_str = NULL;
     char *current_connection = NULL;
-    char log_str[4096]; // Hold up to MAX_NODES curl ip entries (domain plus numeric ip)
+    char log_str[4096] = {'\0'}; // Hold up to MAX_NODES curl ip entries (domain plus numeric ip)
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
@@ -561,7 +561,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     for (int idx = 0; idx < count; idx++) {
         char *end;
         if (logging(LOG_NOTICE, SECTION_SESSION_DEFAULT)) {
-            end = strchr(sortedlist[idx], ':');
+            end = strrchr(sortedlist[idx], ':');
             ++end;
             strcat(log_str, end);
             strcat(log_str, " -- ");
