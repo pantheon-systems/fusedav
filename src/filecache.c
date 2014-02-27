@@ -352,7 +352,7 @@ static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *u
 // Get a file descriptor pointing to the latest full copy of the file.
 static void get_fresh_fd(filecache_t *cache,
         const char *cache_path, const char *path, struct filecache_sdata *sdata,
-        struct filecache_pdata **pdatap, int flags, GError **gerr) {
+        struct filecache_pdata **pdatap, int flags, bool use_local_copy, GError **gerr) {
     GError *tmpgerr = NULL;
     struct filecache_pdata *pdata;
     char etag[ETAG_MAX];
@@ -386,12 +386,9 @@ static void get_fresh_fd(filecache_t *cache,
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
     // If the file is in-use (last_server_update = 0) we use the local file and don't go to the server.
     // If we're in saint mode, don't go to the server
-    // REVIEW: for now keeping use_saint_mode. Before even trying curl_easy_perform, if in saint mode
-    // just use what's local
     if (pdata != NULL &&
-            ((flags & O_TRUNC) ||
-            (pdata->last_server_update == 0 || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL) ||
-            (use_saint_mode()))) {
+            ((flags & O_TRUNC) || use_local_copy ||
+            (pdata->last_server_update == 0) || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL)) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: file is fresh or being truncated: %s::%s", path, pdata->filename);
 
         // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
@@ -404,9 +401,11 @@ static void get_fresh_fd(filecache_t *cache,
         }
 
         if (flags & O_TRUNC) {
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: truncating fd %d:%s::%s", sdata->fd, path, pdata->filename);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: truncating fd %d:%s::%s",
+                sdata->fd, path, pdata->filename);
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: acquiring shared file lock on fd %d", sdata->fd);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: acquiring shared file lock on fd %d",
+                sdata->fd);
             if (flock(sdata->fd, LOCK_SH) || inject_error(filecache_error_freshflock1)) {
                 g_set_error(gerr, system_quark(), errno, "get_fresh_fd: error acquiring shared file lock");
                 goto finish;
@@ -415,11 +414,13 @@ static void get_fresh_fd(filecache_t *cache,
 
             if (ftruncate(sdata->fd, 0) || inject_error(filecache_error_freshftrunc)) {
                 g_set_error(gerr, system_quark(), errno, "get_fresh_fd: ftruncate failed");
-                log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_fd: ftruncate failed; %d:%s:%s :: %s", sdata->fd, path, pdata->filename, g_strerror(errno));
+                log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_fd: ftruncate failed; %d:%s:%s :: %s",
+                    sdata->fd, path, pdata->filename, g_strerror(errno));
                 // Fall through to release the lock
             }
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: releasing shared file lock on fd %d", sdata->fd);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "get_fresh_fd: releasing shared file lock on fd %d",
+                sdata->fd);
             if (flock(sdata->fd, LOCK_UN) || inject_error(filecache_error_freshflock2)) {
                 // If we didn't get an error from ftruncate, then set gerr here from flock on error;
                 // If ftruncate did get an error, it will take precedence and we will ignore this error
@@ -429,7 +430,8 @@ static void get_fresh_fd(filecache_t *cache,
                 else {
                     // If we got an error from ftruncate so don't set one for flock, still report
                     // that releasing the lock failed.
-                    log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "get_fresh_fd: error releasing shared file lock :: %s", strerror(errno));
+                    log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "get_fresh_fd: error releasing shared file lock :: %s",
+                        strerror(errno));
                 }
                 goto finish;
             }
@@ -442,7 +444,8 @@ static void get_fresh_fd(filecache_t *cache,
             sdata->modified = true;
         }
         else {
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: O_TRUNC not specified on fd %d:%s::%s", sdata->fd, path, pdata->filename);
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: O_TRUNC not specified on fd %d:%s::%s",
+                sdata->fd, path, pdata->filename);
         }
 
         // We're done; no need to access the server...
@@ -745,7 +748,9 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
     struct filecache_pdata *pdata = NULL;
     struct filecache_sdata *sdata = NULL;
     GError *tmpgerr = NULL;
+    const int max_retries = 2;
     int flags = info->flags;
+    bool use_local_copy = false;
 
     BUMP(filecache_open);
 
@@ -758,41 +763,51 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         goto fail;
     }
 
-    // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
-    // the second time. (Unlike on a linux file system, where the second time open
-    // is called with O_CREAT, the flag is there but is ignored.) So O_CREAT here
-    // means new file.
+    for (int retries = 0; retries < max_retries; ++retries) {
+        // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
+        // the second time. (Unlike on a linux file system, where the second time open
+        // is called with O_CREAT, the flag is there but is ignored.) So O_CREAT here
+        // means new file.
 
-    // If O_TRUNC is called, it is possible that there is no entry in the filecache.
-    // I believe the use-case for this is: prior to conversion to fusedav, a file
-    // was on the server. After conversion to fusedav, on first access, it is not
-    // in the cache, so we need to create a new cache file for it (or it has aged
-    // out of the cache.) If it is in the cache, we let get_fresh_fd handle it.
+        // If O_TRUNC is called, it is possible that there is no entry in the filecache.
+        // If it is in the cache, we let get_fresh_fd handle it.
 
-    if (pdata == NULL) {
-        pdata = filecache_pdata_get(cache, path, NULL);
-    }
-
-    if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
-        if ((flags & O_CREAT) && (pdata != NULL)) {
-            // This will orphan the previous filecache file
-            log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "filecache_open: creating a file that already has a cache entry: %s", path);
+        if (pdata == NULL) {
+            pdata = filecache_pdata_get(cache, path, NULL);
         }
-        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling create_file on %s", path);
-        create_file(sdata, cache_path, cache, path, &tmpgerr);
-        if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: ");
-            goto fail;
+
+        if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
+            if ((flags & O_CREAT) && (pdata != NULL)) {
+                // This will orphan the previous filecache file
+                log_print(LOG_INFO, SECTION_FILECACHE_OPEN,
+                    "filecache_open: creating a file that already has a cache entry: %s", path);
+            }
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling create_file on %s", path);
+            create_file(sdata, cache_path, cache, path, &tmpgerr);
+            if (tmpgerr) {
+                g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: ");
+                goto fail;
+            }
+            break;
         }
-    }
-    else {
+
         // Get a file descriptor pointing to a guaranteed-fresh file.
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling get_fresh_fd on %s", path);
-        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, &tmpgerr);
+        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, use_local_copy, &tmpgerr);
         if (tmpgerr) {
+            if (tmpgerr->domain == curl_quark()) {
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN,
+                    "filecache_open: Retry in saint mode for path %s. Error: %s", path, tmpgerr->message);
+                g_clear_error(&tmpgerr);
+                use_local_copy = true;
+                continue;
+            }
             g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: Failed on get_fresh_fd: ");
             goto fail;
         }
+
+        // If we've reached here, it's successful, and we don't want to retry.
+        break;
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: success on %s", path);
@@ -801,8 +816,15 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
 
     if (sdata->fd >= 0) {
-        if (pdata) log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: Setting fd to session data structure with fd %d for %s :: %s:%lu.", sdata->fd, path, pdata->filename, pdata->last_server_update);
-        else log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: Setting fd to session data structure with fd %d for %s :: (no pdata).", sdata->fd, path);
+        if (pdata) {
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN,
+            "filecache_open: Setting fd to session data structure with fd %d for %s :: %s:%lu.",
+            sdata->fd, path, pdata->filename, pdata->last_server_update);
+        }
+        else {
+            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN,
+            "filecache_open: Setting fd to session data structure with fd %d for %s :: (no pdata).", sdata->fd, path);
+        }
         info->fh = (uint64_t) sdata;
         goto finish;
     }

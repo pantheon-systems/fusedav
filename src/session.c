@@ -155,6 +155,7 @@ static void session_destroy(void *s) {
     log_filesystem_nodes("session_destroy", CURLE_OK, 0, 0, "no path");
     // Free the resolve_slist before exiting the session
     curl_slist_free_all(resolve_slist);
+    resolve_slist = NULL;
     curl_easy_cleanup(session);
 }
 
@@ -212,13 +213,20 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
     return 0;
 }
 
-CURL *session_get_handle(void) {
+static CURL *session_get_handle(bool new_handle) {
     CURL *session;
 
     pthread_once(&session_once, session_tsd_key_init);
 
-    if ((session = pthread_getspecific(session_tsd_key)))
-        return session;
+    if ((session = pthread_getspecific(session_tsd_key))) {
+        if (new_handle) {
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_get_handle: destroying old handle and creating a new one");
+            session_destroy(session);
+        }
+        else {
+            return session;
+        }
+    }
 
     // Keep track of start time so we can track how long sessions stay open
     session_start_time = time(NULL);
@@ -365,7 +373,11 @@ finish:
 static int construct_resolve_slist(CURL *session, bool force) {
     // This will hold the ip addresses in the order they get returned from gethostaddr; later to be randomized
     // for resolve_slist.
-    char prelist[MAX_NODES][IPSTR_SZ];
+    char *prelist[MAX_NODES + 1] = {NULL};
+    char *sortedlist[MAX_NODES + 1] = {NULL}; // Mostly for debugging
+    char *broken_connection_str = NULL;
+    char *current_connection = NULL;
+    char log_str[4096] = {'\0'}; // Hold up to MAX_NODES curl ip entries (domain plus numeric ip)
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
@@ -411,10 +423,12 @@ static int construct_resolve_slist(CURL *session, bool force) {
     hints.ai_socktype = SOCK_STREAM;
 
     // get list from getaddrinfo
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calling getaddrinfo with %s %s", filesystem_domain, filesystem_port);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: calling getaddrinfo with %s %s",
+        filesystem_domain, filesystem_port);
     res = getaddrinfo(filesystem_domain, filesystem_port, &hints, &aihead);
     if(res) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)", res, gai_strerror(res));
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)",
+            res, gai_strerror(res));
         // This is an error. We do not set CURLOPT_RESOLVE, so libcurl will
         // do its default thing. If its call to getaddrinfo succeeds, the
         // first IP will be used (breaks load balancing).  If it fails as it does here,
@@ -434,14 +448,16 @@ static int construct_resolve_slist(CURL *session, bool force) {
      * However, if the previous connection is still good, libcurl will continue
      * to use it in spite of the new order of addresses in the list. (This is good.)
      */
-    for (ai = aihead; ai != NULL; ai = ai->ai_next) {
+    for (ai = aihead; ai != NULL && count < MAX_NODES; ai = ai->ai_next) {
         // Holds the string we are constructing
-        char ipstr[IPSTR_SZ];
+        char *ipstr;
         char ipaddr[IPSTR_SZ];
+
+        ipstr = calloc(IPSTR_SZ, 1);
+        assert(ipstr);
 
         // The domain comes first, followed by a colon per libcurl's requirement
         strncpy(ipstr, filesystem_domain, IPSTR_SZ);
-        ipstr[IPSTR_SZ - 1] = '\0'; // Just make sure it's null terminated
         strcat(ipstr, ":");
 
         // The port and colon come next.
@@ -451,28 +467,61 @@ static int construct_resolve_slist(CURL *session, bool force) {
         // An IPv4 struct
         if (ai->ai_family == AF_INET) {
             if(!inet_ntop(ai->ai_family, &(((struct sockaddr_in *)ai->ai_addr)->sin_addr), ipaddr, IPSTR_SZ)) {
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET): %d %s", errno, strerror(errno));
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET): %d %s",
+                    errno, strerror(errno));
+                free(ipstr);
                 continue;
             }
         }
         // An IPv6 struct
         else if (ai->ai_family == AF_INET6) {
             if(!inet_ntop(ai->ai_family, &(((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr), ipaddr, IPSTR_SZ)) {
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET6): %d %s", errno, strerror(errno));
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: error on inet_ntop (AF_INET6): %d %s",
+                    errno, strerror(errno));
+                free(ipstr);
                 continue;
             }
         }
         else {
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ai_family not IPv4 nor IVv6 [%d]", ai->ai_family);
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ai_family not IPv4 nor IVv6 [%d]",
+                ai->ai_family);
+            free(ipstr);
             continue;
         }
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: ipaddr is %s", ipaddr);
 
+        strcat(ipstr, ipaddr);
+
+        // If force, we assume the current connection is bad and we want to move it to the bottom of the list.
+        // Set current connnection.
+        if (force) {
+            if (current_connection == NULL) {
+                current_connection = calloc(IPSTR_SZ, 1);
+                strncpy(current_connection, nodeaddr, strlen(nodeaddr));
+                // nodeaddr has had its dots overwritten with underscores for logging. Put the dots back
+                for (char *end = current_connection; *end != '\0'; end++) {
+                    if (*end == '_') *end = '.';
+                }
+            }
+            // If the ipaddr we just processed is the same as the current connection, store it in broken connection
+            // We will put it at the bottom of the list later
+            // ipaddr is the address part of the string; ipstr is the complete string with domain
+            // If we find the bad ipaddr, it's the ipstr we want to keep track of to put at the bottom of the list
+            if (!strcmp(current_connection, ipaddr)) {
+                broken_connection_str = ipstr;
+                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
+                    "construct_resolve_slist: broken_connection_string is %s", broken_connection_str);
+            }
+            else {
+                prelist[count] = ipstr;
+                ++count;
+            }
+        }
         // Store the string in our "pre" list. It will be in sorted order. We randomize later
-        strcpy(prelist[count], ipstr);
-        strcat(prelist[count], ipaddr);
-        ++count;
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: entering %s into prelist[%d]", prelist[count - 1], count - 1);
+        else {
+            prelist[count] = ipstr;
+            ++count;
+        }
     }
 
     // Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
@@ -482,39 +531,45 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // Randomize!
     clock_gettime(CLOCK_MONOTONIC, &ts);
     srand(ts.tv_nsec * ts.tv_sec);
+
     // Count is the number of addresses we processed above
     for (int idx = 0; idx < count; idx++) {
-        bool found = false;
         // The random one we will take
         int pick;
-        // Which element we are at
-        int iter = 0;
         pick = rand() % (count - idx);
-        for (int jdx = 0; jdx < count; jdx++) {
-            /* When we find the entry we remove it and put it next in the slist which
-             * we will pass to curl_easy_setopt. We then "zero out" the entry. Effectively,
-             * we are shortening the list, without moving all the elements.
-             * There is assuredly a more efficient way to do this (we are O(n2)), but
-             * we only expect small numbers of nodes that we will process here.
-             */
-            // If this is a non-zero entry in prelist and the pick equals the iter,
-            // we have found our match!
-            if (pick == iter && prelist[jdx][0] != '\0') {
-                // add it to the slist
-                resolve_slist = curl_slist_append(resolve_slist, prelist[jdx]);
-                log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s [%d]", prelist[jdx], iter);
-                // zero it out so it won't be seen in the future
-                prelist[jdx][0] = '\0';
-                // This is just a sanity check in case this code is defective and we need to report the error
-                found = true;
-                break;
-            }
-            // The iter increments if the current entry is a non-zero one
-            if (prelist[jdx][0] != '\0') ++iter;
+
+        resolve_slist = curl_slist_append(resolve_slist, prelist[pick]);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
+        // fill in the gap for the item just removed.
+        sortedlist[idx] = prelist[pick];
+        // REVIEW: clang says:
+        // session.c:544:51: warning: Potential memory leak
+        //   for (int jdx = pick; jdx < (count - idx); jdx++) {
+        //                                             ^~~
+        for (int jdx = pick; jdx < (count - idx); jdx++) {
+            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: (%d %d) %d <- %d %s", count, idx, jdx, jdx + 1, prelist[jdx + 1]);
+            prelist[jdx] = prelist[jdx + 1];
         }
-        // This should only happen if I'm a chucklehead
-        if (!found) log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Item for resolve_slist not found::Count:idx:pick:iter %d:%d:%d:%d", count, idx, pick, iter);
     }
+
+    if (broken_connection_str) {
+        resolve_slist = curl_slist_append(resolve_slist, broken_connection_str);
+        sortedlist[count] = broken_connection_str;
+        ++count; // count was not incremented when we detected broken connection, so increment here so we know final count
+    }
+
+    for (int idx = 0; idx < count; idx++) {
+        char *end;
+        if (logging(LOG_NOTICE, SECTION_SESSION_DEFAULT)) {
+            end = strrchr(sortedlist[idx], ':');
+            ++end;
+            strcat(log_str, end);
+            strcat(log_str, " -- ");
+        }
+        free(sortedlist[idx]);
+    }
+    // Eventually, downgrade this an the logging one above to DEBUG
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", log_str);
 
     // If we got here, we are golden!
     res = 0;
@@ -526,7 +581,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // on its own, and return the unsorted, unbalanced, first entry.
 
     finish:
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Sending resolve_slist (%p) to curl", resolve_slist);
+    free(current_connection);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Sending resolve_slist (%p) to curl",
+        resolve_slist);
     curl_easy_setopt(session, CURLOPT_RESOLVE, resolve_slist);
 
     return res;
@@ -542,7 +599,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         session = session_get_temp_handle();
     }
     else {
-        session = session_get_handle();
+        session = session_get_handle(new_slist);
     }
 
     if (!session) {
