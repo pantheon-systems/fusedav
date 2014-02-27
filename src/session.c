@@ -377,6 +377,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     char *sortedlist[MAX_NODES + 1] = {NULL}; // Mostly for debugging
     char *broken_connection_str = NULL;
     char *current_connection = NULL;
+    char log_str[4096]; // Hold up to MAX_NODES curl ip entries (domain plus numeric ip)
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
@@ -546,8 +547,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
         //   for (int jdx = pick; jdx < (count - idx); jdx++) {
         //                                             ^~~
         for (int jdx = pick; jdx < (count - idx); jdx++) {
-            // FIX ME! revert to DEBUG
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: (%d %d) %d <- %d %s", count, idx, jdx, jdx + 1, prelist[jdx + 1]);
+            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: (%d %d) %d <- %d %s", count, idx, jdx, jdx + 1, prelist[jdx + 1]);
             prelist[jdx] = prelist[jdx + 1];
         }
     }
@@ -559,10 +559,17 @@ static int construct_resolve_slist(CURL *session, bool force) {
     }
 
     for (int idx = 0; idx < count; idx++) {
-        // FIX ME! revert to DEBUG
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", sortedlist[idx]);
+        char *end;
+        if (logging(LOG_NOTICE, SECTION_SESSION_DEFAULT)) {
+            end = strchr(sortedlist[idx], ':');
+            ++end;
+            strcat(log_str, end);
+            strcat(log_str, " -- ");
+        }
         free(sortedlist[idx]);
     }
+    // Eventually, downgrade this an the logging one above to DEBUG
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", log_str);
 
     // If we got here, we are golden!
     res = 0;
