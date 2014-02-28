@@ -31,5 +31,8 @@ const char *get_base_url(void);
 char *escape_except_slashes(CURL *session, const char *path);
 void session_temp_handle_destroy(CURL *session);
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path);
+void aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
+    const char *description1, unsigned long *count1, unsigned long value1,
+    const char *description2, long *count2, long value2);
 
 #endif

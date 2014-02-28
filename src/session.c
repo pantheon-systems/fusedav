@@ -148,7 +148,7 @@ void session_config_free(void) {
 static void session_destroy(void *s) {
     CURL *session = s;
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-        "Destroying cURL session -- fusedav.sessions:-1|c fusedav.session-duration:%lu|c", time(NULL) - session_start_time);
+        "Destroying cURL session -- fusedav.sessions:-1|g fusedav.session-duration:%lu|c", time(NULL) - session_start_time);
 
     assert(s);
     // Before we go, make sure we've printed the number of curl accesses we accumulated
@@ -231,7 +231,7 @@ static CURL *session_get_handle(bool new_handle) {
     // Keep track of start time so we can track how long sessions stay open
     session_start_time = time(NULL);
 
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.sessions:1|c");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.sessions:+1|g");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
@@ -669,7 +669,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
     static __thread unsigned long count = 0;
     static __thread time_t previous_time = 0;
     // Print every 100th access
-    const unsigned long count_trigger = 100;
+    const unsigned long count_trigger = 1000;
     // Print every 60th second
     const time_t time_trigger = 60;
     time_t current_time;
@@ -716,4 +716,51 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
     }
+}
+
+/* Print aggregate stats. It is in this file for ready access to server names and the ability
+ * to call it on thread destroy.
+ */
+void aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
+        const char *description1, unsigned long *count1, unsigned long value1,
+        const char *description2, long *count2, long value2) {
+    // Print every 100th access
+    const unsigned long count_trigger = 1000;
+    // Print every 60th second
+    const time_t time_trigger = 60;
+    time_t current_time;
+    bool print_it = false;
+
+    *count1 += value1;
+    if (count2) *count2 += value2;
+    // Track curl accesses to this filesystem node
+    // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
+    // print, but at INFO will be easier to filter out
+    // We're overloading the journal, so only log every print_count_trigger count or every print_interval time
+    current_time = time(NULL);
+
+    // if previous_time is NULL then this is a pair to an earlier call, and we always print it
+    if (previous_time != NULL) {
+        // Always print the first one. Then print if our interval has expired
+        print_it = (*previous_time == 0) || (current_time - *previous_time >= time_trigger);
+    }
+    else {
+        print_it = true;
+    }
+    // Also print if we have exceeded count
+    if (print_it || *count1 >= count_trigger) {
+        log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%lu|c", name, filesystem_cluster, nodeaddr, description1, *count1);
+        if (description2 && count2) {
+            long result;
+            // Cheating. We just know that the second value is a latency total which needs to
+            // be passed through as an average latency.
+            if (*count1 == 0) result = 0;
+            else result = (*count2 / *count1);
+            log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%ld|c", name, filesystem_cluster, nodeaddr, description2, result);
+            *count2 = 0;
+        }
+        *count1 = 0;
+        if (previous_time) *previous_time = current_time;
+    }
+    return;
 }

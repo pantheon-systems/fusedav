@@ -1353,7 +1353,6 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
 
     BUMP(dav_open);
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_open", &previous_time, "fusedav.opens", &count, 1, NULL, NULL, 0);
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
@@ -1370,6 +1369,8 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "CALLBACK: dav_open: returns %d", ret);
         return ret;
     }
+
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_open", &previous_time, "opens", &count, 1, NULL, NULL, 0);
 
     // Update stat cache value to reset the file size to 0 on trunc.
     if (info->flags & O_TRUNC) {
@@ -1402,7 +1403,6 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
 
     BUMP(dav_read);
 
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_read", &previous_time, "fusedav.reads", &count, 1, NULL, NULL, 0);
 
     // We might get a null path if we are reading from a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1413,6 +1413,8 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
     if (gerr) {
         return processed_gerror("dav_read: ", path, &gerr);
     }
+
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_read", &previous_time, "reads", &count, 1, NULL, NULL, 0);
 
     if (bytes_read < 0) {
         log_print(LOG_ERR, SECTION_FUSEDAV_IO, "dav_read: filecache_read returns error");
@@ -1453,7 +1455,6 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     static __thread time_t previous_time = 0;
 
     BUMP(dav_write);
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_write", &previous_time, "fusedav.writes", &count, 1, NULL, NULL, 0);
 
     // We might get a null path if we are writing to a bare file descriptor
     // (we have unlinked the path but kept the file descriptor open)
@@ -1465,6 +1466,8 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     if (gerr) {
         return processed_gerror("dav_write: ", path, &gerr);
     }
+
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_write", &previous_time, "writes", &count, 1, NULL, NULL, 0);
 
     if (bytes_written < 0) {
         log_print(LOG_ERR, SECTION_FUSEDAV_IO, "dav_write: filecache_write returns error");
@@ -1599,7 +1602,6 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     int fd;
 
     BUMP(dav_create);
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_create", &previous_time, "fusedav.creates", &count, 1, NULL, NULL, 0);
 
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);
@@ -1617,6 +1619,8 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     if (gerr) {
         return processed_gerror("dav_create: ", path, &gerr);
     }
+
+    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_create", &previous_time, "creates", &count, 1, NULL, NULL, 0);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
