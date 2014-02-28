@@ -560,16 +560,17 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
     for (int idx = 0; idx < count; idx++) {
         char *end;
-        if (logging(LOG_NOTICE, SECTION_SESSION_DEFAULT)) {
+        if (logging(LOG_DEBUG, SECTION_SESSION_DEFAULT)) {
             end = strrchr(sortedlist[idx], ':');
-            ++end;
-            strcat(log_str, end);
-            strcat(log_str, " -- ");
+            if (end) {
+                ++end;
+                strcat(log_str, end);
+                strcat(log_str, " -- ");
+            }
         }
         free(sortedlist[idx]);
     }
-    // Eventually, downgrade this an the logging one above to DEBUG
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", log_str);
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", log_str);
 
     // If we got here, we are golden!
     res = 0;
@@ -695,16 +696,24 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_INFO, SECTION_ENHANCED,
             "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures:1|c",
             fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
+            "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures",
+            fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
     }
     else if (response_code >= 500) {
         // Track errors
-        log_print(LOG_WARNING, SECTION_ENHANCED,
+        log_print(LOG_INFO, SECTION_ENHANCED,
             "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures:1|c",
+            fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
+            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures",
             fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
     }
     // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
     else if (iter > 0) {
         log_print(LOG_INFO, SECTION_ENHANCED,
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries:1|c", fcn_name, iter, path, filesystem_cluster, nodeaddr);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
+            "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
     }
 }
