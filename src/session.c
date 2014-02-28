@@ -148,7 +148,7 @@ void session_config_free(void) {
 static void session_destroy(void *s) {
     CURL *session = s;
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-        "Destroying cURL session -- fusedav.sessions:-1|g fusedav.session-duration:%lu|c", time(NULL) - session_start_time);
+        "Destroying cURL session -- fusedav.sessions:-1|g fusedav.%s.session-duration:%lu|c", filesystem_cluster, time(NULL) - session_start_time);
 
     assert(s);
     // Before we go, make sure we've printed the number of curl accesses we accumulated
@@ -231,7 +231,7 @@ static CURL *session_get_handle(bool new_handle) {
     // Keep track of start time so we can track how long sessions stay open
     session_start_time = time(NULL);
 
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.sessions:+1|g");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.%s.sessions:+1|g", filesystem_cluster);
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
