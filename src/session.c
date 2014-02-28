@@ -696,7 +696,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_INFO, SECTION_ENHANCED,
             "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures:1|c",
             fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
-        log_print(LOG_WARN, SECTION_SESSION_DEFAULT,
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures",
             fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
     }
@@ -705,7 +705,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_INFO, SECTION_ENHANCED,
             "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures:1|c",
             fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
-        log_print(LOG_WARN, SECTION_SESSION_DEFAULT,
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures",
             fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
     }
