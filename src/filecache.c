@@ -763,7 +763,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         goto fail;
     }
 
-    for (int retries = 0; retries < max_retries; ++retries) {
+    for (int retries = 0; retries < max_retries; retries++) {
         // If open is called twice, both times with O_CREAT, fuse does not pass O_CREAT
         // the second time. (Unlike on a linux file system, where the second time open
         // is called with O_CREAT, the flag is there but is ignored.) So O_CREAT here
