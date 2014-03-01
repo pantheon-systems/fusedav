@@ -148,7 +148,7 @@ void session_config_free(void) {
 static void session_destroy(void *s) {
     CURL *session = s;
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-        "Destroying cURL session -- fusedav.sessions:-1|g fusedav.%s.session-duration:%lu|c", filesystem_cluster, time(NULL) - session_start_time);
+        "Destroying cURL session -- fusedav.%s.sessions:-1|g fusedav.%s.session-duration:%lu|c", filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
 
     assert(s);
     // Before we go, make sure we've printed the number of curl accesses we accumulated
