@@ -147,8 +147,11 @@ void session_config_free(void) {
 
 static void session_destroy(void *s) {
     CURL *session = s;
+    // The first log statement will get stripped from logstash because it has the stats designator |c, so log a second one
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-        "Destroying cURL session -- fusedav.%s.sessions:-1|c fusedav.%s.session-duration:%lu|c", filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
+        "Destroying cURL session -- fusedav.%s.sessions:-1|c fusedav.%s.session-duration:%lu|c",
+        filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL session");
 
     assert(s);
     // Before we go, make sure we've printed the number of curl accesses we accumulated
@@ -231,7 +234,9 @@ static CURL *session_get_handle(bool new_handle) {
     // Keep track of start time so we can track how long sessions stay open
     session_start_time = time(NULL);
 
+    // The first log print will be stripped by log stash because it has the stats designator 1|c, so log one without it
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
