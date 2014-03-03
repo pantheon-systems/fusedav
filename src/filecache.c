@@ -643,8 +643,8 @@ static void get_fresh_fd(filecache_t *cache,
             count = FETCH(filecache_get_xlg_count);
             sz = "XLG";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
-                "fusedav.large-gets", &lgcount, 1,
-                "fusedav.large-get-latency", &lglatency, elapsed_time);
+                "large-gets", &lgcount, 1,
+                "large-get-latency", &lglatency, elapsed_time);
         }
         else if (st.st_size > LG) {
             TIMING(filecache_get_lg_timing, elapsed_time);
@@ -653,8 +653,8 @@ static void get_fresh_fd(filecache_t *cache,
             count = FETCH(filecache_get_lg_count);
             sz = "LG";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
-                "fusedav.large-gets", &lgcount, 1,
-                "fusedav.large-get-latency", &lglatency, elapsed_time);
+                "large-gets", &lgcount, 1,
+                "large-get-latency", &lglatency, elapsed_time);
          }
         else if (st.st_size > MED) {
             TIMING(filecache_get_med_timing, elapsed_time);
@@ -663,8 +663,8 @@ static void get_fresh_fd(filecache_t *cache,
             count = FETCH(filecache_get_med_count);
             sz = "MED";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
-                "fusedav.large-gets", &lgcount, 1,
-                "fusedav.large-get-latency", &lglatency, elapsed_time);
+                "large-gets", &lgcount, 1,
+                "large-get-latency", &lglatency, elapsed_time);
         }
         else if (st.st_size > SM) {
             TIMING(filecache_get_sm_timing, elapsed_time);
@@ -673,8 +673,8 @@ static void get_fresh_fd(filecache_t *cache,
             count = FETCH(filecache_get_sm_count);
             sz = "SM";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
-                "fusedav.small-gets", &sgcount, 1,
-                "fusedav.small-get-latency", &sglatency, elapsed_time);
+                "small-gets", &sgcount, 1,
+                "small-get-latency", &sglatency, elapsed_time);
         }
         else if (st.st_size > XSM) {
             TIMING(filecache_get_xsm_timing, elapsed_time);
@@ -683,8 +683,8 @@ static void get_fresh_fd(filecache_t *cache,
             count = FETCH(filecache_get_xsm_count);
             sz = "XSM";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
-                "fusedav.small-gets", &sgcount, 1,
-                "fusedav.small-get-latency", &sglatency, elapsed_time);
+                "small-gets", &sgcount, 1,
+                "small-get-latency", &sglatency, elapsed_time);
         }
         else {
             TIMING(filecache_get_xxsm_timing, elapsed_time);
@@ -693,8 +693,8 @@ static void get_fresh_fd(filecache_t *cache,
             count = FETCH(filecache_get_xxsm_count);
             sz = "XXSM";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
-                "fusedav.small-gets", &sgcount, 1,
-                "fusedav.small-get-latency", &sglatency, elapsed_time);
+                "small-gets", &sgcount, 1,
+                "small-get-latency", &sglatency, elapsed_time);
         }
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
             sz, st.st_size, path, elapsed_time, (latency / count));
@@ -1077,8 +1077,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             count = FETCH(filecache_put_xlg_count);
             sz = "XLG";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
-                "fusedav.large-puts", &lpcount, 1,
-                "fusedav.large-put-latency", &lplatency, elapsed_time);
+                "large-puts", &lpcount, 1,
+                "large-put-latency", &lplatency, elapsed_time);
         }
         else if (st.st_size > LG) {
             TIMING(filecache_put_lg_timing, elapsed_time);
@@ -1087,8 +1087,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             count = FETCH(filecache_put_lg_count);
             sz = "LG";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
-                "fusedav.large-puts", &lpcount, 1,
-                "fusedav.large-put-latency", &lplatency, elapsed_time);
+                "large-puts", &lpcount, 1,
+                "large-put-latency", &lplatency, elapsed_time);
          }
         else if (st.st_size > MED) {
             TIMING(filecache_put_med_timing, elapsed_time);
@@ -1097,8 +1097,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             count = FETCH(filecache_put_med_count);
             sz = "MED";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
-                "fusedav.large-puts", &lpcount, 1,
-                "fusedav.large-put-latency", &lplatency, elapsed_time);
+                "large-puts", &lpcount, 1,
+                "large-put-latency", &lplatency, elapsed_time);
         }
         else if (st.st_size > SM) {
             TIMING(filecache_put_sm_timing, elapsed_time);
@@ -1107,8 +1107,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             count = FETCH(filecache_put_sm_count);
             sz = "SM";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
-                "fusedav.small-puts", &spcount, 1,
-                "fusedav.small-put-latency", &splatency, elapsed_time);
+                "small-puts", &spcount, 1,
+                "small-put-latency", &splatency, elapsed_time);
         }
         else if (st.st_size > XSM) {
             TIMING(filecache_put_xsm_timing, elapsed_time);
@@ -1117,8 +1117,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             count = FETCH(filecache_put_xsm_count);
             sz = "XSM";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
-                "fusedav.small-puts", &spcount, 1,
-                "fusedav.small-put-latency", &splatency, elapsed_time);
+                "small-puts", &spcount, 1,
+                "small-put-latency", &splatency, elapsed_time);
         }
         else {
             TIMING(filecache_put_xxsm_timing, elapsed_time);
@@ -1127,8 +1127,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             count = FETCH(filecache_put_xxsm_count);
             sz = "XXSM";
             aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
-                "fusedav.small-puts", &spcount, 1,
-                "fusedav.small-put-latency", &splatency, elapsed_time);
+                "small-puts", &spcount, 1,
+                "small-put-latency", &splatency, elapsed_time);
         }
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
             sz, st.st_size, path, elapsed_time, (latency / count));
