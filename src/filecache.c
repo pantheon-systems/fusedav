@@ -959,7 +959,6 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     struct stat st;
     struct timespec start_time;
-    FILE *fp;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
     static __thread unsigned long lpcount = 0;
@@ -997,16 +996,24 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
          idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
+        FILE *fp;
         bool new_resolve_list;
+
+        fp = fdopen(dup(fd), "r");
+        if (!fp) {
+            g_set_error(gerr, system_quark(), errno, "put_return_etag: NULL fp from fdopen on fd %d for path %s", fd, path);
+            goto finish;
+        }
+        if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
+            g_set_error(gerr, system_quark(), errno, "put_return_etag: fseek error on path %s", path);
+            goto finish;
+        }
 
         // If already in saint mode, scramble the list; with each failure, rescramble
         if (idx == 0) new_resolve_list = use_saint_mode();
         else new_resolve_list = true;
 
         session = session_request_init(path, NULL, false, new_resolve_list);
-
-        fp = fdopen(dup(fd), "r");
-        fseek(fp, 0L, SEEK_SET);
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
         curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
