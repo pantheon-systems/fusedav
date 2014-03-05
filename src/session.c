@@ -762,7 +762,7 @@ static void common_aggregate_log_print(unsigned int log_level, unsigned int sect
             log_print(log_level, section, "%s: fusedav.%s.%s:%lu|c", name, filesystem_cluster, description1, *count1);
         }
         else {
-            log_print(log_level, section, "%s: fusedav:%lu|c", name, description1, *count1);
+            log_print(log_level, section, "%s: fusedav.%s:%lu|c", name, description1, *count1);
         }
         if (description2 && count2) {
             long result;
