@@ -642,7 +642,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xlg_timing);
             count = FETCH(filecache_get_xlg_count);
             sz = "XLG";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
                 "large-gets", &lgcount, 1,
                 "large-get-latency", &lglatency, elapsed_time);
         }
@@ -652,7 +652,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_lg_timing);
             count = FETCH(filecache_get_lg_count);
             sz = "LG";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
                 "large-gets", &lgcount, 1,
                 "large-get-latency", &lglatency, elapsed_time);
          }
@@ -662,7 +662,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_med_timing);
             count = FETCH(filecache_get_med_count);
             sz = "MED";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &lgtime,
                 "large-gets", &lgcount, 1,
                 "large-get-latency", &lglatency, elapsed_time);
         }
@@ -672,7 +672,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_sm_timing);
             count = FETCH(filecache_get_sm_count);
             sz = "SM";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
                 "small-gets", &sgcount, 1,
                 "small-get-latency", &sglatency, elapsed_time);
         }
@@ -682,7 +682,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xsm_timing);
             count = FETCH(filecache_get_xsm_count);
             sz = "XSM";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
                 "small-gets", &sgcount, 1,
                 "small-get-latency", &sglatency, elapsed_time);
         }
@@ -692,7 +692,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xxsm_timing);
             count = FETCH(filecache_get_xxsm_count);
             sz = "XXSM";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "get_fresh_fd", &sgtime,
                 "small-gets", &sgcount, 1,
                 "small-get-latency", &sglatency, elapsed_time);
         }
@@ -959,7 +959,6 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     struct stat st;
     struct timespec start_time;
-    FILE *fp;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
     static __thread unsigned long lpcount = 0;
@@ -997,16 +996,24 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
          idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
+        FILE *fp;
         bool new_resolve_list;
+
+        fp = fdopen(dup(fd), "r");
+        if (!fp) {
+            g_set_error(gerr, system_quark(), errno, "put_return_etag: NULL fp from fdopen on fd %d for path %s", fd, path);
+            goto finish;
+        }
+        if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
+            g_set_error(gerr, system_quark(), errno, "put_return_etag: fseek error on path %s", path);
+            goto finish;
+        }
 
         // If already in saint mode, scramble the list; with each failure, rescramble
         if (idx == 0) new_resolve_list = use_saint_mode();
         else new_resolve_list = true;
 
         session = session_request_init(path, NULL, false, new_resolve_list);
-
-        fp = fdopen(dup(fd), "r");
-        fseek(fp, 0L, SEEK_SET);
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
         curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
@@ -1076,7 +1083,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xlg_timing);
             count = FETCH(filecache_put_xlg_count);
             sz = "XLG";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
                 "large-puts", &lpcount, 1,
                 "large-put-latency", &lplatency, elapsed_time);
         }
@@ -1086,7 +1093,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_lg_timing);
             count = FETCH(filecache_put_lg_count);
             sz = "LG";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
                 "large-puts", &lpcount, 1,
                 "large-put-latency", &lplatency, elapsed_time);
          }
@@ -1096,7 +1103,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_med_timing);
             count = FETCH(filecache_put_med_count);
             sz = "MED";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &lptime,
                 "large-puts", &lpcount, 1,
                 "large-put-latency", &lplatency, elapsed_time);
         }
@@ -1106,7 +1113,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_sm_timing);
             count = FETCH(filecache_put_sm_count);
             sz = "SM";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
                 "small-puts", &spcount, 1,
                 "small-put-latency", &splatency, elapsed_time);
         }
@@ -1116,7 +1123,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xsm_timing);
             count = FETCH(filecache_put_xsm_count);
             sz = "XSM";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
                 "small-puts", &spcount, 1,
                 "small-put-latency", &splatency, elapsed_time);
         }
@@ -1126,7 +1133,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xxsm_timing);
             count = FETCH(filecache_put_xxsm_count);
             sz = "XXSM";
-            aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", &sptime,
                 "small-puts", &spcount, 1,
                 "small-put-latency", &splatency, elapsed_time);
         }

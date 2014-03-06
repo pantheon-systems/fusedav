@@ -66,13 +66,25 @@ static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
     GError *gerr = *pgerr;
-    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s", prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
+
+    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s",
+        prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
     ret = -gerr->code;
-    if (gerr->code == ENOENT) log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-ENOENT:1|c");
-    else if (gerr->code == ENETDOWN) log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-ENETDOWN:1|c");
-    else if (gerr->code == EIO) log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-EIO:1|c");
-    else log_print(LOG_INFO, SECTION_ENHANCED, "processed_gerror: fusedav.error-OTHER:1|c");
+    if (gerr->code == ENOENT) {
+        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-ENOENT", &count, 1, NULL, NULL, 0);
+    }
+    else if (gerr->code == ENETDOWN) {
+        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-ENETDOWN", &count, 1, NULL, NULL, 0);
+    }
+    else if (gerr->code == EIO) {
+        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-EIO", &count, 1, NULL, NULL, 0);
+    }
+    else {
+        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-OTHER", &count, 1, NULL, NULL, 0);
+    }
     g_clear_error(pgerr);
     return ret;
 }
@@ -508,6 +520,9 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
+    // We are sharing these variables between negative and nonnegative cache counting. Should be fine.
+    static __thread unsigned long count = 0;
+    static __thread time_t previous_time = 0;
     bool skip_freshness_check = false;
 
     memset(stbuf, 0, sizeof(struct stat));
@@ -600,7 +615,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         GError *subgerr = NULL;
 
-        BUMP(fusedav_nonnegative_cache);
+        aggregate_log_print_local(LOG_INFO, SECTION_ENHANCED, "get_stat", &previous_time, "propfind-nonnegative-cache", &count, 1, NULL, NULL, 0);
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
         // In that case, skip the progressive propfind and go straight to complete propfind
         update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
@@ -609,7 +624,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             goto fail;
         }
     } else {
-        BUMP(fusedav_negative_cache);
+        aggregate_log_print_local(LOG_INFO, SECTION_ENHANCED, "get_stat", &previous_time, "propfind-negative-cache", &count, 1, NULL, NULL, 0);
     }
 
     // Try again to hit the file in the stat cache.
@@ -1348,8 +1363,6 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
 }
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
     GError *gerr = NULL;
 
     BUMP(dav_open);
@@ -1369,8 +1382,6 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "CALLBACK: dav_open: returns %d", ret);
         return ret;
     }
-
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_open", &previous_time, "opens", &count, 1, NULL, NULL, 0);
 
     // Update stat cache value to reset the file size to 0 on trunc.
     if (info->flags & O_TRUNC) {
@@ -1397,8 +1408,6 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
 
 static int dav_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *info) {
     ssize_t bytes_read;
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
     GError *gerr = NULL;
 
     BUMP(dav_read);
@@ -1413,8 +1422,6 @@ static int dav_read(const char *path, char *buf, size_t size, off_t offset, stru
     if (gerr) {
         return processed_gerror("dav_read: ", path, &gerr);
     }
-
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_read", &previous_time, "reads", &count, 1, NULL, NULL, 0);
 
     if (bytes_read < 0) {
         log_print(LOG_ERR, SECTION_FUSEDAV_IO, "dav_read: filecache_read returns error");
@@ -1451,8 +1458,6 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     GError *gerr = NULL;
     ssize_t bytes_written;
     struct stat_cache_value value;
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
 
     BUMP(dav_write);
 
@@ -1466,8 +1471,6 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     if (gerr) {
         return processed_gerror("dav_write: ", path, &gerr);
     }
-
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_write", &previous_time, "writes", &count, 1, NULL, NULL, 0);
 
     if (bytes_written < 0) {
         log_print(LOG_ERR, SECTION_FUSEDAV_IO, "dav_write: filecache_write returns error");
@@ -1596,8 +1599,6 @@ static int dav_chmod(__unused const char *path, __unused mode_t mode) {
 static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
     GError *gerr = NULL;
     int fd;
 
@@ -1619,8 +1620,6 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     if (gerr) {
         return processed_gerror("dav_create: ", path, &gerr);
     }
-
-    aggregate_log_print(LOG_INFO, SECTION_ENHANCED, "dav_create", &previous_time, "creates", &count, 1, NULL, NULL, 0);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));

@@ -164,7 +164,7 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  chown:            %u", FETCH(dav_chown));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  create:           %u", FETCH(dav_create));
-    print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
     snprintf(str, MAX_LINE_LEN, "  fsync:            %u", FETCH(dav_fsync));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  flush:            %u", FETCH(dav_flush));
@@ -180,9 +180,9 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  mknod:            %u", FETCH(dav_mknod));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  open:             %u", FETCH(dav_open));
-    print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
     snprintf(str, MAX_LINE_LEN, "  read:             %u", FETCH(dav_read));
-    print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
     snprintf(str, MAX_LINE_LEN, "  readdir:          %u", FETCH(dav_readdir));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  release:          %u", FETCH(dav_release));
@@ -196,13 +196,7 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  utimens:          %u", FETCH(dav_utimens));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  write:            %u", FETCH(dav_write));
-    print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
-    // PROPFIND request went to server
-    snprintf(str, MAX_LINE_LEN, "  pf-nonnegative:   %u", FETCH(fusedav_nonnegative_cache));
-    print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
-    // PROPFIND request didn't go to server
-    snprintf(str, MAX_LINE_LEN, "  pf-negative:      %u", FETCH(fusedav_negative_cache));
-    print_line(true, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
 
     snprintf(str, MAX_LINE_LEN, "  cache_file:       %u", FETCH(filecache_cache_file));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
@@ -278,13 +272,13 @@ void dump_stats(bool log, const char *cache_path) {
     latency[2].name = "get_sm";
     latency[3].name = "get_med";
     latency[4].name = "get_lg";
-    latency[5].name = "get_xlgm";
+    latency[5].name = "get_xlg";
     latency[6].name = "put_xxsm";
     latency[7].name = "put_xsm";
     latency[8].name = "put_sm";
     latency[9].name = "put_med";
     latency[10].name = "put_lg";
-    latency[11].name = "put_xlgm";
+    latency[11].name = "put_xlg";
 
     // Since the names are of variable lengths, the values don't line up.
     // Figure out a way to align
@@ -294,7 +288,7 @@ void dump_stats(bool log, const char *cache_path) {
         snprintf(str, MAX_LINE_LEN, "  %s_timing:    %lu", latency[idx].name, latency[idx].timing);
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
         snprintf(str, MAX_LINE_LEN, "  %s_avelat:    %lu", latency[idx].name, latency[idx].count > 0 ? (latency[idx].timing / latency[idx].count) : 0);
-        print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+        print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     }
 
     snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");

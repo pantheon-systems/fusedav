@@ -564,8 +564,8 @@ static int construct_resolve_slist(CURL *session, bool force) {
     }
 
     for (int idx = 0; idx < count; idx++) {
-        char *end;
         if (logging(LOG_DEBUG, SECTION_SESSION_DEFAULT)) {
+            char *end;
             end = strrchr(sortedlist[idx], ':');
             if (end) {
                 ++end;
@@ -723,12 +723,13 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
     }
 }
 
-/* Print aggregate stats. It is in this file for ready access to server names and the ability
- * to call it on thread destroy.
- */
-void aggregate_log_print(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
-        const char *description1, unsigned long *count1, unsigned long value1,
+static void common_aggregate_log_print(unsigned int log_level, unsigned int section, const char *cluster, const char *server,
+        const char *name, time_t *previous_time, const char *description1, unsigned long *count1, unsigned long value1,
         const char *description2, long *count2, long value2) {
+
+    /* Print aggregate stats. It is in this file for ready access to server names and the ability
+     * to call it on thread destroy.
+     */
     // Print every 100th access
     const unsigned long count_trigger = 1000;
     // Print every 60th second
@@ -754,18 +755,54 @@ void aggregate_log_print(unsigned int log_level, unsigned int section, const cha
     }
     // Also print if we have exceeded count
     if (print_it || *count1 >= count_trigger) {
-        log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%lu|c", name, filesystem_cluster, nodeaddr, description1, *count1);
+        if (cluster && server) {
+            log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%lu|c", name, filesystem_cluster, nodeaddr, description1, *count1);
+        }
+        else if(cluster) {
+            log_print(log_level, section, "%s: fusedav.%s.%s:%lu|c", name, filesystem_cluster, description1, *count1);
+        }
+        else {
+            log_print(log_level, section, "%s: fusedav.%s:%lu|c", name, description1, *count1);
+        }
         if (description2 && count2) {
             long result;
             // Cheating. We just know that the second value is a latency total which needs to
             // be passed through as an average latency.
             if (*count1 == 0) result = 0;
             else result = (*count2 / *count1);
-            log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%ld|c", name, filesystem_cluster, nodeaddr, description2, result);
+            if (cluster && server) {
+                log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%ld|c", name, filesystem_cluster, nodeaddr, description2, result);
+            }
+            else if (cluster) {
+                log_print(log_level, section, "%s: fusedav.%s.%s:%ld|c", name, filesystem_cluster, description2, result);
+            }
+            else {
+                log_print(log_level, section, "%s: fusedav.%s:%ld|c", name, description2, result);
+            }
             *count2 = 0;
         }
         *count1 = 0;
         if (previous_time) *previous_time = current_time;
     }
     return;
+}
+
+void aggregate_log_print_server(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
+        const char *description1, unsigned long *count1, unsigned long value1,
+        const char *description2, long *count2, long value2) {
+
+    // pass in filesystem_cluster and nodeaddr
+    common_aggregate_log_print(log_level, section, filesystem_cluster, nodeaddr, name, previous_time,
+        description1, count1, value1, description2, count2, value2);
+
+}
+
+void aggregate_log_print_local(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
+        const char *description1, unsigned long *count1, unsigned long value1,
+        const char *description2, long *count2, long value2) {
+
+    // don't pass in filesystem_cluster and nodeaddr
+    common_aggregate_log_print(log_level, section, NULL, NULL, name, previous_time,
+        description1, count1, value1, description2, count2, value2);
+
 }
