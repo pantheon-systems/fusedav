@@ -1732,8 +1732,11 @@ static void *cache_cleanup(void *ptr) {
         if (gerr) {
             processed_gerror("cache_cleanup: ", config->cache_path, &gerr);
         }
-        first = false;
         stat_cache_prune(config->cache);
+        if (!first) {
+            binding_busyness_stats();
+        }
+        first = false;
         if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
             log_print(LOG_WARNING, SECTION_FUSEDAV_DEFAULT, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;

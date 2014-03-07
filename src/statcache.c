@@ -930,23 +930,29 @@ void stat_cache_prune(stat_cache_t *cache) {
         "stat_cache_prune: visited %d cache entries; deleted %d; total_file_size is %lu;  had %d issues; elapsedtime %lu (%lu)",
         visited_entries, deleted_entries, size_of_files, issues, elapsedtime, totaltime / numcalls);
     if (visited_entries > large_count) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: large file count %d", visited_entries);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: large file count %d (> %lu)",
+            visited_entries, large_count);
     }
     else if (visited_entries > medium_count) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: medium file count %d", visited_entries);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: medium file count %d (%lu - %lu)",
+            visited_entries, medium_count, large_count);
     }
     else {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: small file count %d", visited_entries);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: small file count %d (< %lu)",
+            visited_entries, medium_count);
     }
 
     if (size_of_files > large_size) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: large file size %.1f M", size_of_files / (1024.0 * 1024.0));
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: large file size %.1f M (> %lu)",
+            size_of_files / (1024.0 * 1024.0), large_size);
     }
     else if (size_of_files > medium_size) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: medium file size %.1f M", size_of_files / (1024.0 * 1024.0));
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: medium file size %.1f M (%lu - %lu)",
+            size_of_files / (1024.0 * 1024.0), medium_size, large_size);
     }
     else {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: small file size %.1f M", size_of_files / (1024.0 * 1024.0));
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: small file size %.1f M (< %lu)",
+            size_of_files / (1024.0 * 1024.0), medium_size);
     }
     bloomfilter_destroy(boptions);
 
