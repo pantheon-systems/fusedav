@@ -356,15 +356,15 @@ void binding_busyness_stats(void) {
     count += FETCH(filecache_put_lg_count);
     count += FETCH(filecache_put_xlg_count);
     if (count > large_busyness) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: large binding by busyness %lu (> %lu)",
+        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: large site by binding by busyness %lu (> %lu)",
             count, large_busyness);
     }
     else if (count > medium_busyness) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: medium binding by busyness %lu (%lu - %lu)",
+        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: medium site by binding by busyness %lu (%lu - %lu)",
             count, medium_busyness, large_busyness);
     }
     else {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: small binding by busyness %lu (< %lu)",
+        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: small site by binding by busyness %lu (< %lu)",
             count, medium_busyness);
     }
 }
