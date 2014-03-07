@@ -118,5 +118,6 @@ extern struct statistics stats;
 
 void print_stats(void);
 void dump_stats(bool log, const char *cache_path);
+void binding_busyness_stats(void);
 
 #endif
