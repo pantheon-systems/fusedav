@@ -709,11 +709,11 @@ void stat_cache_prune(stat_cache_t *cache) {
 
     // Statistics
     int visited_entries = 0;
-    size_t size_of_files = 0;
+    unsigned long size_of_files = 0;
     const int large_count = 100000;
     const int medium_count = 10000;
-    const size_t large_size = (10 * 1024 * 1024);
-    const size_t medium_size = (5 * 1024 * 1024);
+    const unsigned long large_size = (10UL * 1024 * 1024 * 1024);
+    const unsigned long medium_size = (5UL * 1024 * 1024 * 1024);
     int deleted_entries = 0;
     int issues = 0;
     clock_t elapsedtime;
@@ -943,16 +943,16 @@ void stat_cache_prune(stat_cache_t *cache) {
     }
 
     if (size_of_files > large_size) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: large site by file size %.1f M (> %lu)",
-            size_of_files / (1024.0 * 1024.0), large_size);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: large site by file size %.1f M (> %lu M)",
+            size_of_files / (1024.0 * 1024.0), large_size / (1024 * 1024));
     }
     else if (size_of_files > medium_size) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: medium site by file size %.1f M (%lu - %lu)",
-            size_of_files / (1024.0 * 1024.0), medium_size, large_size);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: medium site by file size %.1f M (%lu M - %lu M)",
+            size_of_files / (1024.0 * 1024.0), medium_size / (1024 * 1024), large_size / (1024 * 1024));
     }
     else {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: small site by file size %.1f M (< %lu)",
-            size_of_files / (1024.0 * 1024.0), medium_size);
+        log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "site_stats: small site by file size %.1f M (< %lu M)",
+            size_of_files / (1024.0 * 1024.0), medium_size / (1024 * 1024));
     }
     bloomfilter_destroy(boptions);
 
