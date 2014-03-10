@@ -164,7 +164,7 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  chown:            %u", FETCH(dav_chown));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  create:           %u", FETCH(dav_create));
-    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  fsync:            %u", FETCH(dav_fsync));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  flush:            %u", FETCH(dav_flush));
@@ -180,9 +180,9 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  mknod:            %u", FETCH(dav_mknod));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  open:             %u", FETCH(dav_open));
-    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  read:             %u", FETCH(dav_read));
-    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  readdir:          %u", FETCH(dav_readdir));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  release:          %u", FETCH(dav_release));
@@ -196,7 +196,7 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  utimens:          %u", FETCH(dav_utimens));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  write:            %u", FETCH(dav_write));
-    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str); // true means always print to log
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
 
     snprintf(str, MAX_LINE_LEN, "  cache_file:       %u", FETCH(filecache_cache_file));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
@@ -284,7 +284,7 @@ void dump_stats(bool log, const char *cache_path) {
     // Figure out a way to align
     for (int idx = 0; idx < latency_items; idx++) {
         snprintf(str, MAX_LINE_LEN, "  %s_count:     %lu", latency[idx].name, latency[idx].count);
-        print_line(true, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
+        print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
         snprintf(str, MAX_LINE_LEN, "  %s_timing:    %lu", latency[idx].name, latency[idx].timing);
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
         snprintf(str, MAX_LINE_LEN, "  %s_avelat:    %lu", latency[idx].name, latency[idx].count > 0 ? (latency[idx].timing / latency[idx].count) : 0);
@@ -338,3 +338,33 @@ void print_stats(void) {
     dump_stats(log, NULL);
 }
 
+void binding_busyness_stats(void) {
+    unsigned long count = 0;
+    const unsigned long large_busyness = 14400; // 10 get/puts per minute
+    const unsigned long medium_busyness = 1440; // 1 get/put per minute
+
+    count += FETCH(filecache_get_xxsm_count);
+    count += FETCH(filecache_get_xsm_count);
+    count += FETCH(filecache_get_sm_count);
+    count += FETCH(filecache_get_med_count);
+    count += FETCH(filecache_get_lg_count);
+    count += FETCH(filecache_get_xlg_count);
+    count += FETCH(filecache_put_xxsm_count);
+    count += FETCH(filecache_put_xsm_count);
+    count += FETCH(filecache_put_sm_count);
+    count += FETCH(filecache_put_med_count);
+    count += FETCH(filecache_put_lg_count);
+    count += FETCH(filecache_put_xlg_count);
+    if (count > large_busyness) {
+        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: large site by binding by busyness %lu (> %lu)",
+            count, large_busyness);
+    }
+    else if (count > medium_busyness) {
+        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: medium site by binding by busyness %lu (%lu - %lu)",
+            count, medium_busyness, large_busyness);
+    }
+    else {
+        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: small site by binding by busyness %lu (< %lu)",
+            count, medium_busyness);
+    }
+}
