@@ -527,6 +527,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
         // Set current connnection.
         node_status.nodelist[count] = ipstr;
+        if (logging(LOG_DEBUG, SECTION_SESSION_DEFAULT) {
+            strncpy(log_str, ipstr, SIZE);
+        }
         ++count;
     }
 
