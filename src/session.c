@@ -46,12 +46,29 @@
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
 
+// The string we pass to curl is domain:port:ip:address, so leave room
+#define IPSTR_SZ 128
+// Maximum number of A records (bzw IP addresses) our domain can resolve to
+#define MAX_NODES 32
+
+struct health_status_s {
+    int health_status[MAX_NODES];
+    time_t last_failure[MAX_NODES];
+};
+
+static __thread struct node_status_s {
+    struct curl_slist *resolve_slist;
+    char *nodelist[MAX_NODES + 1];
+    // hashtable containing a health_status_s for each node
+    // struct health_status_s hashtable;
+} node_status;
+
 // This will be the list of randomized addresses we pass to curl
 // Make it thread-local so each session gets its own.
 // Assuming that session==thread, but that's what we assume for session_tsd_key above
 // Using __thread in preference to pthread_once mechanism; seems simpler and less
 // error-prone
-static __thread struct curl_slist *resolve_slist = NULL;
+// SEE ABOVE static __thread struct curl_slist *resolve_slist = NULL;
 
 // Should equal the minimum number of nodes in a valhalla cluster.
 // It needs some value to start, but will be adjusted in call to getaddrinfo
@@ -136,6 +153,9 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: host (%s) :: port (%s) :: cluster (%s)",
         filesystem_domain, filesystem_port, filesystem_cluster);
 
+    // Make sure resolve_slist is initialized.
+    node_status.resolve_slist = NULL;
+
     return 0;
 }
 
@@ -157,8 +177,8 @@ static void session_destroy(void *s) {
     // Before we go, make sure we've printed the number of curl accesses we accumulated
     log_filesystem_nodes("session_destroy", CURLE_OK, 0, 0, "no path");
     // Free the resolve_slist before exiting the session
-    curl_slist_free_all(resolve_slist);
-    resolve_slist = NULL;
+    curl_slist_free_all(node_status.resolve_slist);
+    node_status.resolve_slist = NULL;
     curl_easy_cleanup(session);
 }
 
@@ -370,18 +390,10 @@ finish:
  * We do this by calling getaddrinfo ourselves, then randomizing the list.
  */
 
-// The string we pass to curl is domain:port:ip:address, so leave room
-#define IPSTR_SZ 128
-// Maximum number of A records (bzw IP addresses) our domain can resolve to
-#define MAX_NODES 32
-
 static int construct_resolve_slist(CURL *session, bool force) {
     // This will hold the ip addresses in the order they get returned from gethostaddr; later to be randomized
     // for resolve_slist.
     char *prelist[MAX_NODES + 1] = {NULL};
-    char *sortedlist[MAX_NODES + 1] = {NULL}; // Mostly for debugging
-    char *broken_connection_str = NULL;
-    char *current_connection = NULL;
     char log_str[4096] = {'\0'}; // Hold up to MAX_NODES curl ip entries (domain plus numeric ip)
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
@@ -393,7 +405,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // timeout interval in seconds
     // If this interval has passed, we recreate the list. Within this interval,
     // we reuse the current list.
-    const time_t resolve_slist_timeout = 30;
+    const time_t resolve_slist_timeout = 120; // REVIEW: do we have a good value for this?
     // Keep a timer; at periodic intervals we reset the resolve_slist.
     // static so it persists between calls
     static __thread time_t prevtime = 0;
@@ -407,18 +419,34 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
     // If the list is still young, just return. The current list is still valid
     curtime = time(NULL);
-    if (!force && resolve_slist && (curtime - prevtime < resolve_slist_timeout)) {
+    if (!force && node_status.resolve_slist && (curtime - prevtime < resolve_slist_timeout)) {
         res = 0; // Not an error
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: timeout has not elapsed; return with current slist (%p)", resolve_slist);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT,
+            "construct_resolve_slist: timeout has not elapsed; return with current slist (%p)", node_status.resolve_slist);
         // goto finish so we can still set CURLOPT_RESOLVE; otherwise libcurl will do its default thing
         goto finish;
     }
+    else if (force) {
+        char *broken_connection_string = node_status.nodelist[0];
+
+        for (int idx = 1; idx < (MAX_NODES + 1) && node_status.nodelist[idx] != NULL; idx++) {
+            char *tmp;
+            node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, node_status.nodelist[idx]);
+            // swap; this will move bad node down to bottom
+            tmp = node_status.nodelist[idx - 1];
+            node_status.nodelist[idx - 1] = node_status.nodelist[idx];
+            node_status.nodelist[idx] = tmp;
+        }
+        node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, broken_connection_string);
+        goto finish;
+    }
+
     // Ready for the next invocation.
     prevtime = curtime;
 
     // Free the current list
-    curl_slist_free_all(resolve_slist);
-    resolve_slist = NULL;
+    curl_slist_free_all(node_status.resolve_slist);
+    node_status.resolve_slist = NULL;
     // Turn hints off
     memset(&hints, 0, sizeof(struct addrinfo));
     // By setting ai_family to 0, we allow both IPv4 and IPv6
@@ -497,36 +525,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
         strcat(ipstr, ipaddr);
 
-        // If force, we assume the current connection is bad and we want to move it to the bottom of the list.
         // Set current connnection.
-        if (force) {
-            if (current_connection == NULL) {
-                current_connection = calloc(IPSTR_SZ, 1);
-                strncpy(current_connection, nodeaddr, strlen(nodeaddr));
-                // nodeaddr has had its dots overwritten with underscores for logging. Put the dots back
-                for (char *end = current_connection; *end != '\0'; end++) {
-                    if (*end == '_') *end = '.';
-                }
-            }
-            // If the ipaddr we just processed is the same as the current connection, store it in broken connection
-            // We will put it at the bottom of the list later
-            // ipaddr is the address part of the string; ipstr is the complete string with domain
-            // If we find the bad ipaddr, it's the ipstr we want to keep track of to put at the bottom of the list
-            if (!strcmp(current_connection, ipaddr)) {
-                broken_connection_str = ipstr;
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-                    "construct_resolve_slist: broken_connection_string is %s", broken_connection_str);
-            }
-            else {
-                prelist[count] = ipstr;
-                ++count;
-            }
-        }
-        // Store the string in our "pre" list. It will be in sorted order. We randomize later
-        else {
-            prelist[count] = ipstr;
-            ++count;
-        }
+        node_status.nodelist[count] = ipstr;
+        ++count;
     }
 
     // Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
@@ -543,39 +544,12 @@ static int construct_resolve_slist(CURL *session, bool force) {
         int pick;
         pick = rand() % (count - idx);
 
-        resolve_slist = curl_slist_append(resolve_slist, prelist[pick]);
+        node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, prelist[pick]);
+        strncpy(node_status.nodelist[idx], prelist[pick], IPSTR_SZ);
+        // reinitialize the following entry as a sentry for the ultimate end
+        node_status.nodelist[idx + 1][0] = '\0';
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
-        // fill in the gap for the item just removed.
-        sortedlist[idx] = prelist[pick];
-        // REVIEW: clang says:
-        // session.c:544:51: warning: Potential memory leak
-        //   for (int jdx = pick; jdx < (count - idx); jdx++) {
-        //                                             ^~~
-        for (int jdx = pick; jdx < (count - idx); jdx++) {
-            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: (%d %d) %d <- %d %s", count, idx, jdx, jdx + 1, prelist[jdx + 1]);
-            prelist[jdx] = prelist[jdx + 1];
-        }
     }
-
-    if (broken_connection_str) {
-        resolve_slist = curl_slist_append(resolve_slist, broken_connection_str);
-        sortedlist[count] = broken_connection_str;
-        ++count; // count was not incremented when we detected broken connection, so increment here so we know final count
-    }
-
-    for (int idx = 0; idx < count; idx++) {
-        if (logging(LOG_DEBUG, SECTION_SESSION_DEFAULT)) {
-            char *end;
-            end = strrchr(sortedlist[idx], ':');
-            if (end) {
-                ++end;
-                strcat(log_str, end);
-                strcat(log_str, " -- ");
-            }
-        }
-        free(sortedlist[idx]);
-    }
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", log_str);
 
     // If we got here, we are golden!
     res = 0;
@@ -587,10 +561,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // on its own, and return the unsorted, unbalanced, first entry.
 
     finish:
-    free(current_connection);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Sending resolve_slist (%p) to curl",
-        resolve_slist);
-    curl_easy_setopt(session, CURLOPT_RESOLVE, resolve_slist);
+        node_status.resolve_slist);
+    curl_easy_setopt(session, CURLOPT_RESOLVE, node_status.resolve_slist);
 
     return res;
 }
@@ -670,6 +643,12 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     return session;
 }
 
+static void increment_node_failure(char *addr) {
+}
+
+static void increment_node_success(char *addr) {
+}
+
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path) {
     static __thread unsigned long count = 0;
     static __thread time_t previous_time = 0;
@@ -704,6 +683,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures",
             fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
+        increment_node_failure(nodeaddr);
     }
     else if (response_code >= 500) {
         // Track errors
@@ -713,6 +693,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures",
             fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
+        increment_node_failure(nodeaddr);
     }
     // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
     else if (iter > 0) {
@@ -720,6 +701,10 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries:1|c", fcn_name, iter, path, filesystem_cluster, nodeaddr);
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
+        increment_node_success(nodeaddr);
+    }
+    else {
+        increment_node_success(nodeaddr);
     }
 }
 
