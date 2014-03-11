@@ -351,8 +351,8 @@ void print_stats(void) {
 
 void binding_busyness_stats(void) {
     unsigned long count = 0;
-    const unsigned long large_busyness = 14400; // 10 get/puts per minute
-    const unsigned long medium_busyness = 1440; // 1 get/put per minute
+    const unsigned long large_busyness = 144000; // roughly 10 small get/puts per minute plus propfinds
+    const unsigned long medium_busyness = 14400; // 1 get/put per minute
 
     // Weight the items by resource intensiveness (Just a swag at this point)
     count += FETCH(propfind_negative_cache);
