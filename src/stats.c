@@ -383,4 +383,21 @@ void binding_busyness_stats(void) {
         log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: small site by binding busyness %lu (< %lu)",
             count, medium_busyness);
     }
+    // busyiness stats are only valid over a defined interval, so clear them since a new interval starts
+    CLEAR(propfind_negative_cache);
+    CLEAR(propfind_progressive_cache);
+    CLEAR(propfind_complete_cache);
+    CLEAR(filecache_get_304_count);
+    CLEAR(filecache_get_xxsm_count);
+    CLEAR(filecache_get_xsm_count);
+    CLEAR(filecache_get_sm_count);
+    CLEAR(filecache_get_med_count);
+    CLEAR(filecache_get_lg_count);
+    CLEAR(filecache_get_xlg_count);
+    CLEAR(filecache_put_xxsm_count);
+    CLEAR(filecache_put_xsm_count);
+    CLEAR(filecache_put_sm_count);
+    CLEAR(filecache_put_med_count);
+    CLEAR(filecache_put_lg_count);
+    CLEAR(filecache_put_xlg_count);
 }

@@ -120,6 +120,7 @@ extern struct statistics stats;
 #define TIMING(op, timing) __sync_fetch_and_add(&stats.op, (timing))
 #define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
+#define CLEAR(c) __sync_fetch_and_and(&stats.c, 0)
 
 void print_stats(void);
 void dump_stats(bool log, const char *cache_path);
