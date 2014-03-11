@@ -310,6 +310,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         // On sucess we avoid the complete PROPFIND
         // On ESTALE, we do a complete PROPFIND
         // If error is injected, it falls through to final else
+        BUMP(propfind_progressive_cache);
         if (propfind_result == 0 && !inject_error(fusedav_error_updatepropfind1)) {
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND success");
             needs_update = false;
@@ -338,6 +339,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         min_generation = stat_cache_get_local_generation();
         // getdir_propfind_callback calls stat_cache_value_set, which makes local_generation one higher than min_generation
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL, &tmpgerr);
+        BUMP(propfind_complete_cache);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
             return;
@@ -625,6 +627,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         }
     } else {
         aggregate_log_print_local(LOG_INFO, SECTION_ENHANCED, "get_stat", &previous_time, "propfind-negative-cache", &count, 1, NULL, NULL, 0);
+        BUMP(propfind_negative_cache);
     }
 
     // Try again to hit the file in the stat cache.

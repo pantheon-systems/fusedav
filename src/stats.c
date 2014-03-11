@@ -80,7 +80,7 @@ static void malloc_stats_output(void *cbopaque, const char *s) {
 
 #define STAT_PATH_SIZE 80
 // xxsm, xsm, sm, med, lg, xlg * 2 (one for get, one for put)
-#define latency_items 12
+#define latency_items 13
 void dump_stats(bool log, const char *cache_path) {
     struct latency_s {
         unsigned long count;
@@ -198,6 +198,14 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  write:            %u", FETCH(dav_write));
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
 
+    snprintf(str, MAX_LINE_LEN, "  cprop:            %u", FETCH(propfind_complete_cache));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  pprop:            %u", FETCH(propfind_progressive_cache));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+    snprintf(str, MAX_LINE_LEN, "  nprop:            %u", FETCH(propfind_negative_cache));
+    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
+
+
     snprintf(str, MAX_LINE_LEN, "  cache_file:       %u", FETCH(filecache_cache_file));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  pdata_set:        %u", FETCH(filecache_pdata_set));
@@ -243,42 +251,45 @@ void dump_stats(bool log, const char *cache_path) {
     snprintf(str, MAX_LINE_LEN, "  key2path:         %u", FETCH(filecache_key2path));
     print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
 
-    latency[0].count = FETCH(filecache_get_xxsm_count);
-    latency[1].count = FETCH(filecache_get_xsm_count);
-    latency[2].count = FETCH(filecache_get_sm_count);
-    latency[3].count = FETCH(filecache_get_med_count);
-    latency[4].count = FETCH(filecache_get_lg_count);
-    latency[5].count = FETCH(filecache_get_xlg_count);
-    latency[6].count = FETCH(filecache_put_xxsm_count);
-    latency[7].count = FETCH(filecache_put_xsm_count);
-    latency[8].count = FETCH(filecache_put_sm_count);
-    latency[9].count = FETCH(filecache_put_med_count);
-    latency[10].count = FETCH(filecache_put_lg_count);
-    latency[11].count = FETCH(filecache_put_xlg_count);
-    latency[0].timing = FETCH(filecache_get_xxsm_timing);
-    latency[1].timing = FETCH(filecache_get_xsm_timing);
-    latency[2].timing = FETCH(filecache_get_sm_timing);
-    latency[3].timing = FETCH(filecache_get_med_timing);
-    latency[4].timing = FETCH(filecache_get_lg_timing);
-    latency[5].timing = FETCH(filecache_get_xlg_timing);
-    latency[6].timing = FETCH(filecache_put_xxsm_timing);
-    latency[7].timing = FETCH(filecache_put_xsm_timing);
-    latency[8].timing = FETCH(filecache_put_sm_timing);
-    latency[9].timing = FETCH(filecache_put_med_timing);
-    latency[10].timing = FETCH(filecache_put_lg_timing);
-    latency[11].timing = FETCH(filecache_put_xlg_timing);
-    latency[0].name = "get_xxsm";
-    latency[1].name = "get_xsm";
-    latency[2].name = "get_sm";
-    latency[3].name = "get_med";
-    latency[4].name = "get_lg";
-    latency[5].name = "get_xlg";
-    latency[6].name = "put_xxsm";
-    latency[7].name = "put_xsm";
-    latency[8].name = "put_sm";
-    latency[9].name = "put_med";
-    latency[10].name = "put_lg";
-    latency[11].name = "put_xlg";
+    latency[0].count = FETCH(filecache_get_304_count);
+    latency[1].count = FETCH(filecache_get_xxsm_count);
+    latency[2].count = FETCH(filecache_get_xsm_count);
+    latency[3].count = FETCH(filecache_get_sm_count);
+    latency[4].count = FETCH(filecache_get_med_count);
+    latency[5].count = FETCH(filecache_get_lg_count);
+    latency[6].count = FETCH(filecache_get_xlg_count);
+    latency[7].count = FETCH(filecache_put_xxsm_count);
+    latency[8].count = FETCH(filecache_put_xsm_count);
+    latency[9].count = FETCH(filecache_put_sm_count);
+    latency[10].count = FETCH(filecache_put_med_count);
+    latency[11].count = FETCH(filecache_put_lg_count);
+    latency[12].count = FETCH(filecache_put_xlg_count);
+    latency[0].timing = FETCH(filecache_get_304_count);
+    latency[1].timing = FETCH(filecache_get_xxsm_timing);
+    latency[2].timing = FETCH(filecache_get_xsm_timing);
+    latency[3].timing = FETCH(filecache_get_sm_timing);
+    latency[4].timing = FETCH(filecache_get_med_timing);
+    latency[5].timing = FETCH(filecache_get_lg_timing);
+    latency[6].timing = FETCH(filecache_get_xlg_timing);
+    latency[7].timing = FETCH(filecache_put_xxsm_timing);
+    latency[8].timing = FETCH(filecache_put_xsm_timing);
+    latency[9].timing = FETCH(filecache_put_sm_timing);
+    latency[10].timing = FETCH(filecache_put_med_timing);
+    latency[11].timing = FETCH(filecache_put_lg_timing);
+    latency[12].timing = FETCH(filecache_put_xlg_timing);
+    latency[0].name = "get_304";
+    latency[1].name = "get_xxsm";
+    latency[2].name = "get_xsm";
+    latency[3].name = "get_sm";
+    latency[4].name = "get_med";
+    latency[5].name = "get_lg";
+    latency[6].name = "get_xlg";
+    latency[7].name = "put_xxsm";
+    latency[8].name = "put_xsm";
+    latency[9].name = "put_sm";
+    latency[10].name = "put_med";
+    latency[11].name = "put_lg";
+    latency[12].name = "put_xlg";
 
     // Since the names are of variable lengths, the values don't line up.
     // Figure out a way to align
@@ -340,21 +351,26 @@ void print_stats(void) {
 
 void binding_busyness_stats(void) {
     unsigned long count = 0;
-    const unsigned long large_busyness = 14400; // 10 get/puts per minute
-    const unsigned long medium_busyness = 1440; // 1 get/put per minute
+    const unsigned long large_busyness = 144000; // roughly 10 small get/puts per minute plus propfinds
+    const unsigned long medium_busyness = 14400; // 1 get/put per minute
 
-    count += FETCH(filecache_get_xxsm_count);
-    count += FETCH(filecache_get_xsm_count);
-    count += FETCH(filecache_get_sm_count);
-    count += FETCH(filecache_get_med_count);
-    count += FETCH(filecache_get_lg_count);
-    count += FETCH(filecache_get_xlg_count);
-    count += FETCH(filecache_put_xxsm_count);
-    count += FETCH(filecache_put_xsm_count);
-    count += FETCH(filecache_put_sm_count);
-    count += FETCH(filecache_put_med_count);
-    count += FETCH(filecache_put_lg_count);
-    count += FETCH(filecache_put_xlg_count);
+    // Weight the items by resource intensiveness (Just a swag at this point)
+    count += FETCH(propfind_negative_cache);
+    count += (FETCH(propfind_progressive_cache) * 2);
+    count += (FETCH(propfind_complete_cache) * 8);
+    count += FETCH(filecache_get_304_count);
+    count += (FETCH(filecache_get_xxsm_count) * 2);
+    count += (FETCH(filecache_get_xsm_count) * 2);
+    count += (FETCH(filecache_get_sm_count) * 3);
+    count += (FETCH(filecache_get_med_count) * 4);
+    count += (FETCH(filecache_get_lg_count) * 6);
+    count += (FETCH(filecache_get_xlg_count) * 8);
+    count += (FETCH(filecache_put_xxsm_count) * 2);
+    count += (FETCH(filecache_put_xsm_count) * 2);
+    count += (FETCH(filecache_put_sm_count) * 3);
+    count += (FETCH(filecache_put_med_count) * 4);
+    count += (FETCH(filecache_put_lg_count) * 6);
+    count += (FETCH(filecache_put_xlg_count) * 8);
     if (count > large_busyness) {
         log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: large site by binding by busyness %lu (> %lu)",
             count, large_busyness);
