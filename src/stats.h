@@ -42,6 +42,10 @@ struct statistics {
     unsigned dav_utimens;
     unsigned dav_write;
 
+    unsigned propfind_negative_cache;
+    unsigned propfind_progressive_cache;
+    unsigned propfind_complete_cache;
+
     unsigned filecache_cache_file;
     unsigned filecache_pdata_set;
     unsigned filecache_create_file;
@@ -64,6 +68,7 @@ struct statistics {
     unsigned filecache_init;
     unsigned filecache_path2key;
     unsigned filecache_key2path;
+    unsigned filecache_get_304_count;
     unsigned filecache_get_xxsm_timing;
     unsigned filecache_get_xxsm_count;
     unsigned filecache_get_xsm_timing;

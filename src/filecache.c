@@ -565,6 +565,7 @@ static void get_fresh_fd(filecache_t *cache,
         }
         else {
             log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: open for 304 on %s with flags %x succeeded; fd %d", pdata->filename, flags, sdata->fd);
+            BUMP(filecache_get_304_count);
         }
     }
     else if (response_code == 200) {
