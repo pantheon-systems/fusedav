@@ -380,7 +380,7 @@ void binding_busyness_stats(void) {
             count, medium_busyness, large_busyness);
     }
     else {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: small site by binding by busyness %lu (< %lu)",
+        log_print(LOG_NOTICE, SECTION_STATCACHE_OUTPUT, "site_stats: small site by binding busyness %lu (< %lu)",
             count, medium_busyness);
     }
 }
