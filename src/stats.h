@@ -42,6 +42,10 @@ struct statistics {
     unsigned dav_utimens;
     unsigned dav_write;
 
+    unsigned propfind_negative_cache;
+    unsigned propfind_progressive_cache;
+    unsigned propfind_complete_cache;
+
     unsigned filecache_cache_file;
     unsigned filecache_pdata_set;
     unsigned filecache_create_file;
@@ -64,6 +68,7 @@ struct statistics {
     unsigned filecache_init;
     unsigned filecache_path2key;
     unsigned filecache_key2path;
+    unsigned filecache_get_304_count;
     unsigned filecache_get_xxsm_timing;
     unsigned filecache_get_xxsm_count;
     unsigned filecache_get_xsm_timing;
@@ -115,6 +120,7 @@ extern struct statistics stats;
 #define TIMING(op, timing) __sync_fetch_and_add(&stats.op, (timing))
 #define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
+#define CLEAR(c) __sync_fetch_and_and(&stats.c, 0)
 
 void print_stats(void);
 void dump_stats(bool log, const char *cache_path);
