@@ -228,7 +228,7 @@ static void create_file(struct filecache_sdata *sdata, const char *cache_path,
 
     BUMP(filecache_create_file);
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "create_file: on %s", path);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "create_file: on %s", path);
 
     pdata = calloc(1, sizeof(struct filecache_pdata));
     if (pdata == NULL || inject_error(filecache_error_createcalloc)) {
@@ -290,7 +290,7 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
     }
 
     if (!pdata) {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_pdata_get miss on path: %s", path);
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_CACHE, "filecache_pdata_get miss on path: %s", path);
         return NULL;
     }
 
@@ -376,8 +376,9 @@ static void get_fresh_fd(filecache_t *cache,
     assert(pdatap);
     pdata = *pdatap;
 
-    if (pdata != NULL)
+    if (pdata != NULL) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: file found in cache: %s::%s", path, pdata->filename);
+    }
 
     // Do we need to go out to the server, or just serve from the file cache
     // We should have guaranteed that if O_TRUNC is specified and pdata is NULL we don't get here.
@@ -394,7 +395,7 @@ static void get_fresh_fd(filecache_t *cache,
         // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
         sdata->fd = open(pdata->filename, flags & ~O_TRUNC);
         if (sdata->fd < 0 || inject_error(filecache_error_freshopen1)) {
-            log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_fd: < 0, %s with flags %x returns < 0: errno: %d, %s : ENOENT=%d", path, flags, errno, strerror(errno), ENOENT);
+            log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "get_fresh_fd: < 0, %s with flags %x returns < 0: errno: %d, %s : ENOENT=%d", path, flags, errno, strerror(errno), ENOENT);
             // If the cachefile named in pdata->filename does not exist, or any other error occurs...
             g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open failed: %s", strerror(errno));
             goto finish;
@@ -414,7 +415,7 @@ static void get_fresh_fd(filecache_t *cache,
 
             if (ftruncate(sdata->fd, 0) || inject_error(filecache_error_freshftrunc)) {
                 g_set_error(gerr, system_quark(), errno, "get_fresh_fd: ftruncate failed");
-                log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_fd: ftruncate failed; %d:%s:%s :: %s",
+                log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "get_fresh_fd: ftruncate failed; %d:%s:%s :: %s",
                     sdata->fd, path, pdata->filename, g_strerror(errno));
                 // Fall through to release the lock
             }
@@ -543,7 +544,7 @@ static void get_fresh_fd(filecache_t *cache,
         // Mark the cache item as revalidated at the current time.
         pdata->last_server_update = time(NULL);
 
-        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %lu : etag %s.", path, pdata->filename, pdata->last_server_update, pdata->etag);
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 304 for %s : %s : timestamp: %lu : etag %s.", path, pdata->filename, pdata->last_server_update, pdata->etag);
         filecache_pdata_set(cache, path, pdata, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "get_fresh_fd on 304: ");
@@ -560,7 +561,7 @@ static void get_fresh_fd(filecache_t *cache,
                 filecache_delete(cache, path, true, NULL);
             }
             g_set_error(gerr, system_quark(), errno, "get_fresh_fd: open for 304 failed: %s", strerror(errno));
-            log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
+            log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "get_fresh_fd: open for 304 on %s with flags %x and etag %s returns < 0: errno: %d, %s", pdata->filename, flags, pdata->etag, errno, strerror(errno));
             goto finish;
         }
         else {
@@ -603,7 +604,7 @@ static void get_fresh_fd(filecache_t *cache,
 
         sdata->fd = response_fd;
 
-        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %lu.", path, pdata->filename, pdata->last_server_update);
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "get_fresh_fd: Updating file cache on 200 for %s : %s : timestamp: %lu.", path, pdata->filename, pdata->last_server_update);
         filecache_pdata_set(cache, path, pdata, &tmpgerr);
         if (tmpgerr) {
             memset(sdata, 0, sizeof(struct filecache_sdata));
@@ -755,7 +756,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
 
     BUMP(filecache_open);
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: %s", path);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "filecache_open: %s", path);
 
     // Allocate and zero-out a session data structure.
     sdata = calloc(1, sizeof(struct filecache_sdata));
@@ -780,7 +781,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
             if ((flags & O_CREAT) && (pdata != NULL)) {
                 // This will orphan the previous filecache file
-                log_print(LOG_INFO, SECTION_FILECACHE_OPEN,
+                log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN,
                     "filecache_open: creating a file that already has a cache entry: %s", path);
             }
             log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling create_file on %s", path);
@@ -811,7 +812,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         break;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: success on %s", path);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "filecache_open: success on %s", path);
 
     if (flags & O_RDONLY || flags & O_RDWR) sdata->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
@@ -852,12 +853,12 @@ ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_
         return -1;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_read: fd=%d", sdata->fd);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_IO, "filecache_read: fd=%d", sdata->fd);
 
     bytes_read = pread(sdata->fd, buf, size, offset);
     if (bytes_read < 0 || inject_error(filecache_error_readread)) {
         g_set_error(gerr, system_quark(), errno, "filecache_read: pread failed: ");
-        log_print(LOG_INFO, SECTION_FILECACHE_IO, "filecache_read: %ld %d %s %lu %ld::%s", bytes_read, sdata->fd, buf, size, offset, g_strerror(errno));
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_IO, "filecache_read: %ld %d %s %lu %ld::%s", bytes_read, sdata->fd, buf, size, offset, g_strerror(errno));
         return 0;
     }
 
@@ -909,10 +910,10 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
     if (bytes_written < 0 || inject_error(filecache_error_writewrite)) {
         set_error(sdata, errno);
         g_set_error(gerr, system_quark(), errno, "filecache_write: pwrite failed");
-        log_print(LOG_INFO, SECTION_FILECACHE_IO, "filecache_write: %ld::%d %lu %ld :: %s", bytes_written, sdata->fd, size, offset, strerror(errno));
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_IO, "filecache_write: %ld::%d %lu %ld :: %s", bytes_written, sdata->fd, size, offset, strerror(errno));
     } else {
         sdata->modified = true;
-        log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "filecache_write: wrote %d bytes on fd %d", bytes_written, sdata->fd);
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_IO, "filecache_write: wrote %d bytes on fd %d", bytes_written, sdata->fd);
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_write: releasing shared file lock on fd %d", sdata->fd);
@@ -936,7 +937,7 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
         return;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_close: fd (%d).", sdata->fd);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_FILE, "filecache_close: fd (%d).", sdata->fd);
 
     if (sdata->fd < 0 || inject_error(filecache_error_closefd))  {
         g_set_error(gerr, system_quark(), EBADF, "filecache_close got bad file descriptor");
@@ -1053,11 +1054,11 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         unsigned long count;
         const char *sz;
 
-        log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: retry_curl_easy_perform succeeds (fd=%d)", fd);
+        log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
 
         // Ensure that it's a 2xx response code.
 
-        log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: Request got HTTP status code %lu", response_code);
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_COMM, "put_return_etag: Request got HTTP status code %lu", response_code);
         if (!(response_code >= 200 && response_code < 300) || inject_error(filecache_error_etagcurl2)) {
             // Opening up into the abyss...adding a separate code for a specific error return. Where will it end?
             int curlerr = E_FC_CURLERR;
@@ -1197,7 +1198,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
         goto finish;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Checking if file (%s) was writable.", path);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_COMM, "filecache_sync: Checking if file (%s) was writable.", path);
     if (!sdata->writable) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: not writable on %s", path);
         goto finish;
@@ -1221,8 +1222,6 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
     if (sdata->modified) {
         if (do_put) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Seeking fd=%d", sdata->fd);
-            // @REVIEW: I don't think we need do the lseek. We dup fd in put_return_etag, which sets
-            // file to the beginning. Should we remove this code?
             // If this lseek fails, file eventually goes to forensic haven.
             if ((lseek(sdata->fd, 0, SEEK_SET) == (off_t)-1) || inject_error(filecache_error_synclseek)) {
                 set_error(sdata, errno);
@@ -1262,7 +1261,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
                 goto finish;
             }
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: PUT successful: %s : %s : old-timestamp: %lu: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
+            log_print(LOG_DYNAMIC, SECTION_FILECACHE_COMM, "filecache_sync: PUT successful: %s : %s : old-timestamp: %lu: etag = %s", path, pdata->filename, pdata->last_server_update, pdata->etag);
 
             // If the PUT succeeded, the file isn't locally modified.
             sdata->modified = false;
@@ -1289,7 +1288,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
             goto finish;
         }
     }
-    log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "filecache_sync: Updated stat cache %d:%s:%s:%lu", sdata->fd, path, pdata->filename, pdata->last_server_update);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_COMM, "filecache_sync: Updated stat cache %d:%s:%s:%lu", sdata->fd, path, pdata->filename, pdata->last_server_update);
 
 finish:
 
@@ -1311,7 +1310,7 @@ void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
         return;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_truncate(%d)", sdata->fd);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_FILE, "filecache_truncate(%d)", sdata->fd);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "filecache_truncate: acquiring shared file lock on fd %d", sdata->fd);
     if (flock(sdata->fd, LOCK_SH) || inject_error(filecache_error_truncflock1)) {
@@ -1373,7 +1372,7 @@ void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefil
 
     BUMP(filecache_delete);
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_delete: path (%s).", path);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_CACHE, "filecache_delete: path (%s).", path);
 
     pdata = filecache_pdata_get(cache, path, &tmpgerr);
     if (tmpgerr) {
@@ -1393,7 +1392,7 @@ void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefil
     if (unlink_cachefile && pdata) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_delete: unlinking %s", pdata->filename);
         if (unlink(pdata->filename)) {
-            log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_delete: error unlinking %s", pdata->filename);
+            log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_delete: error unlinking %s", pdata->filename);
         }
     }
 
@@ -1419,7 +1418,7 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     bool failed_rename = false;
 
     BUMP(filecache_forensic_haven);
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_forensic_haven: cp %s p %s", cache_path, path);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_FILE, "filecache_forensic_haven: cp %s p %s", cache_path, path);
 
     // Get info from pdata and write to file in forensic haven
     pdata = filecache_pdata_get(cache, path, &subgerr);
@@ -1501,7 +1500,7 @@ void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *
         return;
     }
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "filecache_pdata_move: Update last_server_update on %s: timestamp: %lu", pdata->filename, pdata->last_server_update);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_FILE, "filecache_pdata_move: Update last_server_update on %s: timestamp: %lu", pdata->filename, pdata->last_server_update);
 
     filecache_pdata_set(cache, new_path, pdata, &tmpgerr);
     if (tmpgerr) {

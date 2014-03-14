@@ -32,6 +32,8 @@
 #include "session.h"
 #include "fusedav_config.h"
 
+__thread unsigned int LOG_DYNAMIC = LOG_INFO;
+
 // Store values for loggging in the log_key_value array, which is set in fusedav_config.
 #define USER_AGENT_ABBREV 0
 #define BASEURL_FIRST 1
@@ -63,12 +65,12 @@ static void initialize_site(void) {
     char *token;
     const char *delim = "/";
     int idx;
-    
+
     // If there is no base url, we'll fill with a marker ("(null)")
     for (idx = BASEURL_FIRST; idx <= BASEURL_EIGHTH; idx++) {
         log_key_value[idx] = "(null)";
     }
-    
+
     /* get the first token */
     token = strtok(str, delim);
 
@@ -84,7 +86,7 @@ static void initialize_site(void) {
 
 /* The log_prefix comes from fusedav.conf; the base_url from curl and fuse. */
 void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent_abbrev) {
-            
+
     unsigned int vlen;
 
     global_log_level = log_level;
@@ -97,9 +99,9 @@ void log_init(unsigned int log_level, const char *log_level_by_section, const ch
     else {
         log_key_value[USER_AGENT_ABBREV] = "(null)";
     }
-    
+
     initialize_site();
-    
+
     if (log_level_by_section == NULL) return;
 
     // If we see a section whose value is greater than vlen, its value will be 0 by default.
@@ -109,6 +111,43 @@ void log_init(unsigned int log_level, const char *log_level_by_section, const ch
         section_log_levels[idx] = log_level_by_section[idx] - '0'; // Looking for an integer 0-7
     }
     return;
+}
+
+/* When fusedav detects an error, it will set dynamic logging. For those log statements whose log level is LOG_DYNAMIC,
+ * this will lower its log threshold and make it likely that the statement will print.
+ * This will continue during the dynamic_logging_duration. Each thread has its own view of whether it is
+ * in a dynamic logging state or not.
+ * Include a rest period so if we are in serious error mode, we don't overload the logging system
+ */
+static __thread time_t dynamic_logging_start = 0;
+const int dynamic_logging_duration = 10;
+const int dynamic_logging_rest = 60;
+
+static void test_dynamic_logging(void) {
+    struct timespec now;
+    bool using_dynamic_logging;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    using_dynamic_logging = (dynamic_logging_start + dynamic_logging_duration >= now.tv_sec);
+    if (!using_dynamic_logging) {
+        LOG_DYNAMIC = LOG_INFO;
+        log_print(LOG_NOTICE, SECTION_LOG_DEFAULT, "revert_dynamic_logging");
+    }
+}
+
+void set_dynamic_logging(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (dynamic_logging_start + dynamic_logging_rest > now.tv_sec) {
+        // still in rest period
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+            "Not setting dynamic_logging, still in rest period");
+    }
+    else {
+        dynamic_logging_start = now.tv_sec;
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+            "Setting dynamic_logging for %lu seconds. fusedav.dynamic_logging:1|c", dynamic_logging_duration);
+        LOG_DYNAMIC = LOG_INFO - 1;
+    }
 }
 
 // Are we logging this message?
@@ -121,6 +160,8 @@ int logging(unsigned int log_level, unsigned int section) {
         local_log_level = section_log_levels[section];
     }
 
+    // Check and see if we're still doing dynamic logging. If so, it will take effect only after this call
+    test_dynamic_logging();
     return log_level <= local_log_level;
 }
 
@@ -152,3 +193,4 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
 
     return ret;
 }
+

@@ -381,7 +381,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
         // Perform the request and parse the response.
-        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
+        log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
             last_updated > 0 ? "progressive" : "complete", last_updated);
 
         res = curl_easy_perform(session);
@@ -426,7 +426,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     else if (response_code == 404 && !inject_error(props_error_spropfindunkcode)) {
         GError *subgerr = NULL;
         // Tell the callback that the item is gone.
-        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: 410 response, 404.");
+        log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: 410 response, 404.");
         memset(&state.rstate, 0, sizeof(struct response_state));
         state.callback(state.userdata, path, state.rstate.st, 410, &subgerr);
         if (subgerr) {
@@ -435,7 +435,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         }
     }
     else if (response_code == 412 && !inject_error(props_error_spropfindunkcode)) {
-        log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: 412 response, ESTALE.");
+        log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: 412 response, ESTALE.");
         ret = -ESTALE;
         goto finish;
     }
@@ -444,7 +444,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
 
-    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
+    log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
 
 finish:
