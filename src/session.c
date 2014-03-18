@@ -56,16 +56,16 @@ static pthread_key_t session_tsd_key;
 static __thread char nodeaddr[LOGSTRSZ];
 
 // REVIEW: We track connection health thread-by-thread. Ultimately all threads should have a similar view of the health
-// of the system. We use somewhat long timeout values since we are doing this thread-by-thread.
-// -- Whenever a connection is bad, it will be considered bad for 60 seconds. Each time it fails and it has a score,
-// we double the timeout. The maximum is 2 hours.
+// of the system. We use relatively short timeouts since we want fusedav to adjust quickly when the system becomes healthy.
+// -- Whenever a connection is bad, it will be considered bad for 15 seconds. Each time it fails and it has a score,
+// we double the timeout. The maximum is 8 minutes.
 // -- The resolve slist is updated every 2 minutes. When we do, subtract from the timeout of any bad connections the
 // amount of time that has passed since its last error.
 // -- Every time we access the node with a non-zero health status and it succeeds, we halve its timeout.
 // -- When we detect a bad connection, we create a new resolve slist and bounce the handle. We sort the list
 // so that healthy connections are at the top
-static const int health_failure_interval = 60;
-static const int max_health_score = 7200; // 2 hours
+static const int health_failure_interval = 15;
+static const int max_health_score = 480; // 8 minutes
 struct health_status_s {
     char curladdr[IPSTR_SZ]; // Keep track of complete string we pass to curl
     int score;
@@ -91,12 +91,12 @@ struct addr_score_s {
 
 // Should equal the minimum number of nodes in a valhalla cluster.
 // It needs some value to start, but will be adjusted in call to getaddrinfo
-// NB. Currently hard-coded to 2. We want to prevent overwhelming server in
+// NB. Currently hard-coded to 3. We want to prevent overwhelming server in
 // case of sick server nodes.
 // If one node is unresponsive, we will rescramble the resolve list and
 // expect a different node to try the second time. This will clear the thread
 // of continuing to target a bad node.
-int num_filesystem_server_nodes = 2;
+int num_filesystem_server_nodes = 3;
 
 static __thread time_t session_start_time;
 
@@ -191,7 +191,7 @@ static void handle_cleanup(void *s) {
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
 
     // Before we go, make sure we've printed the number of curl accesses we accumulated
-    log_filesystem_nodes("handle_cleanup", CURLE_OK, 0, 0, "no path");
+    log_filesystem_nodes("handle_cleanup", CURLE_OK, 0, -1, "no path");
     // Free the resolve_slist before exiting the session
     curl_slist_free_all(node_status.resolve_slist);
     node_status.resolve_slist = NULL;
@@ -288,7 +288,7 @@ static CURL *session_get_handle(bool new_handle) {
     // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
     // since the hashtable keeps track of the health status of connections causing the reinitialization
 
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_get_handle: node_status = %p", &node_status);
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_get_handle: node_status = %p", &node_status);
     if (node_status.node_hash_table == NULL) {
         node_status.node_hash_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     }
@@ -368,8 +368,8 @@ finish:
 }
 
 static int compare_node_score(const void *x, const void *y) {
-    const struct addr_score_s *a = (const struct addr_score_s *)x;
-    const struct addr_score_s *b = (const struct addr_score_s *)y;
+    const struct addr_score_s *a = (const struct addr_score_s *)*(const struct addr_score_s * const *)x;
+    const struct addr_score_s *b = (const struct addr_score_s *)*(const struct addr_score_s * const *)y;
 
     if (a->score > b->score) return 1;
     else if (a->score > b->score) return -1;
@@ -429,24 +429,24 @@ static struct health_status_s *get_health_status(char *addr, char *curladdr) {
  */
 // cluster_failure_timestamp is the most recent time we detected that all connections to the cluster were in some failed mode
 // Keep this by thread; each thread will have its own view of the cluster health, but should converge
-static __thread time_t cluster_failure_timestamp = 0;
+static __thread time_t failure_timestamp = 0;
 // Backoff time; avoid accessing the cluster for this many seconds
-const int cluster_saint_mode_duration = 10;
+const int saint_mode_duration = 10;
 
-static bool use_cluster_saint_mode(void) {
+bool use_saint_mode(void) {
     struct timespec now;
     bool use_saint;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    use_saint = (cluster_failure_timestamp + cluster_saint_mode_duration >= now.tv_sec);
+    use_saint = (failure_timestamp + saint_mode_duration >= now.tv_sec);
     return use_saint;
 }
 
-static void set_cluster_saint_mode(void) {
+void set_saint_mode(void) {
     struct timespec now;
     log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
-        "Setting saint mode for %lu seconds. fusedav.saint_mode:1|c", cluster_saint_mode_duration);
+        "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
     clock_gettime(CLOCK_MONOTONIC, &now);
-    cluster_failure_timestamp = now.tv_sec;
+    failure_timestamp = now.tv_sec;
 }
 
 /* For reference, keep the different sockaddr structs available for inspection
@@ -662,13 +662,17 @@ static int construct_resolve_slist(CURL *session, bool force) {
         addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
         // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
         // This will update the hashtable entry. It's a pointer, so update will stick
-        status->score -= (time(NULL) - status->timestamp);
-        if (status->score < 0) status->score = 0;
+        if (!force) {
+            status->score -= (time(NULL) - status->timestamp);
+            if (status->score < 0) status->score = 0;
+            log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
+                addr_score[addr_score_idx]->addr, status->score);
+        }
 
         // Save values into sortable array
         strncpy(addr_score[addr_score_idx]->addr, status->curladdr, IPSTR_SZ);
         addr_score[addr_score_idx]->score = status->score;
-        log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d], addr [%s], score [%d]",
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d], addr [%s], score [%d]",
             addr_score_idx, addr_score[addr_score_idx]->addr, addr_score[addr_score_idx]->score);
         ++addr_score_idx;
     }
@@ -680,13 +684,17 @@ static int construct_resolve_slist(CURL *session, bool force) {
     qsort(addr_score, count, sizeof(struct addr_score_s *), compare_node_score);
 
     if (addr_score[0]->score > 0) {
-        // All connections are in some state of bad, so set a timeout for the whole fusedav process
-        set_cluster_saint_mode();
+        // All connections are in some state of bad
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: top entry is non-zero: %s -- %d",
+            addr_score[0]->addr, addr_score[0]->score);
     }
 
     // Count is the number of addresses we processed above
     for (int idx = 0; idx < count; idx++) {
-        log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", addr_score[idx]->addr);
+        if (force) {
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
+                addr_score[idx]->addr, addr_score[idx]->score);
+        }
         node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, addr_score[idx]->addr);
         g_free(addr_score[idx]);
     }
@@ -716,7 +724,10 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 
     // If the whole cluster is sad, avoid access altogether for a given period of time.
     // Calls to this function, on detecting this error, set ENETDOWN, which is appropriate
-    if (use_cluster_saint_mode()) return NULL;
+    if (use_saint_mode()) {
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: already in saint mode");
+        return NULL;
+    }
 
     if (temporary_handle) {
         session = session_get_temp_handle();
@@ -803,8 +814,8 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
         if (health_status->score > 0) health_status->score *= 2;
         else health_status->score = health_failure_interval;
         if (health_status->score > max_health_score) health_status->score = max_health_score;
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: res %lu: %s addr score set to %d",
-            res, addr, health_status->score);
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: response_code %lu: %s addr score set to %d",
+            response_code, addr, health_status->score);
     }
     health_status->timestamp = time(NULL); // Most recent failure
 }
@@ -812,13 +823,14 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
 static void increment_node_success(char *addr) {
     struct health_status_s *health_status = get_health_status(addr, NULL);
     if (health_status->score > 0) {
-        // If the node is in timeout, delete from its score the amount of time which has passed since its more recent failure
-        health_status->score -= (time(NULL) - health_status->timestamp);
         // If score still shows a timeout, halve it
         if (health_status->score > 0) health_status->score /= 2;
+        // If the node is in timeout, delete from its score the amount of time which has passed since its more recent failure
+        health_status->score -= (time(NULL) - health_status->timestamp);
+        health_status->timestamp = time(NULL); // Reset since we just used it
         // Don't let score go negative
         if (health_status->score < 0) health_status->score = 0;
-        log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %d",
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %d",
             addr, health_status->score);
     }
 }
@@ -855,7 +867,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         previous_time = current_time;
         if (nodeaddr_changed) {
             log_print(LOG_INFO, SECTION_ENHANCED,
-                "curl iter %d on path %s -- fusedav.%s.server-%s.attempts:%lu|c",
+                "curl iter %d changed to path %s -- fusedav.%s.server-%s.attempts:%lu|c",
                 iter, path, filesystem_cluster, nodeaddr, 1);
             strncpy(previous_nodeaddr, nodeaddr, LOGSTRSZ);
         }
@@ -889,7 +901,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
         increment_node_success(nodeaddr);
     }
-    else {
+    else if (iter != -1) { // -1 is like a sentinel for when we call this during switch to new handle
         increment_node_success(nodeaddr);
     }
 }

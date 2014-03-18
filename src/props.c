@@ -331,8 +331,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         char *query_string = NULL;
         bool new_resolve_list;
 
-        // If already in saint mode, scramble the list; with each failure, rescramble
-        if (idx == 0) new_resolve_list = use_saint_mode();
+        // Assume all is ok the first round; with each failure, rescramble
+        if (idx == 0) new_resolve_list = false;
         else new_resolve_list = true;
 
         // Set up the request handle.
@@ -369,7 +369,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         slist = curl_slist_append(slist, header);
         slist = curl_slist_append(slist, "Content-Type: text/xml");
 
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: %s", path);
+        slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: %s", path);
 
         free(header);
         header = NULL;
@@ -398,10 +398,9 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
         log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s rc: %lu",
             last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
-        // Go into saint mode. Treat it as a success so that we reuse our current local state.
-        // If file does not currently exist in local cache, get_stat will return ENETDOWN
+        // Go into saint mode.
         set_saint_mode();
-        ret = 0;
+        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed, ENETDOWN", path);
         goto finish;
     }
 

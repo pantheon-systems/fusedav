@@ -30,8 +30,6 @@
 #include "log.h"
 #include "log_sections.h"
 
-#define SAINT_MODE_DURATION 10
-
 // Return value is allocated and must be freed.
 char *path_parent(const char *uri) {
     size_t len = strlen(uri);
@@ -59,37 +57,6 @@ char *path_parent(const char *uri) {
     // Returns everything up to but not including the last slash in the string
     // But if the slash is the first character, return it.
     return strndup(uri, (pnt - uri) + 1);
-}
-
-/* saint mode means:
- * 1. If in saint mode, scramble resolve list we pass to curl to get a connection to a new node
- * 2. If in saint mode, where possible, assume local state is correct.
- * Regarding (2), propfinds should succeed, as should GETs (as if 304).
- */
-// last_failure is used to determine saint_mode.
-// Keep it by thread, so that if one thread goes
-// into saint mode, the others won't think they're
-// in saint mode, too.
-static __thread time_t last_failure = 0;
-
-// saint mode is now a trigger for rescrambling the resolve list
-// unset after use
-bool use_saint_mode(void) {
-    struct timespec now;
-    bool use_saint;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    use_saint = (last_failure + SAINT_MODE_DURATION >= now.tv_sec);
-    // Unset saint mode by putting last_failure far enough in the past to not trigger on use_saint_mode
-    if (use_saint) last_failure -= (SAINT_MODE_DURATION + 1);
-    return use_saint;
-}
-
-void set_saint_mode(void) {
-    struct timespec now;
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
-        "Setting saint mode for %lu seconds. fusedav.saint_mode:1|c", SAINT_MODE_DURATION);
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    last_failure = now.tv_sec;
 }
 
 #if INJECT_ERRORS

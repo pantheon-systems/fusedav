@@ -458,8 +458,8 @@ static void get_fresh_fd(filecache_t *cache,
         struct curl_slist *slist = NULL;
         bool new_resolve_list;
 
-        // If already in saint mode, scramble the list; with each failure, rescramble
-        if (idx == 0) new_resolve_list = use_saint_mode();
+        // Assume all is ok the first round; with each failure, rescramble
+        if (idx == 0) new_resolve_list = false;
         else new_resolve_list = true;
 
         // These will be -1 and [0] = '\0' on idx 0; but subsequent iterations we need to clean up from previous time
@@ -480,7 +480,7 @@ static void get_fresh_fd(filecache_t *cache,
             slist = curl_slist_append(slist, header);
             free(header);
         }
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_OPEN, "get_fresh_id: %s", path);
+        slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "get_fresh_id: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
         // Set an ETag header capture path.
@@ -504,12 +504,6 @@ static void get_fresh_fd(filecache_t *cache,
         res = curl_easy_perform(session);
         if(res == CURLE_OK) {
             curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
-
-        // If we have a network error on an earlier pass, set_saint_mode
-        // and see if we can serve locally on a subsequent path
-        if ((res != CURLE_OK || response_code >= 500)) {
-            set_saint_mode();
         }
 
         log_filesystem_nodes("get_fresh_fd", res, response_code, idx, path);
@@ -746,7 +740,7 @@ finish:
 }
 
 // top-level open call
-void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, GError **gerr) {
+void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, bool grace, GError **gerr) {
     struct filecache_pdata *pdata = NULL;
     struct filecache_sdata *sdata = NULL;
     GError *tmpgerr = NULL;
@@ -757,6 +751,13 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
     BUMP(filecache_open);
 
     log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "filecache_open: %s", path);
+
+    // Don't bother going to server if already in cluster saint mode
+    if (use_saint_mode()) {
+        use_local_copy = true;
+        log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN,
+            "filecache_open: already in saint mode, using local copy: %s", path);
+    }
 
     // Allocate and zero-out a session data structure.
     sdata = calloc(1, sizeof(struct filecache_sdata));
@@ -797,7 +798,8 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling get_fresh_fd on %s", path);
         get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, use_local_copy, &tmpgerr);
         if (tmpgerr) {
-            if (tmpgerr->domain == curl_quark()) {
+            // If we got a network error (curl_quark is a marker) and we are using grace, try again but use the local copy
+            if (tmpgerr->domain == curl_quark() && grace) {
                 log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN,
                     "filecache_open: Retry in saint mode for path %s. Error: %s", path, tmpgerr->message);
                 g_clear_error(&tmpgerr);
@@ -1011,8 +1013,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             goto finish;
         }
 
-        // If already in saint mode, scramble the list; with each failure, rescramble
-        if (idx == 0) new_resolve_list = use_saint_mode();
+        // Assume all is ok the first round; with each failure, rescramble
+        if (idx == 0) new_resolve_list = false;
         else new_resolve_list = true;
 
         session = session_request_init(path, NULL, false, new_resolve_list);
@@ -1022,7 +1024,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         curl_easy_setopt(session, CURLOPT_INFILESIZE, st.st_size);
         curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
 
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
+        slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
         curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
         // Set a header capture path.

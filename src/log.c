@@ -120,18 +120,22 @@ void log_init(unsigned int log_level, const char *log_level_by_section, const ch
  * Include a rest period so if we are in serious error mode, we don't overload the logging system
  */
 static __thread time_t dynamic_logging_start = 0;
-const int dynamic_logging_duration = 10;
+const int dynamic_logging_duration = 20;
 const int dynamic_logging_rest = 60;
 
-static void test_dynamic_logging(void) {
+static bool turning_off_dynamic_logging(void) {
     struct timespec now;
-    bool using_dynamic_logging;
+    bool turn_off_dynamic_logging = false;
+
+    // If we're not currently doing dynamic_logging, there's noting to turn off
+    if (LOG_DYNAMIC == LOG_INFO) return false;
+
     clock_gettime(CLOCK_MONOTONIC, &now);
-    using_dynamic_logging = (dynamic_logging_start + dynamic_logging_duration >= now.tv_sec);
-    if (!using_dynamic_logging) {
+    turn_off_dynamic_logging = (dynamic_logging_start + dynamic_logging_duration < now.tv_sec);
+    if (turn_off_dynamic_logging) {
         LOG_DYNAMIC = LOG_INFO;
-        log_print(LOG_NOTICE, SECTION_LOG_DEFAULT, "revert_dynamic_logging");
     }
+    return turn_off_dynamic_logging;
 }
 
 void set_dynamic_logging(void) {
@@ -139,7 +143,7 @@ void set_dynamic_logging(void) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     if (dynamic_logging_start + dynamic_logging_rest > now.tv_sec) {
         // still in rest period
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+        log_print(LOG_INFO, SECTION_FUSEDAV_DEFAULT,
             "Not setting dynamic_logging, still in rest period");
     }
     else {
@@ -160,9 +164,22 @@ int logging(unsigned int log_level, unsigned int section) {
         local_log_level = section_log_levels[section];
     }
 
-    // Check and see if we're still doing dynamic logging. If so, it will take effect only after this call
-    test_dynamic_logging();
     return log_level <= local_log_level;
+}
+
+static int print_it(const char const *formatwithtid, const char const *msg, int log_level) {
+    int ret;
+    // fusedav-valhalla standardizing on names BINDING, SITE, and ENVIRONMENT
+    ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
+                          "PRIORITY=%d", log_level,
+                          "USER_AGENT=%s", get_user_agent(),
+                          "SITE=%s", log_key_value[BASEURL_FOURTH],
+                          "ENVIRONMENT=%s", log_key_value[BASEURL_SIXTH],
+                          "HOST_ADDRESS=%s", log_key_value[BASEURL_SECOND],
+                          "TID=%lu", syscall(SYS_gettid),
+                          "PACKAGE_VERSION=%s", PACKAGE_VERSION,
+                          NULL);
+    return ret;
 }
 
 #define max_msg_sz 2048
@@ -177,16 +194,16 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
         vsnprintf(msg, max_msg_sz, format, ap);
         asprintf(&formatwithtid, "[tid=%lu] [bid=%s] %s", syscall(SYS_gettid), log_key_value[USER_AGENT_ABBREV], errlevel[log_level]);
         assert(formatwithtid);
-        // fusedav-valhalla standardizing on names BINDING, SITE, and ENVIRONMENT
-        ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
-                              "PRIORITY=%d", log_level,
-                              "USER_AGENT=%s", get_user_agent(),
-                              "SITE=%s", log_key_value[BASEURL_FOURTH],
-                              "ENVIRONMENT=%s", log_key_value[BASEURL_SIXTH],
-                              "HOST_ADDRESS=%s", log_key_value[BASEURL_SECOND],
-                              "TID=%lu", syscall(SYS_gettid),
-                              "PACKAGE_VERSION=%s", PACKAGE_VERSION,
-                              NULL);
+
+        // print the intended message
+        ret = print_it(formatwithtid, msg, log_level);
+
+        // Check and see if we're no longer doing dynamic logging. If so, it will take effect after this call. Then print a message
+        if (turning_off_dynamic_logging()) {
+            strcpy(msg, "revert_dynamic_logging");
+            print_it(formatwithtid, msg, log_level);
+        }
+
         free(formatwithtid);
         va_end(ap);
     }
