@@ -667,7 +667,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
             status->score -= (time(NULL) - status->timestamp);
             if (status->score < 0) status->score = 0;
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
-                addr_score[addr_score_idx]->addr, status->score);
+                status->curladdr, status->score);
             decremented_time = true;
         }
 
