@@ -64,7 +64,7 @@ static __thread char nodeaddr[LOGSTRSZ];
 // -- Every time we access the node with a non-zero health status and it succeeds, we halve its timeout.
 // -- When we detect a bad connection, we create a new resolve slist and bounce the handle. We sort the list
 // so that healthy connections are at the top
-static const int health_failure_interval = 15;
+static const int health_failure_interval = 120;
 static const int max_health_score = 480; // 8 minutes
 struct health_status_s {
     char curladdr[IPSTR_SZ]; // Keep track of complete string we pass to curl
@@ -535,6 +535,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     int addr_score_idx = 0;
     // result from function
     int res = -1;
+    bool decremented_time = false; // Did we decrement time on a bad connection?
     struct addr_score_s *addr_score[MAX_NODES + 1] = {NULL};
     GHashTableIter iter;
     gpointer key, value;
@@ -662,11 +663,12 @@ static int construct_resolve_slist(CURL *session, bool force) {
         addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
         // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
         // This will update the hashtable entry. It's a pointer, so update will stick
-        if (!force) {
+        if (!force && status->score > 0) {
             status->score -= (time(NULL) - status->timestamp);
             if (status->score < 0) status->score = 0;
-            log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
                 addr_score[addr_score_idx]->addr, status->score);
+            decremented_time = true;
         }
 
         // Save values into sortable array
@@ -691,7 +693,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
     // Count is the number of addresses we processed above
     for (int idx = 0; idx < count; idx++) {
-        if (force) {
+        if (force || decremented_time) { // if we've potentially changed the list, let's see the new one
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
                 addr_score[idx]->addr, addr_score[idx]->score);
         }
