@@ -61,12 +61,14 @@ static __thread char nodeaddr[LOGSTRSZ];
 // fall out of rotation again. Since we have a retry mechanism, the operation should succeed on following iterations,
 // so there should be only slight degradation of customer experience. The amount of traffic sent to a degraded node
 // remains small.
+// -- We set a node's score to 2 when it fails. All other nodes in a degraded state will have their score decremented.
+// This helps ensure that the node that failed most recently won't find itself at the top of the list for the next iteration.
 // -- The resolve slist is updated every 2 minutes. When we do, we mark degraded nodes as ready for rotation.
 // -- When we detect a bad connection, we create a new resolve slist and bounce the handle. We sort the list
 // so that healthy connections are at the top
 struct health_status_s {
     char curladdr[IPSTR_SZ]; // Keep track of complete string we pass to curl
-    unsigned int score; // we keep it as an int for easier sorting even though logically it is a bool
+    unsigned int score;
     time_t timestamp;
 };
 
@@ -662,7 +664,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
         // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
         // This will update the hashtable entry. It's a pointer, so update will stick
         if (!force && status->score != 0) {
-            status->score = 0;
+            --status->score;
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
                 status->curladdr, status->score);
             reinserted_into_rotation = true;
@@ -801,12 +803,12 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
     struct health_status_s *health_status = get_health_status(addr, NULL);
     // Currently treat !CURLE_OK and response_code > 500 the same, but leave in structure if we want to treat them differently.
     if (res != CURLE_OK) {
-        health_status->score = 1;
+        health_status->score = 2;
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: !CURLE_OK: %s addr score set to %d",
             addr, health_status->score);
     }
     else if (response_code >= 500) {
-        health_status->score = 1;
+        health_status->score = 2;
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: response_code %lu: %s addr score set to %d",
             response_code, addr, health_status->score);
     }
@@ -816,7 +818,7 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
 static void increment_node_success(char *addr) {
     struct health_status_s *health_status = get_health_status(addr, NULL);
     if (health_status->score > 0) {
-        health_status->score = 0;
+        --health_status->score;
         health_status->timestamp = time(NULL); // Reset since we just used it
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %d",
             addr, health_status->score);
