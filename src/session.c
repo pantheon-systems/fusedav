@@ -56,19 +56,17 @@ static pthread_key_t session_tsd_key;
 static __thread char nodeaddr[LOGSTRSZ];
 
 // REVIEW: We track connection health thread-by-thread. Ultimately all threads should have a similar view of the health
-// of the system. We use relatively short timeouts since we want fusedav to adjust quickly when the system becomes healthy.
-// -- Whenever a connection is bad, it will be considered bad for 15 seconds. Each time it fails and it has a score,
-// we double the timeout. The maximum is 8 minutes.
-// -- The resolve slist is updated every 2 minutes. When we do, subtract from the timeout of any bad connections the
-// amount of time that has passed since its last error.
-// -- Every time we access the node with a non-zero health status and it succeeds, we halve its timeout.
+// of the system. We don't want to take a node out of rotation for long periods of time, so we enter them back into
+// rotation frequently. If a node stays degraded for long periods of time, it will get accessed, and if it fails will
+// fall out of rotation again. Since we have a retry mechanism, the operation should succeed on following iterations,
+// so there should be only slight degradation of customer experience. The amount of traffic sent to a degraded node
+// remains small.
+// -- The resolve slist is updated every 2 minutes. When we do, we mark degraded nodes as ready for rotation.
 // -- When we detect a bad connection, we create a new resolve slist and bounce the handle. We sort the list
 // so that healthy connections are at the top
-static const int health_failure_interval = 120;
-static const int max_health_score = 480; // 8 minutes
 struct health_status_s {
     char curladdr[IPSTR_SZ]; // Keep track of complete string we pass to curl
-    int score;
+    unsigned int score; // we keep it as an int for easier sorting even though logically it is a bool
     time_t timestamp;
 };
 
@@ -86,7 +84,7 @@ static __thread struct node_status_s node_status;
 
 struct addr_score_s {
     char addr[IPSTR_SZ];
-    int score;
+    unsigned int score;
 };
 
 // Should equal the minimum number of nodes in a valhalla cluster.
@@ -535,7 +533,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     int addr_score_idx = 0;
     // result from function
     int res = -1;
-    bool decremented_time = false; // Did we decrement time on a bad connection?
+    bool reinserted_into_rotation = false; // Did we reinsert a previously bad connection back into rotation?
     struct addr_score_s *addr_score[MAX_NODES + 1] = {NULL};
     GHashTableIter iter;
     gpointer key, value;
@@ -663,12 +661,11 @@ static int construct_resolve_slist(CURL *session, bool force) {
         addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
         // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
         // This will update the hashtable entry. It's a pointer, so update will stick
-        if (!force && status->score > 0) {
-            status->score -= (time(NULL) - status->timestamp);
-            if (status->score < 0) status->score = 0;
+        if (!force && status->score != 0) {
+            status->score = 0;
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
                 status->curladdr, status->score);
-            decremented_time = true;
+            reinserted_into_rotation = true;
         }
 
         // Save values into sortable array
@@ -685,7 +682,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // sort the array
     qsort(addr_score, count, sizeof(struct addr_score_s *), compare_node_score);
 
-    if (addr_score[0]->score > 0) {
+    if (addr_score[0]->score != 0) {
         // All connections are in some state of bad
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: top entry is non-zero: %s -- %d",
             addr_score[0]->addr, addr_score[0]->score);
@@ -693,7 +690,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
     // Count is the number of addresses we processed above
     for (int idx = 0; idx < count; idx++) {
-        if (force || decremented_time) { // if we've potentially changed the list, let's see the new one
+        if (force || reinserted_into_rotation) { // if we've potentially changed the list, let's see the new one
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
                 addr_score[idx]->addr, addr_score[idx]->score);
         }
@@ -804,34 +801,23 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
     struct health_status_s *health_status = get_health_status(addr, NULL);
     // Currently treat !CURLE_OK and response_code > 500 the same, but leave in structure if we want to treat them differently.
     if (res != CURLE_OK) {
-        // If connection is already in timeout, double it; otherwise set it to the default interval
-        if (health_status->score > 0) health_status->score *= 2;
-        else health_status->score = health_failure_interval;
-        // Never let timeout exceed max value
-        if (health_status->score > max_health_score) health_status->score = max_health_score;
+        health_status->score = 1;
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: !CURLE_OK: %s addr score set to %d",
             addr, health_status->score);
     }
     else if (response_code >= 500) {
-        if (health_status->score > 0) health_status->score *= 2;
-        else health_status->score = health_failure_interval;
-        if (health_status->score > max_health_score) health_status->score = max_health_score;
+        health_status->score = 1;
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: response_code %lu: %s addr score set to %d",
             response_code, addr, health_status->score);
     }
-    health_status->timestamp = time(NULL); // Most recent failure
+    health_status->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
 }
 
 static void increment_node_success(char *addr) {
     struct health_status_s *health_status = get_health_status(addr, NULL);
     if (health_status->score > 0) {
-        // If score still shows a timeout, halve it
-        if (health_status->score > 0) health_status->score /= 2;
-        // If the node is in timeout, delete from its score the amount of time which has passed since its more recent failure
-        health_status->score -= (time(NULL) - health_status->timestamp);
+        health_status->score = 0;
         health_status->timestamp = time(NULL); // Reset since we just used it
-        // Don't let score go negative
-        if (health_status->score < 0) health_status->score = 0;
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %d",
             addr, health_status->score);
     }
