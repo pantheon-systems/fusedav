@@ -782,7 +782,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_FUSEDAV_FILE, "common_unlink: %s", path);
             if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
+            log_print(LOG_DYNAMIC, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
             res = curl_easy_perform(session);
             if(res == CURLE_OK) {
                 curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
