@@ -29,8 +29,6 @@
 #include <stdbool.h>
 
 char *path_parent(const char *uri);
-bool use_saint_mode(void);
-void set_saint_mode(void);
 
 // For GError
 #ifndef G_DEFINE_QUARK

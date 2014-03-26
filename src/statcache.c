@@ -227,7 +227,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (value == NULL) {
-        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
+        log_print(LOG_DYNAMIC, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
         return NULL;
     }
 
