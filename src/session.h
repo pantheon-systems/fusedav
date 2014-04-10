@@ -38,4 +38,7 @@ void aggregate_log_print_local(unsigned int log_level, unsigned int section, con
     const char *description1, unsigned long *count1, unsigned long value1,
     const char *description2, long *count2, long value2);
 
+void set_saint_mode(void);
+bool use_saint_mode(void);
+
 #endif

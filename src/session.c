@@ -46,25 +46,57 @@
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
 
-// This will be the list of randomized addresses we pass to curl
-// Make it thread-local so each session gets its own.
-// Assuming that session==thread, but that's what we assume for session_tsd_key above
-// Using __thread in preference to pthread_once mechanism; seems simpler and less
-// error-prone
-static __thread struct curl_slist *resolve_slist = NULL;
-
-// Should equal the minimum number of nodes in a valhalla cluster.
-// It needs some value to start, but will be adjusted in call to getaddrinfo
-// NB. Currently hard-coded to 2. We want to prevent overwhelming server in
-// case of sick server nodes.
-// If one node is unresponsive, we will rescramble the resolve list and
-// expect a different node to try the second time. This will clear the thread
-// of continuing to target a bad node.
-int num_filesystem_server_nodes = 2;
+// The string we pass to curl is domain:port:ip:address, so leave room
+#define IPSTR_SZ 128
+// Maximum number of A records (bzw IP addresses) our domain can resolve to
+#define MAX_NODES 32
 
 // Grab the node address out of the curl message and keep track for later logging
 #define LOGSTRSZ 80
 static __thread char nodeaddr[LOGSTRSZ];
+
+// REVIEW: We track connection health thread-by-thread. Ultimately all threads should have a similar view of the health
+// of the system. We don't want to take a node out of rotation for long periods of time, so we enter them back into
+// rotation frequently. If a node stays degraded for long periods of time, it will get accessed, and if it fails will
+// fall out of rotation again. Since we have a retry mechanism, the operation should succeed on following iterations,
+// so there should be only slight degradation of customer experience. The amount of traffic sent to a degraded node
+// remains small.
+// -- We set a node's score to 2 when it fails. All other nodes in a degraded state will have their score decremented.
+// This helps ensure that the node that failed most recently won't find itself at the top of the list for the next iteration.
+// -- The resolve slist is updated every 2 minutes. When we do, we mark degraded nodes as ready for rotation.
+// -- When we detect a bad connection, we create a new resolve slist and bounce the handle. We sort the list
+// so that healthy connections are at the top
+struct health_status_s {
+    char curladdr[IPSTR_SZ]; // Keep track of complete string we pass to curl
+    unsigned int score;
+    time_t timestamp;
+};
+
+// This will be the list of randomized addresses we pass to curl (resolve_slist) and the hashtable of health status
+// Make it thread-local so each session gets its own.
+// Assuming that session==thread, but that's what we assume for session_tsd_key above
+// Using __thread in preference to pthread_once mechanism; seems simpler and less error-prone
+struct node_status_s {
+    struct curl_slist *resolve_slist;
+    // hashtable containing a health_status_s for each node
+    GHashTable *node_hash_table;
+};
+
+static __thread struct node_status_s node_status;
+
+struct addr_score_s {
+    char addr[IPSTR_SZ];
+    unsigned int score;
+};
+
+// Should equal the minimum number of nodes in a valhalla cluster.
+// It needs some value to start, but will be adjusted in call to getaddrinfo
+// NB. Currently hard-coded to 3. We want to prevent overwhelming server in
+// case of sick server nodes.
+// If one node is unresponsive, we will rescramble the resolve list and
+// expect a different node to try the second time. This will clear the thread
+// of continuing to target a bad node.
+int num_filesystem_server_nodes = 3;
 
 static __thread time_t session_start_time;
 
@@ -133,7 +165,8 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
         asprintf(&filesystem_cluster, "unknown");
     }
     uriFreeUriMembersA(&uri);
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: host (%s) :: port (%s) :: cluster (%s)",
+
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_config_init: host (%s) :: port (%s) :: cluster (%s)",
         filesystem_domain, filesystem_port, filesystem_cluster);
 
     return 0;
@@ -145,26 +178,47 @@ void session_config_free(void) {
     free(client_certificate);
 }
 
-static void session_destroy(void *s) {
+// Call handle_cleanup when reinitializing a handle, or called from session_destroy when thread exits
+static void handle_cleanup(void *s) {
     CURL *session = s;
-    // The first log statement will get stripped from logstash because it has the stats designator |c, so log a second one
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-        "Destroying cURL session -- fusedav.%s.sessions:-1|c fusedav.%s.session-duration:%lu|c",
-        filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL session");
 
     assert(s);
+
+    // The first log statement will get stripped from logstash because it has the stats designator |c, so log a second one
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
+        "Destroying cURL handle -- fusedav.%s.sessions:-1|c fusedav.%s.session-duration:%lu|c",
+        filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
+
     // Before we go, make sure we've printed the number of curl accesses we accumulated
-    log_filesystem_nodes("session_destroy", CURLE_OK, 0, 0, "no path");
+    log_filesystem_nodes("handle_cleanup", CURLE_OK, 0, -1, "no path");
     // Free the resolve_slist before exiting the session
-    curl_slist_free_all(resolve_slist);
-    resolve_slist = NULL;
+    curl_slist_free_all(node_status.resolve_slist);
+    node_status.resolve_slist = NULL;
     curl_easy_cleanup(session);
+}
+
+// When a thread exits, we also want to free its hashtable. We don't want to free the hashtable if we are just
+// reinitializing the thread, since we want to keep the health status that causes those reinitializations
+static void session_destroy(void *s) {
+    handle_cleanup(s);
+    g_hash_table_destroy(node_status.node_hash_table);
 }
 
 static void session_tsd_key_init(void) {
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_tsd_key_init()");
     pthread_key_create(&session_tsd_key, session_destroy);
+}
+
+// Modify string in place. Replace dot and colon with underscore for logging stats and graphs
+// Caller must guarantee that the string is just an ipv4 or ipv6 address. If a curl addr (<fileserver>:<port>:<addr>) is sent in,
+// those colons will get wacked. Bad things will happen.
+static char * logstr(char *addr) {
+    char *scanner;
+    for (scanner = addr; *scanner != '\0'; scanner++) {
+        if (*scanner == '.' || *scanner == ':') *scanner = '_';
+    }
+    return addr;
 }
 
 /* We want to use the logging facility key=value to keep track of the
@@ -187,11 +241,9 @@ static void print_ipaddr_pair(char *msg) {
     end = strstr(nodeaddr, "..");
     end[0] = '\0';
     // Change dots in addr to underscore for logging
-    for (end = nodeaddr; *end != '\0'; end++) {
-        if (*end == '.') *end = '_';
-    }
+    logstr(nodeaddr);
     // We print the key=value pair.
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
+    log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -208,6 +260,7 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
                 print_ipaddr_pair(msg);
             }
             else {
+                // TODO Make LOG_DYNAMIC but make sure first it won't overwhelm the system
                 log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
             }
             free(msg);
@@ -224,11 +277,20 @@ static CURL *session_get_handle(bool new_handle) {
     if ((session = pthread_getspecific(session_tsd_key))) {
         if (new_handle) {
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_get_handle: destroying old handle and creating a new one");
-            session_destroy(session);
+            handle_cleanup(session);
         }
         else {
             return session;
         }
+    }
+
+    // create the hash table of node addresses for which we will keep health status
+    // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
+    // since the hashtable keeps track of the health status of connections causing the reinitialization
+
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_get_handle: node_status = %p", &node_status);
+    if (node_status.node_hash_table == NULL) {
+        node_status.node_hash_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     }
 
     // Keep track of start time so we can track how long sessions stay open
@@ -305,6 +367,88 @@ finish:
     return escaped_path;
 }
 
+static int compare_node_score(const void *x, const void *y) {
+    const struct addr_score_s *a = (const struct addr_score_s *)*(const struct addr_score_s * const *)x;
+    const struct addr_score_s *b = (const struct addr_score_s *)*(const struct addr_score_s * const *)y;
+
+    if (a->score > b->score) return 1;
+    else if (a->score > b->score) return -1;
+    else return 0;
+}
+
+/* Arrange the N elements of ARRAY in random order.
+   Only effective if N is much smaller than RAND_MAX;
+   if this may not be the case, use a better random
+   number generator. */
+static void randomize(void *array[], int n) {
+    struct timespec ts;
+    // Randomize!
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    srand(ts.tv_nsec * ts.tv_sec);
+
+    if (n > 1) {
+        for (int idx = 0; idx < n - 1; idx++) {
+          int jdx = idx + rand() / (RAND_MAX / (n - idx) + 1);
+          void *t = array[jdx];
+          array[jdx] = array[idx];
+          array[idx] = t;
+        }
+    }
+}
+
+static struct health_status_s *get_health_status(char *addr, char *curladdr) {
+    struct health_status_s *health_status = NULL;
+    if (g_hash_table_contains(node_status.node_hash_table, addr)) {
+        health_status = g_hash_table_lookup(node_status.node_hash_table, addr);
+        if (curladdr && health_status->curladdr[0] == '\0') {
+            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
+            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "get_health_status: existing entry didn't have curladdr %s", addr);
+        }
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "get_health_status: reusing entry for %s", addr);
+    }
+    else {
+        health_status = g_new(struct health_status_s, 1);
+        health_status->score = 0;
+        health_status->timestamp = 0;
+        if (curladdr) {
+            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
+        }
+        else {
+            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "get_health_status: new entry doesn't have curladdr %s", addr);
+        }
+        g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
+        log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "get_health_status: creating new entry for %s", addr);
+    }
+    return health_status;
+}
+
+/* cluster saint mode means:
+ * 1. If in cluster saint mode, back off accessing the cluster for a given period of time
+ * 2. If in cluster saint mode, where possible, assume local state is correct.
+ * Regarding (2), propfinds should succeed, as should GETs (as if 304).
+ */
+// cluster_failure_timestamp is the most recent time we detected that all connections to the cluster were in some failed mode
+// Keep this by thread; each thread will have its own view of the cluster health, but should converge
+static __thread time_t failure_timestamp = 0;
+// Backoff time; avoid accessing the cluster for this many seconds
+const int saint_mode_duration = 10;
+
+bool use_saint_mode(void) {
+    struct timespec now;
+    bool use_saint;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    use_saint = (failure_timestamp + saint_mode_duration >= now.tv_sec);
+    return use_saint;
+}
+
+void set_saint_mode(void) {
+    struct timespec now;
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+        "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    failure_timestamp = now.tv_sec;
+}
+
 /* For reference, keep the different sockaddr structs available for inspection
  *
  * struct addrinfo {
@@ -370,19 +514,7 @@ finish:
  * We do this by calling getaddrinfo ourselves, then randomizing the list.
  */
 
-// The string we pass to curl is domain:port:ip:address, so leave room
-#define IPSTR_SZ 128
-// Maximum number of A records (bzw IP addresses) our domain can resolve to
-#define MAX_NODES 32
-
 static int construct_resolve_slist(CURL *session, bool force) {
-    // This will hold the ip addresses in the order they get returned from gethostaddr; later to be randomized
-    // for resolve_slist.
-    char *prelist[MAX_NODES + 1] = {NULL};
-    char *sortedlist[MAX_NODES + 1] = {NULL}; // Mostly for debugging
-    char *broken_connection_str = NULL;
-    char *current_connection = NULL;
-    char log_str[4096] = {'\0'}; // Hold up to MAX_NODES curl ip entries (domain plus numeric ip)
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
@@ -393,32 +525,39 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // timeout interval in seconds
     // If this interval has passed, we recreate the list. Within this interval,
     // we reuse the current list.
-    const time_t resolve_slist_timeout = 30;
+    const time_t resolve_slist_timeout = 120; // REVIEW: do we have a good value for this?
     // Keep a timer; at periodic intervals we reset the resolve_slist.
     // static so it persists between calls
     static __thread time_t prevtime = 0;
     time_t curtime;
     // number of ip addresses returned from getaddrinfo
     int count = 0;
+    int addr_score_idx = 0;
     // result from function
     int res = -1;
-    // For srand
-    struct timespec ts;
+    bool reinserted_into_rotation = false; // Did we reinsert a previously bad connection back into rotation?
+    struct addr_score_s *addr_score[MAX_NODES + 1] = {NULL};
+    GHashTableIter iter;
+    gpointer key, value;
 
     // If the list is still young, just return. The current list is still valid
     curtime = time(NULL);
-    if (!force && resolve_slist && (curtime - prevtime < resolve_slist_timeout)) {
+
+    if (!force && node_status.resolve_slist && (curtime - prevtime < resolve_slist_timeout)) {
         res = 0; // Not an error
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: timeout has not elapsed; return with current slist (%p)", resolve_slist);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT,
+            "construct_resolve_slist: timeout has not elapsed; return with current slist (%p)", node_status.resolve_slist);
         // goto finish so we can still set CURLOPT_RESOLVE; otherwise libcurl will do its default thing
         goto finish;
     }
+
     // Ready for the next invocation.
     prevtime = curtime;
 
     // Free the current list
-    curl_slist_free_all(resolve_slist);
-    resolve_slist = NULL;
+    curl_slist_free_all(node_status.resolve_slist);
+    node_status.resolve_slist = NULL;
+
     // Turn hints off
     memset(&hints, 0, sizeof(struct addrinfo));
     // By setting ai_family to 0, we allow both IPv4 and IPv6
@@ -497,85 +636,69 @@ static int construct_resolve_slist(CURL *session, bool force) {
 
         strcat(ipstr, ipaddr);
 
-        // If force, we assume the current connection is bad and we want to move it to the bottom of the list.
-        // Set current connnection.
-        if (force) {
-            if (current_connection == NULL) {
-                current_connection = calloc(IPSTR_SZ, 1);
-                strncpy(current_connection, nodeaddr, strlen(nodeaddr));
-                // nodeaddr has had its dots overwritten with underscores for logging. Put the dots back
-                for (char *end = current_connection; *end != '\0'; end++) {
-                    if (*end == '_') *end = '.';
-                }
-            }
-            // If the ipaddr we just processed is the same as the current connection, store it in broken connection
-            // We will put it at the bottom of the list later
-            // ipaddr is the address part of the string; ipstr is the complete string with domain
-            // If we find the bad ipaddr, it's the ipstr we want to keep track of to put at the bottom of the list
-            if (!strcmp(current_connection, ipaddr)) {
-                broken_connection_str = ipstr;
-                log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-                    "construct_resolve_slist: broken_connection_string is %s", broken_connection_str);
-            }
-            else {
-                prelist[count] = ipstr;
-                ++count;
-            }
-        }
-        // Store the string in our "pre" list. It will be in sorted order. We randomize later
-        else {
-            prelist[count] = ipstr;
-            ++count;
-        }
+        // Check if ipstr is in hashtable, or put it there. Function returns the struct, but throw it away.
+        get_health_status(logstr(ipaddr), ipstr);
+        // ipstr gets strdup'ed before being made the hashtable key, so free it here
+        free(ipstr);
+
+        ++count;
     }
 
-    // Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
+    // TODO Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
     // returned by getaddrinfo, but are afraid that will cause too much load if the cluster is having difficulties
     // if (count > num_filesystem_server_nodes) num_filesystem_server_nodes = count;
 
-    // Randomize!
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    srand(ts.tv_nsec * ts.tv_sec);
+    // TODO What if we lose a node, getaddrinfo doesn't return something we already have in our list
+
+    // Prepare a sortable array
+    g_hash_table_iter_init (&iter, node_status.node_hash_table);
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: hash_table [%p], iter [%p]",
+        node_status.node_hash_table, iter);
+
+    addr_score_idx = 0;
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        struct health_status_s *status = (struct health_status_s *)value;
+
+        // We need to sort on health score, but use the addr name.
+        addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
+        // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
+        // This will update the hashtable entry. It's a pointer, so update will stick
+        if (!force && status->score != 0) {
+            --status->score;
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
+                status->curladdr, status->score);
+            reinserted_into_rotation = true;
+        }
+
+        // Save values into sortable array
+        strncpy(addr_score[addr_score_idx]->addr, status->curladdr, IPSTR_SZ);
+        addr_score[addr_score_idx]->score = status->score;
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d], addr [%s], score [%d]",
+            addr_score_idx, addr_score[addr_score_idx]->addr, addr_score[addr_score_idx]->score);
+        ++addr_score_idx;
+    }
+
+    // Randomize first; then sort and expect that the order of items with the same score (think '0') stays randomized
+    randomize((void *)addr_score, count);
+
+    // sort the array
+    qsort(addr_score, count, sizeof(struct addr_score_s *), compare_node_score);
+
+    if (addr_score[0]->score != 0) {
+        // All connections are in some state of bad
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: top entry is non-zero: %s -- %d",
+            addr_score[0]->addr, addr_score[0]->score);
+    }
 
     // Count is the number of addresses we processed above
     for (int idx = 0; idx < count; idx++) {
-        // The random one we will take
-        int pick;
-        pick = rand() % (count - idx);
-
-        resolve_slist = curl_slist_append(resolve_slist, prelist[pick]);
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", prelist[pick]);
-        // fill in the gap for the item just removed.
-        sortedlist[idx] = prelist[pick];
-        // REVIEW: clang says:
-        // session.c:544:51: warning: Potential memory leak
-        //   for (int jdx = pick; jdx < (count - idx); jdx++) {
-        //                                             ^~~
-        for (int jdx = pick; jdx < (count - idx); jdx++) {
-            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: (%d %d) %d <- %d %s", count, idx, jdx, jdx + 1, prelist[jdx + 1]);
-            prelist[jdx] = prelist[jdx + 1];
+        if (force || reinserted_into_rotation) { // if we've potentially changed the list, let's see the new one
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
+                addr_score[idx]->addr, addr_score[idx]->score);
         }
+        node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, addr_score[idx]->addr);
+        g_free(addr_score[idx]);
     }
-
-    if (broken_connection_str) {
-        resolve_slist = curl_slist_append(resolve_slist, broken_connection_str);
-        sortedlist[count] = broken_connection_str;
-        ++count; // count was not incremented when we detected broken connection, so increment here so we know final count
-    }
-
-    for (int idx = 0; idx < count; idx++) {
-        if (logging(LOG_DEBUG, SECTION_SESSION_DEFAULT)) {
-            char *end;
-            end = strrchr(sortedlist[idx], ':');
-            if (end) {
-                ++end;
-                strcat(log_str, end);
-                strcat(log_str, " -- ");
-            }
-        }
-        free(sortedlist[idx]);
-    }
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s", log_str);
 
     // If we got here, we are golden!
     res = 0;
@@ -587,10 +710,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // on its own, and return the unsorted, unbalanced, first entry.
 
     finish:
-    free(current_connection);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: Sending resolve_slist (%p) to curl",
-        resolve_slist);
-    curl_easy_setopt(session, CURLOPT_RESOLVE, resolve_slist);
+        node_status.resolve_slist);
+    curl_easy_setopt(session, CURLOPT_RESOLVE, node_status.resolve_slist);
 
     return res;
 }
@@ -600,6 +722,13 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     char *full_url = NULL;
     char *escaped_path;
     int error;
+
+    // If the whole cluster is sad, avoid access altogether for a given period of time.
+    // Calls to this function, on detecting this error, set ENETDOWN, which is appropriate
+    if (use_saint_mode()) {
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: already in saint mode");
+        return NULL;
+    }
 
     if (temporary_handle) {
         session = session_get_temp_handle();
@@ -670,15 +799,43 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     return session;
 }
 
+static void increment_node_failure(char *addr, const CURLcode res, const long response_code) {
+    struct health_status_s *health_status = get_health_status(addr, NULL);
+    // Currently treat !CURLE_OK and response_code > 500 the same, but leave in structure if we want to treat them differently.
+    if (res != CURLE_OK) {
+        health_status->score = 2;
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: !CURLE_OK: %s addr score set to %d",
+            addr, health_status->score);
+    }
+    else if (response_code >= 500) {
+        health_status->score = 2;
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: response_code %lu: %s addr score set to %d",
+            response_code, addr, health_status->score);
+    }
+    health_status->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
+}
+
+static void increment_node_success(char *addr) {
+    struct health_status_s *health_status = get_health_status(addr, NULL);
+    if (health_status->score > 0) {
+        --health_status->score;
+        health_status->timestamp = time(NULL); // Reset since we just used it
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %d",
+            addr, health_status->score);
+    }
+}
+
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path) {
     static __thread unsigned long count = 0;
     static __thread time_t previous_time = 0;
+    static __thread char previous_nodeaddr[LOGSTRSZ];
     // Print every 100th access
     const unsigned long count_trigger = 1000;
     // Print every 60th second
     const time_t time_trigger = 60;
     time_t current_time;
     bool print_it;
+    int nodeaddr_changed;
 
     ++count;
     // Track curl accesses to this filesystem node
@@ -688,12 +845,22 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
     current_time = time(NULL);
     // Always print the first one. Then print if our interval has expired
     print_it = (previous_time == 0) || (current_time - previous_time >= time_trigger);
+    // If this is the very first call, initialize previous to current
+    if (previous_nodeaddr[0] == '\0') strncpy(previous_nodeaddr, nodeaddr, LOGSTRSZ);
+    nodeaddr_changed = strncmp(nodeaddr, previous_nodeaddr, LOGSTRSZ);
     // Also print if we have exceeded count
-    if (print_it || count >= count_trigger) {
+    if (print_it || count >= count_trigger || nodeaddr_changed) {
+        if (nodeaddr_changed) --count; // Print for previous node, which doesn't include this call, then for this call
         log_print(LOG_INFO, SECTION_ENHANCED,
-            "curl iter %d on path %s -- fusedav.%s.server-%s.attempts:%lu|c", iter, path, filesystem_cluster, nodeaddr, count);
+            "curl iter %d on path %s -- fusedav.%s.server-%s.attempts:%lu|c", iter, path, filesystem_cluster, previous_nodeaddr, count);
         count = 0;
         previous_time = current_time;
+        if (nodeaddr_changed) {
+            log_print(LOG_INFO, SECTION_ENHANCED,
+                "curl iter %d changed to path %s -- fusedav.%s.server-%s.attempts:%lu|c",
+                iter, path, filesystem_cluster, nodeaddr, 1);
+            strncpy(previous_nodeaddr, nodeaddr, LOGSTRSZ);
+        }
     }
 
     if (res != CURLE_OK) {
@@ -704,6 +871,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures",
             fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
+        increment_node_failure(nodeaddr, res, response_code);
     }
     else if (response_code >= 500) {
         // Track errors
@@ -713,6 +881,7 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
         log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures",
             fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
+        increment_node_failure(nodeaddr, res, response_code);
     }
     // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
     else if (iter > 0) {
@@ -720,6 +889,10 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries:1|c", fcn_name, iter, path, filesystem_cluster, nodeaddr);
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
+        increment_node_success(nodeaddr);
+    }
+    else if (iter != -1) { // -1 is like a sentinel for when we call this during switch to new handle
+        increment_node_success(nodeaddr);
     }
 }
 
