@@ -983,7 +983,6 @@ static int dav_mkdir(const char *path, mode_t mode) {
     return 0;
 }
 
-// REVIEW! JERRY! Check that this wasn't broken
 static int dav_rename(const char *from, const char *to) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
@@ -1014,7 +1013,6 @@ static int dav_rename(const char *from, const char *to) {
         from = fn;
     }
 
-    // JB See below about silent failures
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
@@ -1066,16 +1064,21 @@ static int dav_rename(const char *from, const char *to) {
      *                 mv 'from' to 'to', delete 'from'
      * fails, not 404: error, exit
      */
-    if (response_code == 404) {
-        // We allow silent failures because we might have done a rename before the
-        // file ever made it to the server
-        log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with 404, recoverable: %s", curl_easy_strerror(res));
-        // Allow the error code -EIO to percolate down, we need to pass the local move
-    }
-
     if(res != CURLE_OK || response_code >= 500) {
         log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed: %s", curl_easy_strerror(res));
         goto finish;
+    }
+    else if (response_code >= 400) {
+        if (response_code == 404) {
+            // We allow silent failures because we might have done a rename before the
+            // file ever made it to the server
+            log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with 404, recoverable");
+            // Allow the error code -EIO to percolate down, we need to pass the local move
+        }
+        else {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with %d", response_code);
+            goto finish;
+        }
     }
     else {
         server_ret = 0;
