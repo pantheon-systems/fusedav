@@ -148,12 +148,13 @@ log_level=5
 log_level_by_section=0
 log_prefix=6f7a106722f74cc7bd96d4d06785ed78
 max_file_size=256
+maintenance_mode=false
 */
 
 // Note for future generations; as currently set up, inject error won't start until
 // after this function is called, so the inject_error routines will never fire even
 // if inject error is turned on
-    
+
 
 static void parse_configs(struct fusedav_config *config, GError **gerr) {
 
@@ -177,6 +178,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, progressive_propfind, BOOL),
         keytuple(fusedav, refresh_dir_for_file_stat, BOOL),
         keytuple(fusedav, grace, BOOL),
+        keytuple(fusedav, maintenance_mode, BOOL),
         keytuple(fusedav, cache_uri, STRING),
         keytuple(fusedav, ca_certificate, STRING),
         keytuple(fusedav, client_certificate, STRING),
@@ -277,7 +279,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     config->nodaemon = false;
     config->max_file_size = 256; // 256M
     config->log_level = 5; // default log_level: LOG_NOTICE
-    
+
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "configure_fusedav: FUSE could not parse options.");
