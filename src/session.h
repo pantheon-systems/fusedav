@@ -25,7 +25,7 @@
 extern int num_filesystem_server_nodes;
 
 int session_config_init(char *base, char *ca_cert, char *client_cert);
-CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist);
+CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist, bool maintenance_mode);
 void session_config_free(void);
 const char *get_base_url(void);
 char *escape_except_slashes(CURL *session, const char *path);
@@ -39,6 +39,6 @@ void aggregate_log_print_local(unsigned int log_level, unsigned int section, con
     const char *description2, long *count2, long value2);
 
 void set_saint_mode(void);
-bool use_saint_mode(void);
+bool use_saint_mode(bool maintenance_mode);
 
 #endif
