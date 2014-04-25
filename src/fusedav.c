@@ -208,8 +208,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 if (idx == 0) new_resolve_list = false;
                 else new_resolve_list = true;
 
-                if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) ||
-                    inject_error(fusedav_error_propfindsession)) {
+                if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
                     return;
                 }
