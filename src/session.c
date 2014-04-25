@@ -433,10 +433,9 @@ static __thread time_t failure_timestamp = 0;
 // Backoff time; avoid accessing the cluster for this many seconds
 const int saint_mode_duration = 10;
 
-bool use_saint_mode(bool maintenance_mode) {
+bool use_saint_mode(void) {
     struct timespec now;
     bool use_saint;
-    if (maintenance_mode) return true;
     clock_gettime(CLOCK_MONOTONIC, &now);
     use_saint = (failure_timestamp + saint_mode_duration >= now.tv_sec);
     return use_saint;
@@ -718,8 +717,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     return res;
 }
 
-CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist,
-    bool maintenance_mode) {
+CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
@@ -727,7 +725,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 
     // If the whole cluster is sad, avoid access altogether for a given period of time.
     // Calls to this function, on detecting this error, set ENETDOWN, which is appropriate
-    if (use_saint_mode(maintenance_mode)) {
+    if (use_saint_mode()) {
         log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: already in saint mode");
         return NULL;
     }

@@ -309,7 +309,7 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     return real_size;
 }
 
-int simple_propfind(const char *path, size_t depth, time_t last_updated, bool maintenance_mode, props_result_callback results,
+int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
         void *userdata, GError **gerr) {
     static __thread unsigned long count = 0;
     static __thread time_t previous_time = 0;
@@ -339,7 +339,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, bool ma
         if (last_updated > 0) {
             asprintf(&query_string, "changes_since=%lu", last_updated);
         }
-        session = session_request_init(path, query_string, false, new_resolve_list, maintenance_mode);
+        session = session_request_init(path, query_string, false, new_resolve_list);
         if (!session || inject_error(props_error_spropfindsession)) {
             g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
             free(query_string);

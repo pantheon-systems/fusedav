@@ -96,7 +96,6 @@ static int simple_propfind_with_redirect(
         const char *path,
         int depth,
         time_t last_updated,
-        bool maintenance_mode,
         props_result_callback result_callback,
         void *userdata,
         GError **gerr) {
@@ -106,7 +105,7 @@ static int simple_propfind_with_redirect(
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
 
-    ret = simple_propfind(path, depth, last_updated, maintenance_mode, result_callback, userdata, &subgerr);
+    ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
     if (subgerr) {
         g_propagate_prefixed_error(gerr, subgerr, "simple_propfind_with_redirect: ");
         return ret;
@@ -209,8 +208,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 if (idx == 0) new_resolve_list = false;
                 else new_resolve_list = true;
 
-                if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list, config->maintenance_mode)) ||
-                    inject_error(fusedav_error_propfindsession)) {
+                if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
                     return;
                 }
@@ -309,7 +307,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         }
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
 
-        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW, config->maintenance_mode,
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW,
             getdir_propfind_callback, NULL, &tmpgerr);
         // On true error, we set an error and return, avoiding the complete PROPFIND.
         // On sucess we avoid the complete PROPFIND
@@ -343,7 +341,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
         // min_generation gets value here
         min_generation = stat_cache_get_local_generation();
         // getdir_propfind_callback calls stat_cache_value_set, which makes local_generation one higher than min_generation
-        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, config->maintenance_mode, getdir_propfind_callback, NULL, &tmpgerr);
+        propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL, &tmpgerr);
         BUMP(propfind_complete_cache);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -521,7 +519,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
 
 }
 
-static void get_stat(const char *path, struct stat *stbuf, bool maintenance_mode, GError **gerr) {
+static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char *parent_path = NULL;
     GError *tmpgerr = NULL;
@@ -554,7 +552,7 @@ static void get_stat(const char *path, struct stat *stbuf, bool maintenance_mode
         return;
     }
 
-    if (config->grace && use_saint_mode(config->maintenance_mode)) {
+    if (config->grace && use_saint_mode()) {
         log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "get_stat: Using saint mode on %s", path);
         skip_freshness_check = SAINT_MODE;
     }
@@ -580,7 +578,7 @@ static void get_stat(const char *path, struct stat *stbuf, bool maintenance_mode
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
         GError *subgerr = NULL;
         log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
-        ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, maintenance_mode, getattr_propfind_callback, NULL, &subgerr);
+        ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL, &subgerr);
         if (subgerr) {
             // Delete from cache on error; ignore errors from stat_cache_delete since we already have one
             g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
@@ -660,13 +658,12 @@ finish:
 }
 
 static void common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info, GError **gerr) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
-        get_stat(path, stbuf, config->maintenance_mode, &tmpgerr);
+        get_stat(path, stbuf, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "common_getattr: ");
             return;
@@ -750,7 +747,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     GError *gerr2 = NULL;
     GError *gerr3 = NULL;
 
-    get_stat(path, &st, config->maintenance_mode, &gerr2);
+    get_stat(path, &st, &gerr2);
     if (gerr2) {
         g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
         return;
@@ -775,7 +772,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             else new_resolve_list = true;
 
             slist = NULL;
-            if (!(session = session_request_init(path, NULL, false, new_resolve_list, config->maintenance_mode)) || inject_error(fusedav_error_cunlinksession)) {
+            if (!(session = session_request_init(path, NULL, false, new_resolve_list)) || inject_error(fusedav_error_cunlinksession)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
                 return;
             }
@@ -852,7 +849,7 @@ static int dav_rmdir(const char *path) {
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_rmdir(%s)", path);
 
-    get_stat(path, &st, config->maintenance_mode, &gerr);
+    get_stat(path, &st, &gerr);
     if (gerr) {
         return processed_gerror("dav_rmdir: ", path, &gerr);
     }
@@ -886,7 +883,7 @@ static int dav_rmdir(const char *path) {
 
         slist = NULL;
 
-        if (!(session = session_request_init(fn, NULL, false, new_resolve_list, config->maintenance_mode))) {
+        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
             log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
             return -ENETDOWN;
         }
@@ -953,7 +950,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
         slist = NULL;
 
-        if (!(session = session_request_init(fn, NULL, false, new_resolve_list, config->maintenance_mode))) {
+        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
             return -ENETDOWN;
         }
@@ -1014,7 +1011,7 @@ static int dav_rename(const char *from, const char *to) {
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_rename(%s, %s)", from, to);
 
-    get_stat(from, &st, config->maintenance_mode, &gerr);
+    get_stat(from, &st, &gerr);
     if (gerr) {
         server_ret = processed_gerror("dav_rmdir: ", from, &gerr);
         goto finish;
@@ -1038,7 +1035,7 @@ static int dav_rename(const char *from, const char *to) {
 
         slist = NULL;
 
-        if (!(session = session_request_init(from, NULL, false, new_resolve_list, config->maintenance_mode))) {
+        if (!(session = session_request_init(from, NULL, false, new_resolve_list))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
             goto finish;
         }
@@ -1165,7 +1162,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     // We still need to close the file.
 
     if (path != NULL) {
-        bool wrote_data = filecache_sync(config->cache, path, info, true, config->maintenance_mode, &gerr);
+        bool wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
 
         // If we didn't write data, we either got an error, which we handle below, or there is no error,
         // so just fall through (not writable, not modified are examples)
@@ -1280,7 +1277,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     // If path is NULL because we are accessing a bare file descriptor,
     // let filecache_sync handle it since we need to get the file
     // descriptor there
-    wrote_data = filecache_sync(config->cache, path, info, true, config->maintenance_mode, &gerr);
+    wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
     if (gerr) {
         return processed_gerror("dav_fsync: ", path, &gerr);
     }
@@ -1316,7 +1313,7 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
         struct stat_cache_value value;
         memset(&value, 0, sizeof(struct stat_cache_value));
 
-        wrote_data = filecache_sync(config->cache, path, info, true, config->maintenance_mode, &gerr);
+        wrote_data = filecache_sync(config->cache, path, info, true, &gerr);
         if (gerr) {
             return processed_gerror("dav_flush: ", path, &gerr);
         }
@@ -1369,7 +1366,7 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
 
     assert(info);
 
-    filecache_open(config->cache_path, config->cache, path, info, config->grace, config->maintenance_mode, &tmpgerr);
+    filecache_open(config->cache_path, config->cache, path, info, config->grace, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
         return;
@@ -1497,7 +1494,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 
     if (path != NULL) {
         int fd;
-        filecache_sync(config->cache, path, info, false, config->maintenance_mode, &gerr);
+        filecache_sync(config->cache, path, info, false, &gerr);
         if (gerr) {
             return processed_gerror("dav_write: ", path, &gerr);
         }
@@ -1547,7 +1544,7 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     }
 
     // Let sync handle a NULL path
-    filecache_sync(config->cache, path, info, false, config->maintenance_mode, &gerr);
+    filecache_sync(config->cache, path, info, false, &gerr);
     if (gerr) {
         return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
@@ -1634,7 +1631,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
 
     // @TODO: Perform a chmod here based on mode.
 
-    filecache_sync(config->cache, path, info, false, config->maintenance_mode, &gerr);
+    filecache_sync(config->cache, path, info, false, &gerr);
     if (gerr) {
         return processed_gerror("dav_create: ", path, &gerr);
     }
