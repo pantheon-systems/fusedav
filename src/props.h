@@ -19,11 +19,13 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
+#include <glib.h>
+
 #define PROPFIND_DEPTH_ZERO 0
 #define PROPFIND_DEPTH_ONE 1
 #define PROPFIND_DEPTH_INFINITY 2
 
-typedef void (*props_result_callback)(void *userdata, const char *href, struct stat st, unsigned long status_code);
-int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results, void *userdata);
+typedef void (*props_result_callback)(void *userdata, const char *href, struct stat st, unsigned long status_code, GError **gerr);
+int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results, void *userdata, GError **gerr);
 
 #endif

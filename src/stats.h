@@ -19,11 +19,7 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
-// REVIEW: do we want to put all stats in one struct? Or let each file (fusedav.c,
-// filecache.c, statcache.c) define its own?
-// I would prefer: limit fusedav.c, filecache.c, and statcache.c to fusedav,
-// filecache, statcache core activities; and do other things like inject_error,
-// stats, etc in separate files, like this.
+#include <stdbool.h>
 
 struct statistics {
     unsigned dav_chmod;
@@ -46,6 +42,10 @@ struct statistics {
     unsigned dav_utimens;
     unsigned dav_write;
 
+    unsigned propfind_negative_cache;
+    unsigned propfind_progressive_cache;
+    unsigned propfind_complete_cache;
+
     unsigned filecache_cache_file;
     unsigned filecache_pdata_set;
     unsigned filecache_create_file;
@@ -63,9 +63,36 @@ struct statistics {
     unsigned filecache_orphans;
     unsigned filecache_cleanup;
     unsigned filecache_get_fd;
+    unsigned filecache_set_error;
+    unsigned filecache_forensic_haven;
     unsigned filecache_init;
     unsigned filecache_path2key;
     unsigned filecache_key2path;
+    unsigned filecache_get_304_count;
+    unsigned filecache_get_xxsm_timing;
+    unsigned filecache_get_xxsm_count;
+    unsigned filecache_get_xsm_timing;
+    unsigned filecache_get_xsm_count;
+    unsigned filecache_get_sm_timing;
+    unsigned filecache_get_sm_count;
+    unsigned filecache_get_med_timing;
+    unsigned filecache_get_med_count;
+    unsigned filecache_get_lg_timing;
+    unsigned filecache_get_lg_count;
+    unsigned filecache_get_xlg_timing;
+    unsigned filecache_get_xlg_count;
+    unsigned filecache_put_xxsm_timing;
+    unsigned filecache_put_xxsm_count;
+    unsigned filecache_put_xsm_timing;
+    unsigned filecache_put_xsm_count;
+    unsigned filecache_put_sm_timing;
+    unsigned filecache_put_sm_count;
+    unsigned filecache_put_med_timing;
+    unsigned filecache_put_med_count;
+    unsigned filecache_put_lg_timing;
+    unsigned filecache_put_lg_count;
+    unsigned filecache_put_xlg_timing;
+    unsigned filecache_put_xlg_count;
 
     unsigned statcache_local_gen;
     unsigned statcache_path2key;
@@ -90,9 +117,13 @@ struct statistics {
 
 extern struct statistics stats;
 
+#define TIMING(op, timing) __sync_fetch_and_add(&stats.op, (timing))
 #define BUMP(op) __sync_fetch_and_add(&stats.op, 1)
 #define FETCH(c) __sync_fetch_and_or(&stats.c, 0)
+#define CLEAR(c) __sync_fetch_and_and(&stats.c, 0)
 
 void print_stats(void);
+void dump_stats(bool log, const char *cache_path);
+void binding_busyness_stats(void);
 
 #endif
