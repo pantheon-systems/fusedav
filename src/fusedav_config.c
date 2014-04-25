@@ -148,7 +148,6 @@ log_level=5
 log_level_by_section=0
 log_prefix=6f7a106722f74cc7bd96d4d06785ed78
 max_file_size=256
-maintenance_mode=false
 */
 
 // Note for future generations; as currently set up, inject error won't start until
@@ -178,7 +177,6 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, progressive_propfind, BOOL),
         keytuple(fusedav, refresh_dir_for_file_stat, BOOL),
         keytuple(fusedav, grace, BOOL),
-        keytuple(fusedav, maintenance_mode, BOOL),
         keytuple(fusedav, cache_uri, STRING),
         keytuple(fusedav, ca_certificate, STRING),
         keytuple(fusedav, client_certificate, STRING),

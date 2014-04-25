@@ -352,7 +352,7 @@ static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *u
 // Get a file descriptor pointing to the latest full copy of the file.
 static void get_fresh_fd(filecache_t *cache,
         const char *cache_path, const char *path, struct filecache_sdata *sdata,
-        struct filecache_pdata **pdatap, int flags, bool use_local_copy, bool maintenance_mode, GError **gerr) {
+        struct filecache_pdata **pdatap, int flags, bool use_local_copy, GError **gerr) {
     GError *tmpgerr = NULL;
     struct filecache_pdata *pdata;
     char etag[ETAG_MAX];
@@ -466,7 +466,7 @@ static void get_fresh_fd(filecache_t *cache,
         if (response_fd >= 0) close(response_fd);
         if (response_filename[0] != '\0') unlink(response_filename);
 
-        session = session_request_init(path, NULL, false, new_resolve_list, maintenance_mode);
+        session = session_request_init(path, NULL, false, new_resolve_list);
         if (!session || inject_error(filecache_error_freshsession)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET");
             goto finish;
@@ -740,8 +740,7 @@ finish:
 }
 
 // top-level open call
-void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, bool grace,
-    bool maintenance_mode, GError **gerr) {
+void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, bool grace, GError **gerr) {
     struct filecache_pdata *pdata = NULL;
     struct filecache_sdata *sdata = NULL;
     GError *tmpgerr = NULL;
@@ -754,7 +753,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
     log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN, "filecache_open: %s", path);
 
     // Don't bother going to server if already in cluster saint mode
-    if (use_saint_mode(maintenance_mode)) {
+    if (use_saint_mode()) {
         use_local_copy = true;
         log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN,
             "filecache_open: already in saint mode, using local copy: %s", path);
@@ -797,7 +796,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
 
         // Get a file descriptor pointing to a guaranteed-fresh file.
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling get_fresh_fd on %s", path);
-        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, use_local_copy, maintenance_mode, &tmpgerr);
+        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, use_local_copy, &tmpgerr);
         if (tmpgerr) {
             // If we got a network error (curl_quark is a marker) and we are using grace, try again but use the local copy
             if (tmpgerr->domain == curl_quark() && grace) {
@@ -961,7 +960,7 @@ void filecache_close(struct fuse_file_info *info, GError **gerr) {
 
 /* PUT's from fd to URI */
 /* Our modification to include etag support on put */
-static void put_return_etag(const char *path, int fd, char *etag, bool maintenance_mode, GError **gerr) {
+static void put_return_etag(const char *path, int fd, char *etag, GError **gerr) {
     struct stat st;
     struct timespec start_time;
     long response_code = 500; // seed it as bad so we can enter the loop
@@ -1018,7 +1017,7 @@ static void put_return_etag(const char *path, int fd, char *etag, bool maintenan
         if (idx == 0) new_resolve_list = false;
         else new_resolve_list = true;
 
-        session = session_request_init(path, NULL, false, new_resolve_list, maintenance_mode);
+        session = session_request_init(path, NULL, false, new_resolve_list);
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
         curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
@@ -1164,8 +1163,7 @@ finish:
 }
 
 // top-level sync call
-bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, bool maintenance_mode,
-        GError **gerr) {
+bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr) {
     struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
     struct filecache_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
@@ -1236,7 +1234,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
 
             log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
-            put_return_etag(path, sdata->fd, pdata->etag, maintenance_mode, &tmpgerr);
+            put_return_etag(path, sdata->fd, pdata->etag, &tmpgerr);
 
             // if we fail PUT for any reason, file will eventually go to forensic haven.
             // We err in put_return_etag on:
