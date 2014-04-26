@@ -120,6 +120,30 @@ static void enhanced_logging_test(void) {
     }
 }
 
+/* test what happens on a leveldb error */
+static void leveldb_error_test(void) {
+    static int fdx = no_error;
+    static int tdx = no_error;
+    const int iters = 4096; // @TODO I just made this number up; figure out a better one!
+
+    for (int iter = 0; iter < iters; iter++) {
+        // Sleep 61 seconds between injections
+        sleep(61);
+
+        // flop between leveldb error and no_error
+
+        if (tdx == no_error) tdx = statcache_error_getldb; // statcache_error_childrenldb statcache_error_readchildrenldb statcache_error_setldb
+        else tdx = no_error;
+
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
+
+        // Make the new location true but turn off the locations for the old location.
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+    }
+}
+
 /* test what happens on a write error */
 static void writewrite_test(void) {
     static int fdx = no_error;
@@ -275,20 +299,23 @@ void *inject_error_mechanism(__unused void *ptr) {
 
     while (true) {
 
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting rand_test");
-        rand_test();
+        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting rand_test");
+        //rand_test();
 
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting filecache_forensic_haven_test");
-        filecache_forensic_haven_test();
+        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting filecache_forensic_haven_test");
+        //filecache_forensic_haven_test();
 
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting writewrite_test");
-        writewrite_test();
+        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting writewrite_test");
+        //writewrite_test();
 
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting propfind_test");
-        propfind_test();
+        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting propfind_test");
+        //propfind_test();
 
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting fusedav_triggers_vallhalla_logging");
-        enhanced_logging_test();
+        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting fusedav_triggers_vallhalla_logging");
+        //enhanced_logging_test();
+
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting raise SIGINT on leveldb error");
+        leveldb_error_test();
     }
 
     free(inject_error_list);

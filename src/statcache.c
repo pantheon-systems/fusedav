@@ -32,8 +32,11 @@
 #include "bloom-filter.h"
 #include "util.h"
 #include "stats.h"
+#include "signal_handling.h"
 
 #define CACHE_TIMEOUT 3
+// Random value
+#define LEVELDB_ERROR -21
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -187,8 +190,9 @@ void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supple
 
     BUMP(statcache_close);
 
-    if (cache != NULL)
+    if (cache != NULL) {
         leveldb_close(cache);
+    }
     if (supplemental.options != NULL) {
         leveldb_options_destroy(supplemental.options);
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "leveldb_options_destroy");
@@ -223,6 +227,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_get: leveldb_get error: %s", errptr ? errptr : "inject-error");
         free(errptr);
         free(value);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "stat_cache_value_get: leveldb_get error, kill fusedav process");
+        clean_exit("stat_cache_value_get: leveldb error", LEVELDB_ERROR);
         return NULL;
     }
 
@@ -305,9 +311,12 @@ void stat_cache_updated_children(stat_cache_t *cache, const char *path, time_t t
 
     free(key);
 
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "JB. stat_cache_updated_children");
     if (errptr != NULL || inject_error(statcache_error_childrenldb)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_updated_children: leveldb_set error: %s", errptr ? errptr : "inject-error");
         free(errptr);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "stat_cache_updated_children: leveldb_set error, kill fusedav process");
+        clean_exit("stat_cache_updated_children: leveldb error", LEVELDB_ERROR);
         return;
     }
 
@@ -333,10 +342,13 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
 
     free(key);
 
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "JB. stat_cache_read_updated_children");
     if (errptr != NULL || inject_error(statcache_error_readchildrenldb)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_read_updated_children: leveldb_get error: %s", errptr ? errptr : "inject-error");
         free(errptr);
         free(value);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "stat_cache_read_updated_children: leveldb_get error, kill fusedav process");
+        clean_exit("stat_cache_read_updated_children: leveldb error", LEVELDB_ERROR);
         return 0;
     }
 
@@ -377,9 +389,12 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
 
     free(key);
 
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "JB. stat_cache_value_set");
     if (errptr != NULL || inject_error(statcache_error_setldb)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_set: leveldb_set error: %s", errptr ? errptr : "inject-error");
         free(errptr);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "stat_cache_value_set: leveldb_get error, kill fusedav process");
+        clean_exit("stat_cache_value_set: leveldb error", LEVELDB_ERROR);
         return;
     }
 

@@ -19,7 +19,10 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 #include <glib.h>
+#include "fusedav_config.h"
 
 void setup_signal_handlers(GError **gerr);
+void config_exit(struct fuse_args *args, struct fusedav_config *Sconfig, struct fuse_chan *ch, char *mountpoint);
+void clean_exit(const char *msg, int retval) __attribute__ ((noreturn));
 
 #endif

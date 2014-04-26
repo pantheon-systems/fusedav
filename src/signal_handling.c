@@ -25,6 +25,8 @@
 #include <unistd.h>
 #include <fuse.h>
 #include <glib.h>
+#include <fuse.h>
+#include <stdlib.h>
 
 #include "util.h"
 #include "log.h"
@@ -32,11 +34,67 @@
 #include "signal_handling.h"
 #include "stats.h"
 #include "statcache.h"
+#include "session.h"
 
 // GError mechanisms
 static G_DEFINE_QUARK(SIGNAL_HANDLING, signal_handling)
 
 extern struct fuse *fuse;
+
+struct clean_exit_s {
+    struct fuse_args *args;
+    struct fusedav_config *config;
+    struct fuse_chan *ch;
+    char *mountpoint;
+};
+
+static struct clean_exit_s clean_exit_t;
+
+void config_exit(struct fuse_args *args, struct fusedav_config *config, struct fuse_chan *ch, char *mountpoint) {
+    clean_exit_t.args = args;
+    clean_exit_t.config = config;
+    clean_exit_t.ch = ch;
+    clean_exit_t.mountpoint = mountpoint;
+    log_print(LOG_NOTICE, SECTION_SIGNALHANDLING_DEFAULT, "config_exit: %p : %p : %p : %p", &args, &config, ch, mountpoint);
+}
+
+void clean_exit(const char *msg, int retval) {
+
+    dump_stats(false, clean_exit_t.config->cache_path); // false means output to file, not to log
+
+    if (clean_exit_t.ch != NULL) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounting: %s", clean_exit_t.mountpoint);
+        fuse_unmount(clean_exit_t.mountpoint, clean_exit_t.ch);
+    }
+
+    if (clean_exit_t.mountpoint != NULL) {
+        free(clean_exit_t.mountpoint);
+    }
+
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounted.");
+
+    if (fuse) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Destroying fuse");
+        fuse_destroy(fuse);
+    }
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Destroyed FUSE object.");
+
+    fuse_opt_free_args(clean_exit_t.args);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Freed arguments.");
+
+    session_config_free();
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Cleaned up session system.");
+
+    // We don't capture any errors from stat_cache_close
+    // stat_cache_close(clean_exit_t.config->cache, clean_exit_t.config->cache_supplemental);
+
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "clean_exit exiting: retval %d : %s.", retval, msg);
+
+    // log statements getting lost going to journal. See if delay here allows journal to catch up.
+    sleep(5);
+
+    exit(retval);
+}
 
 static void sigusr2_handler(__unused int signum) {
     print_stats();
@@ -74,7 +132,7 @@ void setup_signal_handlers(GError **gerr) {
     // Note for future generations; as currently set up, inject error won't start until
     // after this function is called, so the inject_error routines will never fire even
     // if inject error is turned on
-    
+
     if (sigaction(SIGHUP, &sa, NULL) == -1 ||
         sigaction(SIGINT, &sa, NULL) == -1 ||
         sigaction(SIGTERM, &sa, NULL) == -1 || inject_error(signal_error_action1)) {
