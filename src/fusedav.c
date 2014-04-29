@@ -1827,8 +1827,6 @@ int main(int argc, char *argv[]) {
         sleep(10);
     }
 
-    config_exit(&args, &config, ch, mountpoint);
-
     // Ensure directory exists for file content cache.
     filecache_init(config.cache_path, &gerr);
     if (gerr) {
@@ -1877,7 +1875,38 @@ finish:
         processed_gerror("main: ", "main", &gerr);
     }
 
-    clean_exit("main: Shutdown was successful. Exiting.", ret);
+    dump_stats(false, config.cache_path); // false means output to file, not to log
+
+    if (ch != NULL) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Unmounting: %s", mountpoint);
+        fuse_unmount(mountpoint, ch);
+    }
+
+    if (mountpoint != NULL) {
+        free(mountpoint);
+    }
+
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounted.");
+
+    if (fuse) {
+        fuse_destroy(fuse);
+    }
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Destroyed FUSE object.");
+
+    fuse_opt_free_args(&args);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Freed arguments.");
+
+    session_config_free();
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Cleaned up session system.");
+
+    // We don't capture any errors from stat_cache_close
+    stat_cache_close(config.cache, config.cache_supplemental);
+
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Shutdown was successful. Exiting.");
+
+    // log statements getting lost going to journal. See if delay here
+    // allows journal to catch up.
+    sleep(5);
 
     return ret;
 }
