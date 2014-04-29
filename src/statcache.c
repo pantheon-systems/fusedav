@@ -34,11 +34,8 @@
 #include "bloom-filter.h"
 #include "util.h"
 #include "stats.h"
-#include "signal_handling.h"
 
 #define CACHE_TIMEOUT 3
-// Random value
-#define LEVELDB_ERROR -21
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -193,17 +190,16 @@ void stat_cache_close(stat_cache_t *cache, struct stat_cache_supplemental supple
     BUMP(statcache_close);
 
     if (cache != NULL) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "closing leveldb");
         leveldb_close(cache);
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "closed leveldb");
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_close: closed leveldb");
     }
     if (supplemental.options != NULL) {
         leveldb_options_destroy(supplemental.options);
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "leveldb_options_destroy");
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_close: leveldb_options_destroy");
     }
     if (supplemental.lru != NULL) {
         leveldb_cache_destroy(supplemental.lru);
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "leveldb_cache_destroy");
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_close: leveldb_cache_destroy");
     }
     return;
 }
