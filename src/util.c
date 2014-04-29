@@ -299,20 +299,20 @@ void *inject_error_mechanism(__unused void *ptr) {
 
     while (true) {
 
-        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting rand_test");
-        //rand_test();
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting rand_test");
+        rand_test();
 
-        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting filecache_forensic_haven_test");
-        //filecache_forensic_haven_test();
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting filecache_forensic_haven_test");
+        filecache_forensic_haven_test();
 
-        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting writewrite_test");
-        //writewrite_test();
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting writewrite_test");
+        writewrite_test();
 
-        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting propfind_test");
-        //propfind_test();
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting propfind_test");
+        propfind_test();
 
-        //log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting fusedav_triggers_vallhalla_logging");
-        //enhanced_logging_test();
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting fusedav_triggers_vallhalla_logging");
+        enhanced_logging_test();
 
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting raise SIGINT on leveldb error");
         leveldb_error_test();
