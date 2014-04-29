@@ -62,6 +62,11 @@ void clean_exit(const char *msg, int retval) {
 
     dump_stats(false, clean_exit_t.config->cache_path); // false means output to file, not to log
 
+    if(fuse != NULL) {
+        // exit event loop
+        fuse_exit(fuse);
+    }
+
     if (clean_exit_t.ch != NULL) {
         log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounting: %s", clean_exit_t.mountpoint);
         fuse_unmount(clean_exit_t.mountpoint, clean_exit_t.ch);
@@ -70,7 +75,6 @@ void clean_exit(const char *msg, int retval) {
     if (clean_exit_t.mountpoint != NULL) {
         free(clean_exit_t.mountpoint);
     }
-
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounted.");
 
     if (fuse) {
@@ -86,7 +90,7 @@ void clean_exit(const char *msg, int retval) {
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Cleaned up session system.");
 
     // We don't capture any errors from stat_cache_close
-    // stat_cache_close(clean_exit_t.config->cache, clean_exit_t.config->cache_supplemental);
+    stat_cache_close(clean_exit_t.config->cache, clean_exit_t.config->cache_supplemental);
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "clean_exit exiting: retval %d : %s.", retval, msg);
 
@@ -104,8 +108,12 @@ static void sigusr2_handler(__unused int signum) {
 static void sigsegv_handler(int signum) {
     assert(signum == 11);
     log_print(LOG_CRIT, SECTION_SIGNALHANDLING_DEFAULT, "Segmentation fault.");
-    signal(signum, SIG_DFL);
-    kill(getpid(), signum);
+    // signal(signum, SIG_DFL);
+    // kill(getpid(), signum);
+    // clean_exit("sigsegv_handler", -signum);
+    if(fuse != NULL) {
+        fuse_exit(fuse);
+    }
 }
 
 static void exit_handler(__unused int sig) {
@@ -113,6 +121,7 @@ static void exit_handler(__unused int sig) {
     if(fuse != NULL) {
         fuse_exit(fuse);
     }
+
     write(2, m, strlen(m));
 }
 
@@ -128,10 +137,6 @@ void setup_signal_handlers(GError **gerr) {
     sa.sa_handler = exit_handler;
     sigemptyset(&(sa.sa_mask));
     sa.sa_flags = 0;
-
-    // Note for future generations; as currently set up, inject error won't start until
-    // after this function is called, so the inject_error routines will never fire even
-    // if inject error is turned on
 
     if (sigaction(SIGHUP, &sa, NULL) == -1 ||
         sigaction(SIGINT, &sa, NULL) == -1 ||
