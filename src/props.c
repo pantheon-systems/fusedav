@@ -332,8 +332,13 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         bool new_resolve_list;
 
         // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) new_resolve_list = false;
-        else new_resolve_list = true;
+        if (idx == 0) {
+            new_resolve_list = false;
+        }
+        else {
+            new_resolve_list = true;
+            set_dynamic_logging();
+        }
 
         // Set up the request handle.
         if (last_updated > 0) {
