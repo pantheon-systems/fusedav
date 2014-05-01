@@ -120,8 +120,8 @@ void log_init(unsigned int log_level, const char *log_level_by_section, const ch
  * Include a rest period so if we are in serious error mode, we don't overload the logging system
  */
 static __thread time_t dynamic_logging_start = 0;
-const int dynamic_logging_duration = 20;
-const int dynamic_logging_rest = 60;
+const int dynamic_logging_duration = 10;
+const int dynamic_logging_rest = 120;
 
 static bool turning_off_dynamic_logging(void) {
     struct timespec now;
