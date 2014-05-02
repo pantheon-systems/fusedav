@@ -109,7 +109,7 @@ static int simple_propfind_with_redirect(
     static __thread time_t time = 0;
     unsigned long exceeded_count = 0;
     // Alert on propfind taking longer than 10 seconds
-    static const unsigned propfind_time_allotment = 10000; // 10 seconds
+    static const unsigned propfind_time_allotment = 4000; // 4 seconds
     int ret;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
