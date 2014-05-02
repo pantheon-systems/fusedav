@@ -369,8 +369,8 @@ static void get_fresh_fd(filecache_t *cache,
     static __thread long sglatency = 0;
     static __thread time_t sgtime = 0;
     // Not to exceed time for operation, else it's an error. Allow large files a longer time
-    static const unsigned small_time_allotment = 1000; // 1 second
-    static const unsigned large_time_allotment = 15000; // 15 seconds
+    static const unsigned small_time_allotment = 4000; // 4 seconds
+    static const unsigned large_time_allotment = 16000; // 16 seconds
 
     BUMP(filecache_fresh_fd);
 
@@ -999,8 +999,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     static __thread long splatency = 0;
     static __thread time_t sptime = 0;
     // Not to exceed time for operation, else it's an error. Allow large files a longer time
-    static const unsigned small_time_allotment = 1000; // 1 second
-    static const unsigned large_time_allotment = 15000; // 15 seconds
+    static const unsigned small_time_allotment = 4000; // 4 seconds
+    static const unsigned large_time_allotment = 16000; // 16 seconds
 
     BUMP(filecache_return_etag);
 
