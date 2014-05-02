@@ -101,16 +101,40 @@ static int simple_propfind_with_redirect(
         GError **gerr) {
 
     GError *subgerr = NULL;
+    struct timespec start_time;
+    struct timespec now;
+    long elapsed_time;
+    static __thread unsigned long count = 0;
+    static __thread long latency = 0;
+    static __thread time_t time = 0;
+    unsigned long exceeded_count = 0;
+    // Alert on propfind taking longer than 10 seconds
+    static const unsigned propfind_time_allotment = 4000; // 4 seconds
     int ret;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
 
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
+    /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
+     * passing NULL for time, we ensure that aggregate prints this message and resets to 0, so
+     * there's no need to keep a static variable for count and latency.
+     */
+    if (elapsed_time > propfind_time_allotment) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded allotment of %u ms; took %u ms.",
+            last_updated > 0 ? "progressive" : "complete", propfind_time_allotment, elapsed_time);
+        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", NULL, "exceeded-time-propfind-count",
+            &exceeded_count, 1, "exceeded-time-propfind-latency", &elapsed_time, 0);
+    }
     if (subgerr) {
         g_propagate_prefixed_error(gerr, subgerr, "simple_propfind_with_redirect: ");
         return ret;
     }
 
+    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", &time, "propfind-count", &count, 1,
+        "propfind-latency", &latency, elapsed_time);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Done with (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
 
     return ret;
