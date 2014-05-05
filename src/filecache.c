@@ -368,6 +368,9 @@ static void get_fresh_fd(filecache_t *cache,
     static __thread unsigned long sgcount = 0;
     static __thread long sglatency = 0;
     static __thread time_t sgtime = 0;
+    // Not to exceed time for operation, else it's an error. Allow large files a longer time
+    static const unsigned small_time_allotment = 2000; // 2 seconds
+    static const unsigned large_time_allotment = 8000; // 8 seconds
 
     BUMP(filecache_fresh_fd);
 
@@ -459,8 +462,13 @@ static void get_fresh_fd(filecache_t *cache,
         bool new_resolve_list;
 
         // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) new_resolve_list = false;
-        else new_resolve_list = true;
+        if (idx == 0) {
+            new_resolve_list = false;
+        }
+        else {
+            new_resolve_list = true;
+            set_dynamic_logging();
+        }
 
         // These will be -1 and [0] = '\0' on idx 0; but subsequent iterations we need to clean up from previous time
         if (response_fd >= 0) close(response_fd);
@@ -694,6 +702,25 @@ static void get_fresh_fd(filecache_t *cache,
         }
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
             sz, st.st_size, path, elapsed_time, (latency / count));
+
+        /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
+         * passing NULL for time, we ensure that aggregate prints this message and resets to 0, so
+         * there's no need to keep a static variable for count and latency.
+         */
+        if (st.st_size >= LG && elapsed_time > large_time_allotment) {
+            unsigned long exceeded_count = 0;
+            log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_fresh_fd: large (%lu) GET for %s exceeded time allotment %lu with %lu",
+                st.st_size, path, large_time_allotment, elapsed_time);
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_fresh_fd", NULL, "exceeded-time-large-GET-count",
+                &exceeded_count, 1, "exceeded-time-large-GET-latency", &elapsed_time, 0);
+        }
+        else if (st.st_size < LG && elapsed_time > small_time_allotment) {
+            unsigned long exceeded_count = 0;
+            log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_fresh_fd: small (%lu) GET for %s exceeded time allotment %lu with %lu",
+                st.st_size, path, small_time_allotment, elapsed_time);
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_fresh_fd", NULL, "exceeded-time-short-GET-count",
+                &exceeded_count, 1, "exceeded-time-short-GET-latency", &elapsed_time, 0);
+        }
     }
     else if (response_code == 404) {
         struct stat_cache_value *value;
@@ -971,6 +998,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     static __thread unsigned long spcount = 0;
     static __thread long splatency = 0;
     static __thread time_t sptime = 0;
+    // Not to exceed time for operation, else it's an error. Allow large files a longer time
+    static const unsigned small_time_allotment = 2000; // 2 seconds
+    static const unsigned large_time_allotment = 8000; // 8 seconds
 
     BUMP(filecache_return_etag);
 
@@ -1014,8 +1044,13 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         }
 
         // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) new_resolve_list = false;
-        else new_resolve_list = true;
+        if (idx == 0) {
+            new_resolve_list = false;
+        }
+        else {
+            new_resolve_list = true;
+            set_dynamic_logging();
+        }
 
         session = session_request_init(path, NULL, false, new_resolve_list);
 
@@ -1141,8 +1176,27 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
                 "small-puts", &spcount, 1,
                 "small-put-latency", &splatency, elapsed_time);
         }
-        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
+        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_return_etag: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
             sz, st.st_size, path, elapsed_time, (latency / count));
+
+        /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
+         * passing NULL for time, we ensure that aggregate prints this message and resets to 0, so
+         * there's no need to keep a static variable for count and latency.
+         */
+        if (st.st_size >= LG && elapsed_time > large_time_allotment) {
+            unsigned long exceeded_count = 0;
+            log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_return_etag: large (%lu) PUT for %s exceeded time allotment %lu with %lu",
+                st.st_size, path, large_time_allotment, elapsed_time);
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", NULL, "exceeded-time-large-PUT-count",
+                &exceeded_count, 1, "exceeded-time-large-PUT-latency", &elapsed_time, 0);
+        }
+        else if (st.st_size < LG && elapsed_time > small_time_allotment) {
+            unsigned long exceeded_count = 0;
+            log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_return_etag: small (%lu) PUT for %s exceeded time allotment %lu with %lu",
+                st.st_size, path, small_time_allotment, elapsed_time);
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_return_etag", NULL, "exceeded-time-small-PUT-count",
+                &exceeded_count, 1, "exceeded-time-small-PUT-latency", &elapsed_time, 0);
+        }
     }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "PUT returns etag: %s", etag);

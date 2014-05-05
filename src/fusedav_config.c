@@ -153,7 +153,7 @@ max_file_size=256
 // Note for future generations; as currently set up, inject error won't start until
 // after this function is called, so the inject_error routines will never fire even
 // if inject error is turned on
-    
+
 
 static void parse_configs(struct fusedav_config *config, GError **gerr) {
 
@@ -277,7 +277,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     config->nodaemon = false;
     config->max_file_size = 256; // 256M
     config->log_level = 5; // default log_level: LOG_NOTICE
-    
+
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "configure_fusedav: FUSE could not parse options.");

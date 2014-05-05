@@ -372,7 +372,7 @@ static int compare_node_score(const void *x, const void *y) {
     const struct addr_score_s *b = (const struct addr_score_s *)*(const struct addr_score_s * const *)y;
 
     if (a->score > b->score) return 1;
-    else if (a->score > b->score) return -1;
+    else if (a->score < b->score) return -1;
     else return 0;
 }
 

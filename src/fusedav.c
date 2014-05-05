@@ -101,16 +101,40 @@ static int simple_propfind_with_redirect(
         GError **gerr) {
 
     GError *subgerr = NULL;
+    struct timespec start_time;
+    struct timespec now;
+    long elapsed_time;
+    static __thread unsigned long count = 0;
+    static __thread long latency = 0;
+    static __thread time_t time = 0;
+    unsigned long exceeded_count = 0;
+    // Alert on propfind taking longer than 10 seconds
+    static const unsigned propfind_time_allotment = 4000; // 4 seconds
     int ret;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
 
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
+    /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
+     * passing NULL for time, we ensure that aggregate prints this message and resets to 0, so
+     * there's no need to keep a static variable for count and latency.
+     */
+    if (elapsed_time > propfind_time_allotment) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded allotment of %u ms; took %u ms.",
+            last_updated > 0 ? "progressive" : "complete", propfind_time_allotment, elapsed_time);
+        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", NULL, "exceeded-time-propfind-count",
+            &exceeded_count, 1, "exceeded-time-propfind-latency", &elapsed_time, 0);
+    }
     if (subgerr) {
         g_propagate_prefixed_error(gerr, subgerr, "simple_propfind_with_redirect: ");
         return ret;
     }
 
+    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", &time, "propfind-count", &count, 1,
+        "propfind-latency", &latency, elapsed_time);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Done with (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
 
     return ret;
@@ -205,8 +229,13 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 bool new_resolve_list;
 
                 // Assume all is ok the first round; with each failure, rescramble
-                if (idx == 0) new_resolve_list = false;
-                else new_resolve_list = true;
+                if (idx == 0) {
+                    new_resolve_list = false;
+                }
+                else {
+                    new_resolve_list = true;
+                    set_dynamic_logging();
+                }
 
                 if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
@@ -289,7 +318,7 @@ static void getdir_cache_callback(__unused const char *path_prefix, const char *
     }
 }
 
-static void update_directory(const char *path, bool attempt_progessive_update, GError **gerr) {
+static void update_directory(const char *path, bool attempt_progressive_update, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
     bool needs_update = true;
@@ -298,7 +327,7 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
     int propfind_result;
 
     // Attempt to freshen the cache.
-    if (attempt_progessive_update && config->progressive_propfind) {
+    if (attempt_progressive_update && config->progressive_propfind) {
         timestamp = time(NULL);
         last_updated = stat_cache_read_updated_children(config->cache, path, &tmpgerr);
         if (tmpgerr) {
@@ -335,8 +364,8 @@ static void update_directory(const char *path, bool attempt_progessive_update, G
     if (needs_update) {
         unsigned long min_generation;
 
-        // Up log level to NOTICE temporarily to get reports in the logs
-        log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progessive_update=%d): %s", attempt_progessive_update, path);
+        // If attempt_progressive_update is false, it means this is new data being uploaded
+        log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progressive_update=%d): %s", attempt_progressive_update, path);
         timestamp = time(NULL);
         // min_generation gets value here
         min_generation = stat_cache_get_local_generation();
@@ -768,8 +797,13 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             bool new_resolve_list;
 
             // Assume all is ok the first round; with each failure, rescramble
-            if (idx == 0) new_resolve_list = false;
-            else new_resolve_list = true;
+            if (idx == 0) {
+                new_resolve_list = false;
+            }
+            else {
+                new_resolve_list = true;
+                set_dynamic_logging();
+            }
 
             slist = NULL;
             if (!(session = session_request_init(path, NULL, false, new_resolve_list)) || inject_error(fusedav_error_cunlinksession)) {
@@ -878,8 +912,13 @@ static int dav_rmdir(const char *path) {
         bool new_resolve_list;
 
         // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) new_resolve_list = false;
-        else new_resolve_list = true;
+        if (idx == 0) {
+            new_resolve_list = false;
+        }
+        else {
+            new_resolve_list = true;
+            set_dynamic_logging();
+        }
 
         slist = NULL;
 
@@ -945,8 +984,13 @@ static int dav_mkdir(const char *path, mode_t mode) {
         bool new_resolve_list;
 
         // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) new_resolve_list = false;
-        else new_resolve_list = true;
+        if (idx == 0) {
+            new_resolve_list = false;
+        }
+        else {
+            new_resolve_list = true;
+            set_dynamic_logging();
+        }
 
         slist = NULL;
 
@@ -1030,8 +1074,13 @@ static int dav_rename(const char *from, const char *to) {
         bool new_resolve_list;
 
         // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) new_resolve_list = false;
-        else new_resolve_list = true;
+        if (idx == 0) {
+            new_resolve_list = false;
+        }
+        else {
+            new_resolve_list = true;
+            set_dynamic_logging();
+        }
 
         slist = NULL;
 
