@@ -439,7 +439,8 @@ static int dav_readdir(
         else if (ret == -STAT_CACHE_NO_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR_CACHE-NO-DATA available: %s", path);
         else log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-MISS: %s", path);
 
-        log_print(LOG_DYNAMIC, SECTION_FUSEDAV_DIR, "dav_readdir: Updating directory: %s", path);
+        log_print(LOG_DYNAMIC, SECTION_FUSEDAV_DIR, "dav_readdir: Updating directory: %s; attempt_progressive_update will be %d",
+            path, ret == -STAT_CACHE_OLD_DATA);
         update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
         if (gerr) {
             return processed_gerror("dav_readdir: failed to update directory: ", path, &gerr);
@@ -651,11 +652,41 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     }
     log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "Parent was updated: %s %lu", parent_path, parent_children_update_ts);
 
+    /* When new files are being uploaded to fresh directories, it will trigger complete propfinds
+     * which can be expensive. We saw also where we saw repeated complete propfinds to the same
+     * directory in quick succession, causing a pile up at the server which severely impacted
+     * performance. I tried to reproduce this issue by:
+     * -- running rsync on a relatively large directory hierarchy
+     * -- running filezilla on the same
+     * -- running command-line sftp on the same
+     * -- running multiple command-line sftps on inner directories of the hierarchy, hoping
+     *    to trigger multiple complete propfinds on the directories that all 3 had to traverse
+     * ** None of the above triggered the behavior. Perhaps a specific ftp client on some
+     * host system exhibits this behavior and might be worth looking into.
+     * Had I been able to trigger the behavior, I had a plan to mitigate its effects, but unable
+     * to recreate the situation in which to test it, I couldn't try it out.
+     * My plan was to increment the timestamp and calling stat_cache_updated_children to save it
+     * using leveldb for synchronization so as not to have to impact performance generally by
+     * holding locks for an issue which is rare.
+     * I was either going to use the early seconds of the epoch to increment, on the assumption
+     * we won't be returning to 1970 to run fusedav; or using the negative values past -1, since
+     * the only reason time_t is signed, I think, is to have 32 bits available so one combination
+     * can be used to return the error condition -1. Either way, if a second thread was about
+     * to do a complete propfind on a directory, and pulled parent_children_update_ts out of
+     * leveldb, it could check and if the value indicated, it would know to forego the propfind.
+     * I wasn't sure if fusedav should return success or failure in this case; that would be a
+     * matter to test if we could trigger the multiple propfind behavior.
+     * We would also have to make sure that we reset parent_children_update_ts appropriately
+     * on detecting an error, and perhaps using a value for it which would not cause an issue
+     * if we failed to reset it correctly.
+     */
     // If the parent directory is out of date, update it.
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         GError *subgerr = NULL;
 
         aggregate_log_print_local(LOG_INFO, SECTION_ENHANCED, "get_stat", &previous_time, "propfind-nonnegative-cache", &count, 1, NULL, NULL, 0);
+        log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "get_stat: Calling update_directory: %s; attempt_progressive_update will be %d",
+            parent_path, (parent_children_update_ts > 0));
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
         // In that case, skip the progressive propfind and go straight to complete propfind
         update_directory(parent_path, (parent_children_update_ts > 0), &subgerr);
