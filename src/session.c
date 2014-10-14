@@ -300,6 +300,22 @@ static CURL *session_get_handle(bool new_handle) {
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session");
     session = curl_easy_init();
+
+    if (ca_certificate != NULL)
+        curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
+    if (client_certificate != NULL) {
+        curl_easy_setopt(session, CURLOPT_SSLCERT, client_certificate);
+        curl_easy_setopt(session, CURLOPT_SSLKEY, client_certificate);
+    }
+    curl_easy_setopt(session, CURLOPT_SSL_VERIFYHOST, 0);
+    curl_easy_setopt(session, CURLOPT_SSL_VERIFYPEER, 1);
+
+    curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+    curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+
+    curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
+    curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
+
     pthread_setspecific(session_tsd_key, session);
 
     return session;
@@ -742,10 +758,6 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         return NULL;
     }
 
-    curl_easy_reset(session);
-    curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
-    curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
-
     escaped_path = escape_except_slashes(session, path);
     if (escaped_path == NULL) {
         log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: Allocation failed in escape_except_slashes.");
@@ -768,21 +780,23 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     free(full_url);
 
     //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
-    if (ca_certificate != NULL)
-        curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
-    if (client_certificate != NULL) {
-        curl_easy_setopt(session, CURLOPT_SSLCERT, client_certificate);
-        curl_easy_setopt(session, CURLOPT_SSLKEY, client_certificate);
-    }
-    curl_easy_setopt(session, CURLOPT_SSL_VERIFYHOST, 0);
-    curl_easy_setopt(session, CURLOPT_SSL_VERIFYPEER, 1);
     curl_easy_setopt(session, CURLOPT_FOLLOWLOCATION, 1);
     curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 500);
     curl_easy_setopt(session, CURLOPT_TIMEOUT, 60);
     //curl_easy_setopt(session, CURLOPT_LOW_SPEED_LIMIT, 1024);
     //curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 60);
-    curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
-    curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+
+    // Reset options in use to defaults.
+    curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, NULL);
+    curl_easy_setopt(session, CURLOPT_WRITEDATA, NULL);
+    curl_easy_setopt(session, CURLOPT_READFUNCTION, NULL);
+    curl_easy_setopt(session, CURLOPT_READDATA, NULL);
+    curl_easy_setopt(session, CURLOPT_HTTPHEADER, NULL);
+    curl_easy_setopt(session, CURLOPT_POSTFIELDS, NULL);
+    curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, NULL);
+    curl_easy_setopt(session, CURLOPT_WRITEHEADER, NULL);
+    curl_easy_setopt(session, CURLOPT_INFILESIZE, 0l);
+    curl_easy_setopt(session, CURLOPT_HTTPGET, 1);
 
     error = construct_resolve_slist(session, new_slist);
     /* If we get an error from construct_resolve_slist, we didn't set up the
