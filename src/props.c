@@ -264,7 +264,7 @@ static void endElement(void *userData, const XML_Char *name) {
         state->callback(state->userdata, state->rstate.path, state->rstate.st, state->rstate.status_code, &subgerr);
         if (subgerr) {
             // There's no mechanism to pass gerr back from endElement, so just print here
-            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "endElement: Error from callback (%d : %s)",
+            log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "endElement: Error from callback (%d : %s)",
                 subgerr->code, subgerr->message);
             // Fall through, we still want to reset response state
         }
@@ -386,7 +386,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
         // Perform the request and parse the response.
-        log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
             last_updated > 0 ? "progressive" : "complete", last_updated);
 
         res = curl_easy_perform(session);
@@ -401,7 +401,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     }
 
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
-        log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s rc: %lu",
+        log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s rc: %lu",
             last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
         // Go into saint mode.
         set_saint_mode();
@@ -413,7 +413,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (response_code == 207 && !inject_error(props_error_spropfindunkcode)) {
         // Finalize parsing.
         if (state.failure || inject_error(props_error_spropfindstatefailure)) {
-            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
+            log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
             g_set_error(gerr, props_quark(), E_SC_PROPSERR, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
             goto finish;
         }
@@ -430,7 +430,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     else if (response_code == 404 && !inject_error(props_error_spropfindunkcode)) {
         GError *subgerr = NULL;
         // Tell the callback that the item is gone.
-        log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: 410 response, 404.");
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: 410 response, 404.");
         memset(&state.rstate, 0, sizeof(struct response_state));
         state.callback(state.userdata, path, state.rstate.st, 410, &subgerr);
         if (subgerr) {
@@ -439,7 +439,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         }
     }
     else if (response_code == 412 && !inject_error(props_error_spropfindunkcode)) {
-        log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: 412 response, ESTALE.");
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: 412 response, ESTALE.");
         ret = -ESTALE;
         goto finish;
     }
@@ -448,7 +448,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
 
-    log_print(LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
+    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
 
 finish:

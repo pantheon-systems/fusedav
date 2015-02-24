@@ -235,7 +235,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (value == NULL) {
-        log_print(LOG_DYNAMIC, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
+        log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
         return NULL;
     }
 
@@ -906,7 +906,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
             leveldb_writeoptions_destroy(woptions);
             if (errptr != NULL) {
-                log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
+                log_print(LOG_ALERT, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
                 free(errptr);
             }
             ++issues;
@@ -925,7 +925,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
             leveldb_writeoptions_destroy(woptions);
             if (errptr != NULL) {
-                log_print(LOG_ERR, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
+                log_print(LOG_ALERT, SECTION_STATCACHE_PRUNE, "stat_cache_prune: leveldb_delete error: %s", errptr);
                 free(errptr);
                 ++issues;
             }

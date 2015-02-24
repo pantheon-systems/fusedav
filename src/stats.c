@@ -142,7 +142,7 @@ void dump_stats(bool log, const char *cache_path) {
         }
         stat_path[STAT_PATH_SIZE - 1] = '\0'; // Just make sure it's null terminated
         log_print(LOG_DEBUG, SECTION_FUSEDAV_OUTPUT, "dump_stats: file %s", stat_path);
-        fd = open(stat_path, O_CREAT | O_WRONLY | O_TRUNC);
+        fd = open(stat_path, O_CREAT | O_WRONLY | O_TRUNC, 0600);
         if (fd < 0) {
             log_print(LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, "dump_stats: error creating stats file %s :: %d %s", stat_path, errno, strerror(errno));
             return; // If we can't open the file, no point in continuing
