@@ -70,6 +70,7 @@ struct health_status_s {
     char curladdr[IPSTR_SZ]; // Keep track of complete string we pass to curl
     unsigned int score;
     time_t timestamp;
+    bool current; // Did we see this entry on this call to getaddrinfo (or have we deleted a node?)
 };
 
 // This will be the list of randomized addresses we pass to curl (resolve_slist) and the hashtable of health status
@@ -396,30 +397,35 @@ static void randomize(void *array[], int n) {
     }
 }
 
-static struct health_status_s *get_health_status(char *addr, char *curladdr) {
+static struct health_status_s *get_health_status(char *addr) {
+    return g_hash_table_lookup(node_status.node_hash_table, addr);
+}
+
+static void set_health_status(char *addr, char *curladdr) {
     struct health_status_s *health_status = NULL;
-    if (g_hash_table_contains(node_status.node_hash_table, addr)) {
-        health_status = g_hash_table_lookup(node_status.node_hash_table, addr);
+    health_status = g_hash_table_lookup(node_status.node_hash_table, addr);
+    if (health_status) {
         if (curladdr && health_status->curladdr[0] == '\0') {
             strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
-            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "get_health_status: existing entry didn't have curladdr %s", addr);
+            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "set_health_status: existing entry didn't have curladdr %s", addr);
         }
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "get_health_status: reusing entry for %s", addr);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "set_health_status: reusing entry for %s", addr);
+        health_status->current = true;
     }
     else {
         health_status = g_new(struct health_status_s, 1);
         health_status->score = 0;
         health_status->timestamp = 0;
+        health_status->current = true;
         if (curladdr) {
             strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
         }
         else {
-            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "get_health_status: new entry doesn't have curladdr %s", addr);
+            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "set_health_status: new entry doesn't have curladdr %s", addr);
         }
         g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
-        log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "get_health_status: creating new entry for %s", addr);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "set_health_status: creating new entry for %s", addr);
     }
-    return health_status;
 }
 
 /* cluster saint mode means:
@@ -558,6 +564,14 @@ static int construct_resolve_slist(CURL *session, bool force) {
     curl_slist_free_all(node_status.resolve_slist);
     node_status.resolve_slist = NULL;
 
+    // Initialize current field to false. If we have an entry in the table which is no longer valid
+    // and no longer being returned by getaddrinfo, we can delete it
+    g_hash_table_iter_init (&iter, node_status.node_hash_table);
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        struct health_status_s *status = (struct health_status_s *)value;
+        status->current = false;
+    }
+
     // Turn hints off
     memset(&hints, 0, sizeof(struct addrinfo));
     // By setting ai_family to 0, we allow both IPv4 and IPv6
@@ -637,7 +651,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
         strcat(ipstr, ipaddr);
 
         // Check if ipstr is in hashtable, or put it there. Function returns the struct, but throw it away.
-        get_health_status(logstr(ipaddr), ipstr);
+        set_health_status(logstr(ipaddr), ipstr);
         // ipstr gets strdup'ed before being made the hashtable key, so free it here
         free(ipstr);
 
@@ -648,8 +662,6 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // returned by getaddrinfo, but are afraid that will cause too much load if the cluster is having difficulties
     // if (count > num_filesystem_server_nodes) num_filesystem_server_nodes = count;
 
-    // TODO What if we lose a node, getaddrinfo doesn't return something we already have in our list
-
     // Prepare a sortable array
     g_hash_table_iter_init (&iter, node_status.node_hash_table);
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: hash_table [%p], iter [%p]",
@@ -658,6 +670,16 @@ static int construct_resolve_slist(CURL *session, bool force) {
     addr_score_idx = 0;
     while (g_hash_table_iter_next (&iter, &key, &value)) {
         struct health_status_s *status = (struct health_status_s *)value;
+
+        // If this entry was not updated while processing getaddrinfo, assume the node has been deleted
+        // and remove it from the list
+        if (status->current == false) {
+            g_hash_table_iter_remove(&iter);
+            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
+                "construct_resolve_slist: \'%s\' no longer returned from getaddrinfo; removing",
+                status->curladdr);
+            continue;
+        }
 
         // We need to sort on health score, but use the addr name.
         addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
@@ -678,6 +700,10 @@ static int construct_resolve_slist(CURL *session, bool force) {
         ++addr_score_idx;
     }
 
+    if (count != addr_score_idx) {
+        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d] != count [%d]",
+            addr_score_idx, count);
+    }
     // Randomize first; then sort and expect that the order of items with the same score (think '0') stays randomized
     randomize((void *)addr_score, count);
 
@@ -691,7 +717,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     }
 
     // Count is the number of addresses we processed above
-    for (int idx = 0; idx < count; idx++) {
+    for (int idx = 0; idx < addr_score_idx; idx++) {
         if (force || reinserted_into_rotation) { // if we've potentially changed the list, let's see the new one
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
                 addr_score[idx]->addr, addr_score[idx]->score);
@@ -800,7 +826,11 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 }
 
 static void increment_node_failure(char *addr, const CURLcode res, const long response_code) {
-    struct health_status_s *health_status = get_health_status(addr, NULL);
+    struct health_status_s *health_status = get_health_status(addr);
+    if (!health_status) {
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_failure: health_status null");
+        return;
+    }
     // Currently treat !CURLE_OK and response_code > 500 the same, but leave in structure if we want to treat them differently.
     if (res != CURLE_OK) {
         health_status->score = 2;
@@ -816,11 +846,15 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
 }
 
 static void increment_node_success(char *addr) {
-    struct health_status_s *health_status = get_health_status(addr, NULL);
+    struct health_status_s *health_status = get_health_status(addr);
+    if (!health_status) {
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_success: health_status null");
+        return;
+    }
     if (health_status->score > 0) {
         --health_status->score;
         health_status->timestamp = time(NULL); // Reset since we just used it
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %d",
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %u",
             addr, health_status->score);
     }
 }
