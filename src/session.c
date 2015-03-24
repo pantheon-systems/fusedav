@@ -244,7 +244,8 @@ static void print_ipaddr_pair(char *msg) {
     // Change dots in addr to underscore for logging
     logstr(nodeaddr);
     // We print the key=value pair.
-    log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
+    // log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "cURL using filesystem_host=%s", nodeaddr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -542,6 +543,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
     // result from function
     int res = -1;
     bool reinserted_into_rotation = false; // Did we reinsert a previously bad connection back into rotation?
+    bool removed_from_rotation = false; // Did we remove a node from rotation?
     struct addr_score_s *addr_score[MAX_NODES + 1] = {NULL};
     GHashTableIter iter;
     gpointer key, value;
@@ -678,6 +680,7 @@ static int construct_resolve_slist(CURL *session, bool force) {
             log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
                 "construct_resolve_slist: \'%s\' no longer returned from getaddrinfo; removing",
                 status->curladdr);
+            removed_from_rotation = true;
             continue;
         }
 
@@ -716,9 +719,9 @@ static int construct_resolve_slist(CURL *session, bool force) {
             addr_score[0]->addr, addr_score[0]->score);
     }
 
-    // Count is the number of addresses we processed above
+    // addr_score_idx is the number of addresses we processed above
     for (int idx = 0; idx < addr_score_idx; idx++) {
-        if (force || reinserted_into_rotation) { // if we've potentially changed the list, let's see the new one
+        if (force || reinserted_into_rotation | removed_from_rotation) { // if we've potentially changed the list, let's see the new one
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
                 addr_score[idx]->addr, addr_score[idx]->score);
         }
