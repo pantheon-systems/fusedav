@@ -828,7 +828,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 static void increment_node_failure(char *addr, const CURLcode res, const long response_code) {
     struct health_status_s *health_status = get_health_status(addr);
     if (!health_status) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_failure: health_status null");
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_failure: health_status null for %s", addr);
         return;
     }
     // Currently treat !CURLE_OK and response_code > 500 the same, but leave in structure if we want to treat them differently.
@@ -848,7 +848,7 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
 static void increment_node_success(char *addr) {
     struct health_status_s *health_status = get_health_status(addr);
     if (!health_status) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_success: health_status null");
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_success: health_status null for %s", addr);
         return;
     }
     if (health_status->score > 0) {
