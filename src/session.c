@@ -423,7 +423,7 @@ static bool set_health_status(char *addr, char *curladdr) {
             log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "set_health_status: new entry doesn't have curladdr %s", addr);
         }
         g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "set_health_status: creating new entry for %s", addr);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: creating new entry for %s", addr);
         added_entry = true;
     }
     return added_entry;
