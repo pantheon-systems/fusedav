@@ -93,10 +93,7 @@ struct addr_score_s {
     unsigned int score;
 };
 
-// Should equal the minimum number of nodes in a valhalla cluster.
 // It needs some value to start, but will be adjusted in call to getaddrinfo
-// NB. Currently hard-coded to 3. We want to prevent overwhelming server in
-// case of sick server nodes.
 // If one node is unresponsive, we will rescramble the resolve list and
 // expect a different node to try the second time. This will clear the thread
 // of continuing to target a bad node.
@@ -839,6 +836,15 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     //curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 60);
     curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
     curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
+
+    // For curl configured for nss rather than openssl
+    // curl-config --configure ... '--without-ssl' '--with-nss'
+    // cipher list for nss at:
+    // https://git.fedorahosted.org/cgit/mod_nss.git/plain/docs/mod_nss.html
+    // Restrict to TLSv1.2
+    // Prefer gcm, but allow lesser cipher
+    curl_easy_setopt(session, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    curl_easy_setopt(session, CURLOPT_SSL_CIPHER_LIST, "ecdhe_rsa_aes_128_gcm_sha_256");
 
     return session;
 }
