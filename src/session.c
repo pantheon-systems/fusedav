@@ -93,10 +93,7 @@ struct addr_score_s {
     unsigned int score;
 };
 
-// Should equal the minimum number of nodes in a valhalla cluster.
 // It needs some value to start, but will be adjusted in call to getaddrinfo
-// NB. Currently hard-coded to 3. We want to prevent overwhelming server in
-// case of sick server nodes.
 // If one node is unresponsive, we will rescramble the resolve list and
 // expect a different node to try the second time. This will clear the thread
 // of continuing to target a bad node.
@@ -142,7 +139,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
 
         // Repair p12 to point to pem for now.
         if (strcmp(client_certificate + strlen(client_certificate) - 4, ".p12") == 0) {
-            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_config_init: Remapping deprecated certificate path: %s", client_certificate);
+            log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_config_init: Remapping deprecated certificate path: %s", client_certificate);
             strncpy(client_certificate + strlen(client_certificate) - 4, ".pem", 4);
         }
 
@@ -152,7 +149,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     state.uri = &uri;
     if (uriParseUriA(&state, base) != URI_SUCCESS) {
         /* Failure */
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse on: %s", base);
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse on: %s", base);
         uriFreeUriMembersA(&uri);
         return -1;
     }
@@ -165,7 +162,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
     }
     else {
         /* Failure */
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse finding cluster name: %s", base);
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse finding cluster name: %s", base);
         asprintf(&filesystem_cluster, "unknown");
     }
     uriFreeUriMembersA(&uri);
@@ -192,7 +189,7 @@ static void handle_cleanup(void *s) {
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
         "Destroying cURL handle -- fusedav.%s.sessions:-1|c fusedav.%s.session-duration:%lu|c",
         filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
 
     // Before we go, make sure we've printed the number of curl accesses we accumulated
     log_filesystem_nodes("handle_cleanup", CURLE_OK, 0, -1, "no path");
@@ -247,7 +244,7 @@ static void print_ipaddr_pair(char *msg) {
     // Change dots in addr to underscore for logging
     logstr(nodeaddr);
     // We print the key=value pair.
-    log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -264,7 +261,6 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
                 print_ipaddr_pair(msg);
             }
             else {
-                // TODO Make LOG_DYNAMIC but make sure first it won't overwhelm the system
                 log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
             }
             free(msg);
@@ -280,7 +276,7 @@ static CURL *session_get_handle(bool new_handle) {
 
     if ((session = pthread_getspecific(session_tsd_key))) {
         if (new_handle) {
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_get_handle: destroying old handle and creating a new one");
+            log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_get_handle: destroying old handle and creating a new one");
             handle_cleanup(session);
         }
         else {
@@ -297,7 +293,7 @@ static CURL *session_get_handle(bool new_handle) {
 
     // The first log print will be stripped by log stash because it has the stats designator 1|c, so log one without it
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session");
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
 
@@ -308,14 +304,14 @@ static CURL *session_get_handle(bool new_handle) {
 static CURL *session_get_temp_handle(void) {
     CURL *session;
 
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening temporary cURL session.");
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening temporary cURL session.");
     session = curl_easy_init();
 
     return session;
 }
 
 void session_temp_handle_destroy(CURL *session) {
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
     if (session) curl_easy_cleanup(session);
 }
 
@@ -327,7 +323,7 @@ char *escape_except_slashes(CURL *session, const char *path) {
     size_t escaped_path_pos;
 
     if (mutable_path == NULL) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Could not allocate memory in strndup for escape_except_slashes.");
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Could not allocate memory in strndup for escape_except_slashes.");
         goto finish;
     }
 
@@ -341,7 +337,7 @@ char *escape_except_slashes(CURL *session, const char *path) {
     escaped_path = curl_easy_escape(session, mutable_path, path_len);
 
     if (escaped_path == NULL) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "Could not allocate memory in curl_easy_escape for escape_except_slashes.");
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Could not allocate memory in curl_easy_escape for escape_except_slashes.");
         goto finish;
     }
 
@@ -406,7 +402,7 @@ static bool set_health_status(char *addr, char *curladdr) {
     if (health_status) {
         if (curladdr && health_status->curladdr[0] == '\0') {
             strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
-            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "set_health_status: existing entry didn't have curladdr %s", addr);
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: existing entry didn't have curladdr %s", addr);
         }
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "set_health_status: reusing entry for %s", addr);
         health_status->current = true;
@@ -420,10 +416,10 @@ static bool set_health_status(char *addr, char *curladdr) {
             strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
         }
         else {
-            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "set_health_status: new entry doesn't have curladdr %s", addr);
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: new entry doesn't have curladdr %s", addr);
         }
         g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: creating new entry for %s", addr);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "set_health_status: creating new entry for %s", addr);
         added_entry = true;
     }
     return added_entry;
@@ -450,7 +446,7 @@ bool use_saint_mode(void) {
 
 void set_saint_mode(void) {
     struct timespec now;
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT,
         "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
     clock_gettime(CLOCK_MONOTONIC, &now);
     failure_timestamp = now.tv_sec;
@@ -696,7 +692,7 @@ static int construct_resolve_slist(bool force) {
         // and remove it from the list
         if (healthstatus->current == false) {
             g_hash_table_iter_remove(&iter);
-            log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
                 "construct_resolve_slist: \'%s\' no longer returned from getaddrinfo; removing",
                 healthstatus->curladdr);
             removed_from_rotation = true;
@@ -725,7 +721,7 @@ static int construct_resolve_slist(bool force) {
     }
 
     if (count != addr_score_idx) {
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d] != count [%d]",
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d] != count [%d]",
             addr_score_idx, count);
     }
     // Randomize first; then sort and expect that the order of items with the same score (think '0') stays randomized
@@ -736,7 +732,7 @@ static int construct_resolve_slist(bool force) {
 
     if (addr_score[0]->score != 0) {
         // All connections are in some state of bad
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: top entry is non-zero: %s -- %d",
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "construct_resolve_slist: top entry is non-zero: %s -- %d",
             addr_score[0]->addr, addr_score[0]->score);
     }
 
@@ -768,7 +764,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     // If the whole cluster is sad, avoid access altogether for a given period of time.
     // Calls to this function, on detecting this error, set ENETDOWN, which is appropriate
     if (use_saint_mode()) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: already in saint mode");
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_request_init: already in saint mode");
         return NULL;
     }
 
@@ -788,7 +784,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     }
 
     if (!session) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: session handle NULL.");
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_request_init: session handle NULL.");
         return NULL;
     }
 
@@ -804,7 +800,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 
     escaped_path = escape_except_slashes(session, path);
     if (escaped_path == NULL) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: Allocation failed in escape_except_slashes.");
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_request_init: Allocation failed in escape_except_slashes.");
         return NULL;
     }
 
@@ -815,7 +811,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         asprintf(&full_url, "%s%s?%s", get_base_url(), escaped_path, query_string);
     }
     if (full_url == NULL) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "session_request_init: Allocation failed in asprintf.");
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_request_init: Allocation failed in asprintf.");
         return NULL;
     }
     curl_free(escaped_path);
@@ -840,24 +836,34 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
     curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
+    // For curl configured for nss rather than openssl
+    // curl-config --configure ... '--without-ssl' '--with-nss'
+    // cipher list for nss at:
+    // https://git.fedorahosted.org/cgit/mod_nss.git/plain/docs/mod_nss.html
+    // Restrict to TLSv1.2
+    // Prefer gcm, but allow lesser cipher
+    // Don't set client ciphering; rely on server
+    // curl_easy_setopt(session, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    // curl_easy_setopt(session, CURLOPT_SSL_CIPHER_LIST, "ecdhe_rsa_aes_128_gcm_sha_256");
+
     return session;
 }
 
 static void increment_node_failure(char *addr, const CURLcode res, const long response_code) {
     struct health_status_s *health_status = get_health_status(addr);
     if (!health_status) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_failure: health_status null for %s", addr);
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "increment_node_failure: health_status null for %s", addr);
         return;
     }
     // Currently treat !CURLE_OK and response_code > 500 the same, but leave in structure if we want to treat them differently.
     if (res != CURLE_OK) {
         health_status->score = 2;
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: !CURLE_OK: %s addr score set to %d",
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_failure: !CURLE_OK: %s addr score set to %d",
             addr, health_status->score);
     }
     else if (response_code >= 500) {
         health_status->score = 2;
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT, "increment_node_failure: response_code %lu: %s addr score set to %d",
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_failure: response_code %lu: %s addr score set to %d",
             response_code, addr, health_status->score);
     }
     health_status->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
@@ -866,7 +872,7 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
 static void increment_node_success(char *addr) {
     struct health_status_s *health_status = get_health_status(addr);
     if (!health_status) {
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "increment_node_success: health_status null for %s", addr);
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "increment_node_success: health_status null for %s", addr);
         return;
     }
     if (health_status->score > 0) {
@@ -875,6 +881,29 @@ static void increment_node_success(char *addr) {
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %u",
             addr, health_status->score);
     }
+}
+
+static void print_errors(const int iter, const char *type_str, const char *fcn_name, const CURLcode res, const char *path) {
+    char *failure_str = NULL;
+    asprintf(&failure_str, "%d_failures", iter + 1);
+
+    // Track number of failures
+    log_print(LOG_INFO, SECTION_ENHANCED,
+        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.%s:1|c",
+        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr, failure_str);
+
+    // Distinguish curl from 500-status failures
+    log_print(LOG_INFO, SECTION_ENHANCED,
+        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.%s:1|c",
+        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr, type_str);
+
+    log_print(LOG_INFO, SECTION_ENHANCED,
+        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures:1|c",
+        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
+
+    log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
+        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures",
+        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
 }
 
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path) {
@@ -917,22 +946,12 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
 
     if (res != CURLE_OK) {
         // Track errors
-        log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures:1|c",
-            fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
-            "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures",
-            fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
+        print_errors(iter, "curl_failures", fcn_name, res, path);
         increment_node_failure(nodeaddr, res, response_code);
     }
     else if (response_code >= 500) {
         // Track errors
-        log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures:1|c",
-            fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
-        log_print(LOG_WARNING, SECTION_SESSION_DEFAULT,
-            "%s: curl iter %d on path %s; %s :: %lu -- fusedav.%s.server-%s.failures",
-            fcn_name, iter, path, "no curl error", response_code, filesystem_cluster, nodeaddr);
+        print_errors(iter, "status500_failures", fcn_name, res, path);
         increment_node_failure(nodeaddr, res, response_code);
     }
     // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
