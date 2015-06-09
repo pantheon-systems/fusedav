@@ -337,7 +337,6 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         }
         else {
             new_resolve_list = true;
-            set_dynamic_logging();
         }
 
         // Set up the request handle.
@@ -405,6 +404,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
         // Go into saint mode.
         set_saint_mode();
+        set_dynamic_logging();
         g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed, ENETDOWN", path);
         goto finish;
     }
