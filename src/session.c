@@ -768,12 +768,14 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         return NULL;
     }
 
-    // If we add or delete a node, or change its health status, we need to signal here to 
-    // create a new session
-    status = construct_resolve_slist(new_slist);
+    if (new_slist == false) {
+        // If we add or delete a node, or change its health status, we need to signal here to 
+        // create a new session
+        status = construct_resolve_slist(new_slist);
 
-    if (status == REQUIRES_NEW_SLIST) {
-        new_slist = true;
+        if (status == REQUIRES_NEW_SLIST) {
+            new_slist = true;
+        }
     }
 
     if (temporary_handle) {
@@ -796,7 +798,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     }
 
     if (status != GETADDRINFO_FAILURE) {
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_request_init: Sending resolve_slist (%p) to curl",
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_request_init: Sending resolve_slist (%p) to curl",
             node_status.resolve_slist);
         curl_easy_setopt(session, CURLOPT_RESOLVE, node_status.resolve_slist);
     }
