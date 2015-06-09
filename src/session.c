@@ -883,27 +883,39 @@ static void increment_node_success(char *addr) {
     }
 }
 
-static void print_errors(const int iter, const char *type_str, const char *fcn_name, const CURLcode res, const char *path) {
+static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
+        const CURLcode res, const long response_code, const char *path) {
     char *failure_str = NULL;
+    char *error_str = NULL;
     asprintf(&failure_str, "%d_failures", iter + 1);
+
+    if (res != CURLE_OK) {
+        asprintf(&error_str, "%s :: %s", curl_easy_strerror(res), "no rc");
+    } else {
+        asprintf(&error_str, "%s :: %lu", "no curl error", response_code);
+    }
 
     // Track number of failures
     log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.%s:1|c",
-        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr, failure_str);
+        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s:1|c",
+        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, failure_str);
+
+    free(failure_str);
 
     // Distinguish curl from 500-status failures
     log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.%s:1|c",
-        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr, type_str);
+        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s:1|c",
+        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
 
     log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures:1|c",
-        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
+        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.failures:1|c",
+        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr);
 
     log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
-        "%s: curl iter %d on path %s; %s :: %s -- fusedav.%s.server-%s.failures",
-        fcn_name, iter, path, curl_easy_strerror(res), "no rc", filesystem_cluster, nodeaddr);
+        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.failures",
+        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr);
+
+    free(error_str);
 }
 
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path) {
@@ -946,12 +958,12 @@ void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long r
 
     if (res != CURLE_OK) {
         // Track errors
-        print_errors(iter, "curl_failures", fcn_name, res, path);
+        print_errors(iter, "curl_failures", fcn_name, res, response_code, path);
         increment_node_failure(nodeaddr, res, response_code);
     }
     else if (response_code >= 500) {
         // Track errors
-        print_errors(iter, "status500_failures", fcn_name, res, path);
+        print_errors(iter, "status500_failures", fcn_name, res, response_code, path);
         increment_node_failure(nodeaddr, res, response_code);
     }
     // If iter > 0 then we failed on iter 0. If we didn't fail on this iter, then we recovered. Log it.
