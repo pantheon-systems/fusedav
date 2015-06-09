@@ -1062,7 +1062,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
 
         slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
-        curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
+        if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
         // Set a header capture path.
         etag[0] = '\0';
