@@ -790,8 +790,13 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
 
     curl_easy_reset(session);
 
+    // If we got a new handle above, we need to reset slist
+    if (new_slist) {
+        status = construct_resolve_slist(new_slist);
+    }
+
     if (status != GETADDRINFO_FAILURE) {
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_request_init: Sending resolve_slist (%p) to curl",
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_request_init: Sending resolve_slist (%p) to curl",
             node_status.resolve_slist);
         curl_easy_setopt(session, CURLOPT_RESOLVE, node_status.resolve_slist);
     }
