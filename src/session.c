@@ -768,6 +768,31 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         return NULL;
     }
 
+    // 1. new_slist is false
+    // a. slist timeout has not elapsed: call construct_resolve_slist here but not
+    // below. No new slist, no new session 
+    // b. slist timeout has elapsed and no new nodes added or removed: create 
+    // new slist here, but not below. New slist, no new session, new slist 
+    // will take effect when curl gets around to it (a couple of minutes)
+    // c. slist timeout has elapsed and new node added or deleted: create 
+    // new slist and set new_slist below; this slist will be deleted when 
+    // we make a new session, and then recreated in the call to 
+    // construct_resolve_slist below since we set new_slist.
+    // d. slist timeout has not elapsed, but there happens to be a node added
+    // or deleted: it will not be detected in this call but only later when 
+    // slist timeout has elapsed. So, for the duration of slist timeout, 
+    // new nodes will not yet get traffic; deleted nodes will continue to get traffic
+    // 2. new_slist is true
+    // a. Skip this call to construct_resolve_slist, create new session below, then
+    // call construct_resolve_slist below to create the new slist.
+    //
+    // If there is an added or deleted node, construct_slist is called redundantly;
+    // the results of the first call are thrown out when a new session is created,
+    // then the new slist is created again.
+    //
+    // The purpose of this initial call to construct_resolve_slist is to determine
+    // whether a node has been added or deleted so we can take action and
+    // make sure a new session and slist get created.
     if (new_slist == false) {
         // If we add or delete a node, or change its health status, we need to signal here to 
         // create a new session
