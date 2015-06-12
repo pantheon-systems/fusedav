@@ -793,6 +793,8 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
     // The purpose of this initial call to construct_resolve_slist is to determine
     // whether a node has been added or deleted so we can take action and
     // make sure a new session and slist get created.
+
+    status = SUCCESS; // eliminates warning about it might be unitialized
     if (new_slist == false) {
         // If we add or delete a node, or change its health status, we need to signal here to 
         // create a new session
