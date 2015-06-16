@@ -186,7 +186,7 @@ static void handle_cleanup(void *s) {
     assert(s);
 
     // The first log statement will get stripped from logstash because it has the stats designator |c, so log a second one
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
+    log_print(LOG_INFO, SECTION_ENHANCED,
         "Destroying cURL handle -- fusedav.%s.sessions:-1|c fusedav.%s.session-duration:%lu|c",
         filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
@@ -292,7 +292,7 @@ static CURL *session_get_handle(bool new_handle) {
     session_start_time = time(NULL);
 
     // The first log print will be stripped by log stash because it has the stats designator 1|c, so log one without it
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
+    log_print(LOG_INFO, SECTION_ENHANCED, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
     session = curl_easy_init();
     pthread_setspecific(session_tsd_key, session);
@@ -431,25 +431,32 @@ static bool set_health_status(char *addr, char *curladdr) {
  * Regarding (2), propfinds should succeed, as should GETs (as if 304).
  */
 // cluster_failure_timestamp is the most recent time we detected that all connections to the cluster were in some failed mode
-// Keep this by thread; each thread will have its own view of the cluster health, but should converge
-static __thread time_t failure_timestamp = 0;
+pthread_mutex_t last_failure_mutex = PTHREAD_MUTEX_INITIALIZER;
+static time_t failure_timestamp = 0;
 // Backoff time; avoid accessing the cluster for this many seconds
 const int saint_mode_duration = 10;
 
 bool use_saint_mode(void) {
     struct timespec now;
     bool use_saint;
+    pthread_mutex_lock(&last_failure_mutex);
     clock_gettime(CLOCK_MONOTONIC, &now);
     use_saint = (failure_timestamp + saint_mode_duration >= now.tv_sec);
+    pthread_mutex_unlock(&last_failure_mutex);
     return use_saint;
 }
 
 void set_saint_mode(void) {
     struct timespec now;
-    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT,
+    // First log for metrics; second for logs
+    log_print(LOG_INFO, SECTION_ENHANCED,
         "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
+    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT,
+        "Setting cluster saint mode for %lu seconds.", saint_mode_duration);
+    pthread_mutex_lock(&last_failure_mutex);
     clock_gettime(CLOCK_MONOTONIC, &now);
     failure_timestamp = now.tv_sec;
+    pthread_mutex_unlock(&last_failure_mutex);
 }
 
 /* For reference, keep the different sockaddr structs available for inspection

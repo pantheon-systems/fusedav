@@ -66,9 +66,15 @@ static int readdirectory(char *dirname, int *dirsread, int *filesread, int *erro
             readdirectory(fn, dirsread, filesread, errors);
         }
         else {
+            int bytes_read;
+            char rbuf [1025];
             fd = open(fn, O_RDWR);
             v_printf("file: %s\n", fn);
             ++*filesread;
+            bytes_read = read(fd, rbuf, 1024);
+            if (bytes_read < 0) {
+                v_printf("read -1 on %s :: %d %s\n", fn, errno, strerror(errno));
+            }
             close(fd);
         }
         diriter = readdir(dir);

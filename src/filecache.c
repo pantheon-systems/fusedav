@@ -782,7 +782,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
     // Don't bother going to server if already in cluster saint mode
     if (use_saint_mode()) {
         use_local_copy = true;
-        log_print(LOG_DYNAMIC, SECTION_FILECACHE_OPEN,
+        log_print(LOG_INFO, SECTION_FILECACHE_OPEN,
             "filecache_open: already in saint mode, using local copy: %s", path);
     }
 

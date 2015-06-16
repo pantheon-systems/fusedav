@@ -430,24 +430,48 @@ static int dav_readdir(
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
 
-    // First, attempt to hit the cache.
-    ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
-    if (ret < 0) {
-        if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-TOO-OLD: %s", path);
-        else if (ret == -STAT_CACHE_NO_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR_CACHE-NO-DATA available: %s", path);
-        else log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-MISS: %s", path);
+    if (config->grace && use_saint_mode()) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "dav_readdir: Using saint mode on %s", path);
+        ignore_freshness = true;
+    }
 
-        log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "dav_readdir: Updating directory: %s; attempt_progressive_update will be %d",
-            path, ret == -STAT_CACHE_OLD_DATA);
-        update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
-        if (gerr) {
-            return processed_gerror("dav_readdir: failed to update directory: ", path, &gerr);
+    /* If the thread is already in saint mode, it will avoid the tries to the network and just
+     * return what is in the local stat cache. If it's not already in saint mode but sees
+     * ENETDOWN as a return, have it try again since the ENETDOWN put it in saint mode. This
+     * way, the first access after network failure acts like a subsequent access in saint mode.
+     */
+    for (int idx = 0; idx < 2; idx++) {
+        // First, attempt to hit the cache.
+        ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
+        if (ret < 0) {
+            if (ret == -STAT_CACHE_OLD_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-TOO-OLD: %s", path);
+            else if (ret == -STAT_CACHE_NO_DATA) log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR_CACHE-NO-DATA available: %s", path);
+            else log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "DIR-CACHE-MISS: %s", path);
+
+            log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "dav_readdir: Updating directory: %s; attempt_progressive_update will be %d",
+                path, ret == -STAT_CACHE_OLD_DATA);
+            update_directory(path, (ret == -STAT_CACHE_OLD_DATA), &gerr);
+
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "dav_readdir: Second call to stat_cache_enumerate: %d", ret);
+            if (gerr) {
+                // The call to update_directory put the thread into saint mode. Retry now that we are in saint mode.
+                if (idx == 0 && gerr->code == ENETDOWN && config->grace && use_saint_mode()) {
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "dav_readdir: Transitioned into saint mode on %s", path);
+                    ignore_freshness = true;
+                    continue;
+                }
+                else {
+                    return processed_gerror("dav_readdir: failed to update directory: ", path, &gerr);
+                }
+            }
+
+            // Output the new data, skipping any cache freshness checks
+            // (which should pass, anyway, unless it's grace mode).
+            // At this point, we can only get a zero return, or an empty directory. Let both fall through and return 0
+            stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
         }
-
-        // Output the new data, skipping any cache freshness checks
-        // (which should pass, anyway, unless it's grace mode).
-        // At this point, we can only get a zero return, or an empty directory. Let both fall through and return 0
-        stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, true);
+        // Don't retry on success
+        break;
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_readdir: Successful readdir for path: %s", path);
@@ -521,12 +545,12 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
         if (skip_freshness_check != OFF || inject_error(fusedav_error_statignorefreshness)) {
             memset(stbuf, 0, sizeof(struct stat));
             if (skip_freshness_check == SAINT_MODE ) {
-            	log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, 
+               log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, 
                     "get_stat_from_cache: Ignoring freshness, in saint mode, sending -ENETDOWN for path %s.", path);
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "get_stat_from_cache: ");
             }
             else if (skip_freshness_check == ALREADY_FRESH ) {
-            	log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Ignoring freshness and sending -ENOENT for path %s.", path);
+               log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Ignoring freshness and sending -ENOENT for path %s.", path);
                 g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: ");
             }
             return -1;
@@ -583,7 +607,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     }
 
     if (config->grace && use_saint_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "get_stat: Using saint mode on %s", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: Using saint mode on %s", path);
         skip_freshness_check = SAINT_MODE;
     }
 
@@ -718,15 +742,29 @@ finish:
 }
 
 static void common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info, GError **gerr) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
     assert(info != NULL || path != NULL);
 
     if (path != NULL) {
-        get_stat(path, stbuf, &tmpgerr);
-        if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "common_getattr: ");
-            return;
+        /* If the thread is not in saint mode, but get_stat triggers ENETDOWN, the
+         * thread will have been put in saint mode, so retry so that this first
+         * access is handled like subsequent accesses already in saint mode
+         */
+        for (int idx = 0; idx < 2; idx++) {
+            get_stat(path, stbuf, &tmpgerr);
+            if (tmpgerr) {
+                if (idx == 0 && tmpgerr->code == ENETDOWN && config->grace && use_saint_mode()) {
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "common_getattr: Transitioned into saint mode on %s", path);
+                    continue;
+                }
+                else {
+                    g_propagate_prefixed_error(gerr, tmpgerr, "common_getattr: ");
+                    return;
+                }
+            }
+            break;
         }
         // These are taken care of by fill_stat_generic below if path is NULL
         if (S_ISDIR(stbuf->st_mode))
