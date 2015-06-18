@@ -746,12 +746,6 @@ static int construct_resolve_slist(bool force) {
         g_free(addr_score[idx]);
     }
 
-    // If we create a new list we need to make the curl_easy_setopt call.
-    // But if we are within our timeout period and do not create a new list,
-    // we still need to make the call with the current, unchanged list.
-    // Otherwise, libcurl will revert to its default, call getaddrinfo
-    // on its own, and return the unsorted, unbalanced, first entry.
-
     return status;
 }
 
@@ -824,11 +818,21 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         status = construct_resolve_slist(new_slist);
     }
 
-    if (status != GETADDRINFO_FAILURE) {
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_request_init: Sending resolve_slist (%p) to curl",
-            node_status.resolve_slist);
-        curl_easy_setopt(session, CURLOPT_RESOLVE, node_status.resolve_slist);
+    // Treat this failure as a session failure; no point in continuing
+    if (status == GETADDRINFO_FAILURE) {
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_request_init: GETADDRINFO_FAILURE.");
+        return NULL;
     }
+
+    // Whether we created a new resolve_slist or not, we still need to
+    // make the setopt call for CURLOPT_RESOLVE.
+    // Otherwise, libcurl will revert to its default, call getaddrinfo
+    // on its own, and return the unsorted, unbalanced, first entry.
+    // (REVIEW: not sure if the above is true. Won't the current session
+    // just continue using the previous slist? I think it doesn't timeout)
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_request_init: Sending resolve_slist (%p) to curl",
+        node_status.resolve_slist);
+    curl_easy_setopt(session, CURLOPT_RESOLVE, node_status.resolve_slist);
     curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
     curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
 
