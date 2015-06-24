@@ -53,7 +53,7 @@ struct fuse* fuse = NULL;
 #define CACHE_CLEANUP_INTERVAL 86400
 
 // 'Soft" limit for core dump to ensure we get them
-#define NEW_RLIM_CUR (128 * 1024*1024)
+#define NEW_RLIM_CUR (512 * 1024*1024)
 
 struct fill_info {
     void *buf;
