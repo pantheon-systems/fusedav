@@ -29,6 +29,8 @@
 #include <pwd.h>
 #include <sys/prctl.h>
 #include <glib.h>
+#include <sys/time.h>
+#include <sys/resource.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -49,6 +51,9 @@ struct fuse* fuse = NULL;
 
 // Run cache cleanup once a day.
 #define CACHE_CLEANUP_INTERVAL 86400
+
+// 'Soft" limit for core dump to ensure we get them
+#define NEW_RLIM_CUR (128 * 1024*1024)
 
 struct fill_info {
     void *buf;
@@ -1889,6 +1894,19 @@ int main(int argc, char *argv[]) {
     pthread_t cache_cleanup_thread;
     pthread_t error_injection_thread;
     int ret = -1;
+    int limres;
+    struct rlimit lim;
+
+    limres = getrlimit(RLIMIT_CORE, &lim);
+    if (limres >= 0) {
+        if (lim.rlim_max == RLIM_INFINITY || lim.rlim_max >= NEW_RLIM_CUR) {
+            lim.rlim_cur = NEW_RLIM_CUR;
+        }
+        else {
+            lim.rlim_cur = lim.rlim_max;
+        }
+        limres = setrlimit(RLIMIT_CORE, &lim);
+    }
 
     // Initialize the statistics and configuration.
     memset(&stats, 0, sizeof(struct statistics));
@@ -1908,6 +1926,15 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Mounted the FUSE file system.");
+
+    // Checking here just to make sure we have set up log facility
+    // It is not fatal if we are unable to reset the core limit
+    if (limres < 0) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "main: (g/s)etrlimit failed trying to reset core limit");
+    } else if (lim.rlim_cur != NEW_RLIM_CUR) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "main: Incorrectly reset core limit: soft: %d, hard: %d", 
+            lim.rlim_cur, lim.rlim_max);
+    }
 
     if (!(fuse = fuse_new(ch, &args, &dav_oper, sizeof(dav_oper), &config))) {
         log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to create FUSE object.");
