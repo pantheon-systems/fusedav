@@ -91,10 +91,21 @@ do
 		# echo $file
 		res=$(curl -s -I http://dev-panopoly-two.onebox.pantheon.io/sites/default/$file | grep HTTP)
 		if [[ ! $res =~ '200' && ! $res =~ '301' && ! $res =~ '403' ]]; then
-			echo "ERROR: $res :: $file"
+			printf "ERROR: %s: %s :: %s\n" "$0" "$file" "$res"
+			fail=$((fail + 1))
+		else
+			pass=$((pass + 1))
 		fi
+		sleep 1
 	done
 done
 systemctl restart nginx_valhalla.service
 
 cd files
+
+if [ $fail -ne 0 ]; then
+	echo "FAIL: curl calls failed: $fail; curl calls passed $pass"
+else
+	echo "PASS: curl calls passed $pass"
+fi
+

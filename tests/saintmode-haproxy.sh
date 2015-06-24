@@ -139,6 +139,7 @@ do
 		else
 			pass=$((pass + 1))
 		fi
+		sleep 1
 	done
 done
 systemctl restart $ha1
