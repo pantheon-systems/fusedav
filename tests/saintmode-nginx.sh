@@ -40,7 +40,7 @@ do
 done
 
 if [ $iters -eq 0 ]; then
-	iters=4
+	iters=1
 fi
 
 pass=0
@@ -59,6 +59,19 @@ if [ ! -f /etc/systemd/system/haproxy_valhalla21_onebox.service ]; then
 	echo "ERROR: This test needs to be run on a onebox."
 	exit
 fi
+# If run on a onebox, it will take nginx_valhalla up and down.
+# If run outside of a onebox, it would be run on an endpoint,
+# and there is no facility there to take valhalla(yolo)
+# services up and down, so for those tests, other measures
+# need to be taken (e.g. script on each valhallayolo node
+# to stop/restart the nginx service)
+if [ -f /etc/systemd/system/haproxy_valhalla21_onebox.service ]; then
+	echo "Running on a onebox."
+	onebox=1
+else
+	onebox=0
+fi
+
 
 # Most tests need to be in the files directory, but this one needs to be
 # one up.
@@ -73,6 +86,7 @@ if [ ! -f ./fusedav.conf ]; then
 	exit
 fi
 
+uri=$(grep Description /etc/systemd/system/php_fpm_$(pwd | sed s#/srv/bindings/## | sed s#/files##).service | sed s#.*uri=##)
 iter=1
 while [ $iter -le $iters ]
 do
@@ -89,9 +103,13 @@ do
 	for file in $(find files)
 	do 
 		# echo $file
-		res=$(curl -s -I http://dev-panopoly-two.onebox.pantheon.io/sites/default/$file | grep HTTP)
+		res=$(curl -s -I http://$uri/sites/default/$file | grep HTTP)
+		if [ $verbose -gt 0 ]; then
+			printf "SUCCEED: %s: %s : %s :: %s\n" "$0" "$uri" "$file" "$res"
+		fi
+
 		if [[ ! $res =~ '200' && ! $res =~ '301' && ! $res =~ '403' ]]; then
-			printf "ERROR: %s: %s :: %s\n" "$0" "$file" "$res"
+			printf "ERROR: %s: %s : %s :: %s\n" "$0" "$uri" "$file" "$res"
 			fail=$((fail + 1))
 		else
 			pass=$((pass + 1))
