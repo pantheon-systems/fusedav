@@ -50,15 +50,6 @@ if [ $verbose -eq 1 ]; then
     starttime=$(date +%s)
 fi
 
-# This test can only be run on a onebox.
-# It needs to take the haproxies up and down.
-# If run outside of a onebox, it would be run on an endpoint,
-# and there is no facility there to take valhalla(yolo)
-# haproxies up and down
-if [ ! -f /etc/systemd/system/haproxy_valhalla21_onebox.service ]; then
-	echo "ERROR: This test needs to be run on a onebox."
-	exit
-fi
 # If run on a onebox, it will take nginx_valhalla up and down.
 # If run outside of a onebox, it would be run on an endpoint,
 # and there is no facility there to take valhalla(yolo)
@@ -92,13 +83,15 @@ while [ $iter -le $iters ]
 do
 	iter=$((iter + 1))
 
-	t=$(date +%s); eo=$(($t % 2));
-	if [ $eo -eq 0 ]; then
-		systemctl restart nginx_valhalla.service
-		echo "UP"
-	else
-		systemctl stop nginx_valhalla.service
-		echo "DOWN"
+	if [ $onebox -eq 1 ]; then
+		t=$(date +%s); eo=$(($t % 2));
+		if [ $eo -eq 0 ]; then
+			systemctl restart nginx_valhalla.service
+			echo "UP"
+		else
+			systemctl stop nginx_valhalla.service
+			echo "DOWN"
+		fi
 	fi
 	for file in $(find files)
 	do 
@@ -117,7 +110,9 @@ do
 		sleep 1
 	done
 done
-systemctl restart nginx_valhalla.service
+if [ $onebox -eq 1 ]; then
+	systemctl restart nginx_valhalla.service
+fi
 
 cd files
 
