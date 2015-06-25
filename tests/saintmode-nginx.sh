@@ -96,7 +96,7 @@ do
 	for file in $(find files)
 	do 
 		# echo $file
-		res=$(curl -s -I http://$uri/sites/default/$file | grep HTTP)
+		res=$(curl -s -H "Cache-Control: no-cache" -H "X-Bypass-Cache: 1" -I http://$uri/sites/default/$file | grep HTTP)
 		if [ $verbose -gt 0 ]; then
 			printf "SUCCEED: %s: %s : %s :: %s\n" "$0" "$uri" "$file" "$res"
 		fi
