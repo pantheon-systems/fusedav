@@ -40,7 +40,7 @@ do
 done
 
 if [ $iters -eq 0 ]; then
-	iters=4
+	iters=1
 fi
 
 pass=0
@@ -51,17 +51,20 @@ if [ $verbose -eq 1 ]; then
 fi
 
 # This test can only be run on a onebox.
-# It needs to take the haproxies up and down.
+# If run on a onebox, it will take nginx_valhalla up and down.
 # If run outside of a onebox, it would be run on an endpoint,
 # and there is no facility there to take valhalla(yolo)
-# haproxies up and down
-if [ ! -f /etc/systemd/system/haproxy_valhalla21_onebox.service ]; then
-	echo "ERROR: This test needs to be run on a onebox."
-	exit
+# services up and down, so for those tests, other measures
+# need to be taken (e.g. script on each valhallayolo node
+# to stop/restart the nginx service)
+if [ -f /etc/systemd/system/haproxy_valhalla21_onebox.service ]; then
+	echo "Running on a onebox."
+	onebox=1
+else
+	onebox=0
 fi
 
-# Most tests need to be in the files directory, but this one needs to be
-# one up.
+# Needs to be in the files directory
 if [ -f ./fusedav.conf ]; then
 	cd files
 fi
@@ -87,52 +90,57 @@ while [ $iter -le $iters ]
 do
 	iter=$((iter + 1))
 
-	up=0
+	if [ $onebox -eq 1 ]; then
+		up=0
 
-	t=$(date +%s); eo=$(($t % 16));
-	# Always leave at least one haproxy running
-	if [ $eo -eq 0 -o $eo -eq 1 -o $eo -eq 4 ]; then
-		eo=5
-	elif [ $eo -eq 2 ]; then
-		eo=3
-	elif [ $eo -eq 8 ]; then
-		eo=9
+		t=$(date +%s); eo=$(($t % 16));
+		# Always leave at least one haproxy running
+		if [ $eo -eq 0 -o $eo -eq 1 -o $eo -eq 4 ]; then
+			eo=5
+		elif [ $eo -eq 2 ]; then
+			eo=3
+		elif [ $eo -eq 8 ]; then
+			eo=9
+		fi
+
+		if [ $(($eo & $ha1m)) -ne 0 ]; then
+			systemctl restart $ha1
+			((up+=1))
+		else
+			systemctl stop $ha1
+		fi
+
+		if [ $(($eo & $ha2m)) -ne 0 ]; then
+			systemctl restart $ha2
+			((up+=2))
+		else
+			systemctl stop $ha2
+		fi
+
+		if [ $(($eo & $ha3m)) -ne 0 ]; then
+			systemctl restart $ha3
+			((up+=4))
+		else
+			systemctl stop $ha3
+		fi
+
+		if [ $(($eo & $ha4m)) -ne 0 ]; then
+			systemctl restart $ha4
+			((up+=8))
+		else
+			systemctl stop $ha4
+		fi
+
+		echo "ITER: $iter :: UP: $((10#${D2B[$up]})) :: EO: $eo"
 	fi
-
-	if [ $(($eo & $ha1m)) -ne 0 ]; then
-		systemctl restart $ha1
-		((up+=1))
-	else
-		systemctl stop $ha1
-	fi
-
-	if [ $(($eo & $ha2m)) -ne 0 ]; then
-		systemctl restart $ha2
-		((up+=2))
-	else
-		systemctl stop $ha2
-	fi
-
-	if [ $(($eo & $ha3m)) -ne 0 ]; then
-		systemctl restart $ha3
-		((up+=4))
-	else
-		systemctl stop $ha3
-	fi
-
-	if [ $(($eo & $ha4m)) -ne 0 ]; then
-		systemctl restart $ha4
-		((up+=8))
-	else
-		systemctl stop $ha4
-	fi
-
-	echo "ITER: $iter :: UP: $((10#${D2B[$up]})) :: EO: $eo"
 
 	make -f /opt/fusedav/tests/Makefile run-unit-tests
 done
-systemctl restart $ha1
-systemctl restart $ha2
-systemctl restart $ha3
-systemctl restart $ha4
+
+if [ $onebox -eq 1 ]; then
+	systemctl restart $ha1
+	systemctl restart $ha2
+	systemctl restart $ha3
+	systemctl restart $ha4
+fi
 
