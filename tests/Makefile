@@ -61,6 +61,18 @@ trunc = $(testdir)/trunc
 # number of write iters'trunc-flags=-v -r 8 -f 8 -s 32 -i 16'
 trunc-flags =
 
+saintmode-haproxy = $(testdir)/saintmode-haproxy.sh
+# -v for verbose, -i# for number of write iters'trunc-flags=-v -i 16'
+saintmode-haproxy-flags =
+
+saintmode-nginx = $(testdir)/saintmode-nginx.sh
+# -v for verbose, -i# for number of write iters'trunc-flags=-v -i 16'
+saintmode-nginx-flags =
+
+unhealthy-haproxy = $(testdir)/unhealthy-haproxy.sh
+# -v for verbose, -i# for number of write iters'trunc-flags=-v -i 16'
+unhealthy-haproxy-flags =
+
 # to run this test by invoking the Makefile, add binding=<binding id> to the make line
 # make -f /opt/fusedav/tests/Makefile binding=1b8e45be7c264476bbbc6f65610b3490 run-timestamptest
 # otherwise the test will exit prematurely
@@ -91,15 +103,11 @@ all: run-stress-tests
 run-unit-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-iozone-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress
-
+run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
 # run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
 run-continual-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
-
-# stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
 run-short-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc 
@@ -187,6 +195,15 @@ $(trunc): $(testdir)/trunc.c
 
 run-timestamptest:
 	$(timestamptest) $(timestamptest-flags)
+
+run-saintmode-haproxy:
+	$(saintmode-haproxy) $(saintmode-haproxy-flags)
+
+run-unhealthy-haproxy:
+	$(unhealthy-haproxy) $(unhealthy-haproxy-flags)
+
+run-saintmode-nginx:
+	$(saintmode-nginx) $(saintmode-nginx-flags)
 
 .PHONY: run-perfanalysis-write
 run-perfanalysis-write: $(perfanalysis-write)
