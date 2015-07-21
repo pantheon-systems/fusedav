@@ -24,7 +24,7 @@
 
 extern int num_filesystem_server_nodes;
 
-int session_config_init(char *base, char *ca_cert, char *client_cert);
+int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace);
 CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist);
 void session_config_free(void);
 const char *get_base_url(void);

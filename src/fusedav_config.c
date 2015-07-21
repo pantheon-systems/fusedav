@@ -290,7 +290,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
         return;
     }
 
-    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate) < 0 || inject_error(config_error_sessioninit)) {
+    if (session_config_init(config->uri, config->ca_certificate, config->client_certificate, config->grace) < 0 || inject_error(config_error_sessioninit)) {
         g_set_error(gerr, fusedav_config_quark(), ENETDOWN, "configure_fusedav: Failed to initialize session system.");
         return;
     }

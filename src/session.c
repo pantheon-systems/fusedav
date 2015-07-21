@@ -58,27 +58,39 @@ static __thread char nodeaddr[LOGSTRSZ];
 // When we construct a new slist, we need to track the status to know what action to take.
 enum slist_status {SUCCESS, GETADDRINFO_FAILURE, REQUIRES_NEW_SLIST};
 
-// REVIEW: We track connection health thread-by-thread. Ultimately all threads should have a similar view of the health
-// of the system. We don't want to take a node out of rotation for long periods of time, so we enter them back into
-// rotation frequently. If a node stays degraded for long periods of time, it will get accessed, and if it fails will
-// fall out of rotation again. Since we have a retry mechanism, the operation should succeed on following iterations,
-// so there should be only slight degradation of customer experience. The amount of traffic sent to a degraded node
-// remains small.
-// -- We set a node's score to 2 when it fails. All other nodes in a degraded state will have their score decremented.
-// This helps ensure that the node that failed most recently won't find itself at the top of the list for the next iteration.
-// -- The resolve slist is updated every 2 minutes. When we do, we mark degraded nodes as ready for rotation.
-// -- When we detect a bad connection, we create a new resolve slist and bounce the handle. We sort the list
-// so that healthy connections are at the top
+// We track connection health thread-by-thread. Ultimately all threads 
+// should have a similar view of the health of the system. We optimize 
+// for short outages, reducing the opportunities for fusedav to think 
+// a healthy node is unhealthy. We don't want to take a node out of 
+// rotation for long periods of time, so we enter them back into
+// rotation frequently. If a node stays degraded for long periods of time, 
+// it will get accessed, and if it fails will fall out of rotation again. 
+// Since we have a retry mechanism, the operation should succeed on following 
+// iterations, so there should be only slight degradation of customer 
+// experience. The amount of traffic sent to a degraded node remains small.
+
+// -- We set a node's score to 2 when it fails. All other nodes in a degraded 
+// state will have their score decremented. This helps ensure that the node 
+// that failed most recently won't find itself at the top of the list for 
+// the next iteration.
+// -- The resolve slist is updated every 2 minutes. When we do, we mark 
+// degraded nodes as ready for rotation.
+// -- When we detect a bad connection, we create a new resolve slist and 
+// bounce the handle. We sort the list so that healthy connections are at the top
 struct health_status_s {
     char curladdr[IPSTR_SZ]; // Keep track of complete string we pass to curl
     unsigned int score;
     time_t timestamp;
-    bool current; // Did we see this entry on this call to getaddrinfo (or have we deleted a node?)
+    // Did we see this entry on this call to getaddrinfo (or have we deleted a node?)
+    bool current; 
 };
 
-// This will be the list of randomized addresses we pass to curl (resolve_slist) and the hashtable of health status
-// Make it thread-local so each session gets its own.
-// Assuming that session==thread, but that's what we assume for session_tsd_key above
+// This will be the list of randomized addresses we pass to curl 
+// (resolve_slist) and the hashtable of health status. Make it thread-local 
+// so each session gets its own.
+
+// Assuming that session==thread, but that's what we assume for 
+// session_tsd_key above
 // Using __thread in preference to pthread_once mechanism; seems simpler and less error-prone
 struct node_status_s {
     struct curl_slist *resolve_slist;
@@ -98,6 +110,8 @@ struct addr_score_s {
 // expect a different node to try the second time. This will clear the thread
 // of continuing to target a bad node.
 int num_filesystem_server_nodes = 3;
+// Keep track of the config parameter grace so we can better manage saint mode
+static bool config_grace;
 
 static __thread time_t session_start_time;
 
@@ -112,7 +126,7 @@ const char *get_base_url(void) {
     return base_url;
 }
 
-int session_config_init(char *base, char *ca_cert, char *client_cert) {
+int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace) {
     size_t base_len;
     UriParserStateA state;
     UriUriA uri;
@@ -124,6 +138,7 @@ int session_config_init(char *base, char *ca_cert, char *client_cert) {
         log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_config_init: Failed to initialize libcurl.");
         return -1;
     }
+    config_grace = grace;
 
     // Ensure the base URL has no trailing slash.
     base_len = strlen(base);
@@ -439,8 +454,9 @@ const int saint_mode_duration = 10;
 bool use_saint_mode(void) {
     struct timespec now;
     bool use_saint;
-    pthread_mutex_lock(&last_failure_mutex);
+    if (!config_grace) return false;
     clock_gettime(CLOCK_MONOTONIC, &now);
+    pthread_mutex_lock(&last_failure_mutex);
     use_saint = (failure_timestamp + saint_mode_duration >= now.tv_sec);
     pthread_mutex_unlock(&last_failure_mutex);
     return use_saint;
@@ -448,13 +464,14 @@ bool use_saint_mode(void) {
 
 void set_saint_mode(void) {
     struct timespec now;
+    if (!config_grace) return;
     // First log for metrics; second for logs
     log_print(LOG_INFO, SECTION_ENHANCED,
         "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
     log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT,
         "Setting cluster saint mode for %lu seconds.", saint_mode_duration);
-    pthread_mutex_lock(&last_failure_mutex);
     clock_gettime(CLOCK_MONOTONIC, &now);
+    pthread_mutex_lock(&last_failure_mutex);
     failure_timestamp = now.tv_sec;
     pthread_mutex_unlock(&last_failure_mutex);
 }
