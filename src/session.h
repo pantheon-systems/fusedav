@@ -38,7 +38,23 @@ void aggregate_log_print_local(unsigned int log_level, unsigned int section, con
     const char *description1, unsigned long *count1, unsigned long value1,
     const char *description2, long *count2, long value2);
 
-void set_saint_mode(void);
+typedef enum { STATE_HEALTHY, STATE_SAINT_MODE, STATE_ATTEMPTING_TO_EXIT_SAINT_MODE, NUM_STATES } state_t;
+typedef enum { CLUSTER_FAILURE, SAINT_MODE_DURATION_EXPIRED, CLUSTER_SUCCESS, NUM_EVENTS } event_t;
+
+void action_s1_e1 (void);
+void action_s1_e2 (void);
+void action_s1_e3 (void);
+void action_s2_e1 (void);
+void action_s2_e2 (void);
+void action_s2_e3 (void);
+void action_s3_e1 (void);
+void action_s3_e2 (void);
+void action_s3_e3 (void);
+
+void try_release_request_outstanding(void);
+void trigger_saint_mode_expired_if_needed(void);
+void trigger_saint_event(event_t);
+state_t get_saint_state(void);
 bool use_saint_mode(void);
 
 #endif

@@ -476,6 +476,8 @@ static void get_fresh_fd(filecache_t *cache,
         session = session_request_init(path, NULL, false, new_resolve_list);
         if (!session || inject_error(filecache_error_freshsession)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET");
+            // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+            try_release_request_outstanding();
             goto finish;
         }
 
@@ -517,11 +519,13 @@ static void get_fresh_fd(filecache_t *cache,
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
-        set_saint_mode();
+        trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: curl_easy_perform is not CURLE_OK or 500: %s",
             curl_easy_strerror(res));
         goto finish;
+    } else {
+        trigger_saint_event(CLUSTER_SUCCESS);
     }
 
     // If we get a 304, the cache file has the same contents as the file on the server, so
@@ -1054,6 +1058,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             new_resolve_list = true;
         }
 
+        // REVIEW: Why don't we check for session == null here?
         session = session_request_init(path, NULL, false, new_resolve_list);
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
@@ -1081,8 +1086,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {
-        // Set saint mode, but treat as an error
-        set_saint_mode();
+        trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "put_return_etag: retry_curl_easy_perform is not CURLE_OK: %s", curl_easy_strerror(res));
         goto finish;
@@ -1094,6 +1098,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         unsigned long count;
         const char *sz;
 
+        trigger_saint_event(CLUSTER_SUCCESS);
         log_print(LOG_INFO, SECTION_FILECACHE_COMM, "put_return_etag: curl_easy_perform succeeds (fd=%d)", fd);
 
         // Ensure that it's a 2xx response code.
