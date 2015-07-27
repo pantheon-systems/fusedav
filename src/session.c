@@ -462,8 +462,13 @@ static bool set_health_status(char *addr, char *curladdr) {
  */
 // cluster_failure_timestamp is the most recent time we detected that all connections to the cluster were in some failed mode
 static time_t failure_timestamp = 0;
+// record the the first failure_timestamp in this saint_mode experience
+static time_t unhealthy_since_timestamp = 0;
 // Backoff time; avoid accessing the cluster for this many seconds
 const int saint_mode_duration = 10;
+// Affter this many seconds (15 minutes), emit a stat for a long-running saintmode event.
+const int saint_mode_warning_threshold = 60*15;
+
 
 void try_release_request_outstanding(void) {
     if (pthread_mutex_trylock(&request_outstanding) == 0) {
@@ -480,6 +485,7 @@ void action_s1_e1(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     failure_timestamp = now.tv_sec;
+    unhealthy_since_timestamp = now.tv_sec;
     saint_state = STATE_SAINT_MODE;
     log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_HEALTHY.");
 }
@@ -511,8 +517,14 @@ void action_s3_e3 (void) {
 void trigger_saint_mode_expired_if_needed(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
-    if (saint_state == STATE_SAINT_MODE && now.tv_sec >= failure_timestamp + saint_mode_duration)
+    if (saint_state == STATE_SAINT_MODE && now.tv_sec >= failure_timestamp + saint_mode_duration) {
         state_table[saint_state][SAINT_MODE_DURATION_EXPIRED]();
+        // If we've been in saintmode for longer than saint_mode_warning_threshold, emit a stat saying so.
+        if (now.tv_sec >= unhealthy_since_timestamp + saint_mode_warning_threshold) {
+            log_print(LOG_INFO, SECTION_ENHANCED,
+                "saint_mode active for %d seconds -- fusedav.%s.server-%s.long_running_saint_mode:1|c", now.tv_sec-unhealthy_since_timestamp, filesystem_cluster, nodeaddr);
+        }
+    }
 }
 
 void trigger_saint_event(event_t event) {
