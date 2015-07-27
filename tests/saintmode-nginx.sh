@@ -40,7 +40,7 @@ do
 done
 
 if [ $iters -eq 0 ]; then
-	iters=1
+	iters=4
 fi
 
 pass=0
@@ -107,7 +107,9 @@ do
 		else
 			pass=$((pass + 1))
 		fi
-		sleep 1
+		if [ $verbose -gt 0 ]; then
+			sleep 1
+		fi
 	done
 done
 if [ $onebox -eq 1 ]; then

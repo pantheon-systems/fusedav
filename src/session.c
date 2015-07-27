@@ -507,7 +507,7 @@ void action_s3_e1 (void) {
     try_release_request_outstanding();
     saint_state = STATE_SAINT_MODE;
     log_print(LOG_INFO, SECTION_ENHANCED, "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
 }
 void action_s3_e2 (void) {}
 void action_s3_e3 (void) {
@@ -515,7 +515,6 @@ void action_s3_e3 (void) {
     saint_state = STATE_HEALTHY;
     log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Event CLUSTER_SUCCESS; transitioned to STATE_HEALTHY from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
 }
-
 
 void trigger_saint_mode_expired_if_needed(void) {
     struct timespec now;
@@ -569,6 +568,26 @@ bool use_saint_mode(void) {
     return sm;
 }
 
+
+void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code) {
+    struct timespec start_time;
+    struct timespec now;
+    long elapsed_time;
+
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    *res = curl_easy_perform(session);
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if(*res == CURLE_OK) {
+        curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, response_code);
+    }
+    if (*res != CURLE_OK || *response_code >= 500) {
+        elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + 
+            ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+                "timed_curl_easy_perform: curl failed: %s : rc: %ld : elapsed_time: %ld\n", 
+                curl_easy_strerror(*res), *response_code, elapsed_time);
+    }
+}
 
 /* For reference, keep the different sockaddr structs available for inspection
  *

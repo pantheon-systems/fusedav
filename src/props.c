@@ -390,10 +390,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
             last_updated > 0 ? "progressive" : "complete", last_updated);
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
+
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("simple_propfind", res, response_code, idx, path);

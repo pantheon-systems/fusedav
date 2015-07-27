@@ -510,10 +510,7 @@ static void get_fresh_fd(filecache_t *cache,
         curl_easy_setopt(session, CURLOPT_WRITEDATA, &response_fd);
         curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_response_to_fd);
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
 
         log_filesystem_nodes("get_fresh_fd", res, response_code, idx, path);
     }
@@ -1074,12 +1071,10 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
         curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
-        res = curl_easy_perform(session);
+        timed_curl_easy_perform(session, &res, &response_code);
 
         fclose(fp);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("put_return_etag", res, response_code, idx, path);
