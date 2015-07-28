@@ -46,6 +46,18 @@
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
 
+pthread_mutex_t saint_state_mutex = PTHREAD_MUTEX_INITIALIZER;
+static state_t saint_state = STATE_HEALTHY;
+
+pthread_mutex_t request_outstanding = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+static int request_outstanding_lock_count = 0;
+
+void (*const state_table [NUM_STATES][NUM_EVENTS]) (void) = {
+    { action_s1_e1, action_s1_e2, action_s1_e3 }, /* procedures for state 1 */
+    { action_s2_e1, action_s2_e2, action_s2_e3 }, /* procedures for state 2 */
+    { action_s3_e1, action_s3_e2, action_s3_e3 }  /* procedures for state 3 */
+};
+
 // The string we pass to curl is domain:port:ip:address, so leave room
 #define IPSTR_SZ 128
 // Maximum number of A records (bzw IP addresses) our domain can resolve to
@@ -217,6 +229,9 @@ static void handle_cleanup(void *s) {
 // When a thread exits, we also want to free its hashtable. We don't want to free the hashtable if we are just
 // reinitializing the thread, since we want to keep the health status that causes those reinitializations
 static void session_destroy(void *s) {
+    pthread_mutex_lock(&saint_state_mutex);
+    try_release_request_outstanding();
+    pthread_mutex_unlock(&saint_state_mutex);
     handle_cleanup(s);
     g_hash_table_destroy(node_status.node_hash_table);
 }
@@ -446,35 +461,111 @@ static bool set_health_status(char *addr, char *curladdr) {
  * Regarding (2), propfinds should succeed, as should GETs (as if 304).
  */
 // cluster_failure_timestamp is the most recent time we detected that all connections to the cluster were in some failed mode
-pthread_mutex_t last_failure_mutex = PTHREAD_MUTEX_INITIALIZER;
 static time_t failure_timestamp = 0;
+// record the the first failure_timestamp in this saint_mode experience
+static time_t unhealthy_since_timestamp = 0;
 // Backoff time; avoid accessing the cluster for this many seconds
 const int saint_mode_duration = 10;
+// Affter this many seconds (15 minutes), emit a stat for a long-running saintmode event.
+const int saint_mode_warning_threshold = 60*15;
+
+
+void try_release_request_outstanding(void) {
+    if (pthread_mutex_trylock(&request_outstanding) == 0) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Release lock for request_outstanding, lock_count: %d", request_outstanding_lock_count);
+        for (int i = 0; i < request_outstanding_lock_count; i++) {
+            pthread_mutex_unlock(&request_outstanding);
+        }
+        request_outstanding_lock_count = 0;
+        pthread_mutex_unlock(&request_outstanding);
+    }
+}
+
+void action_s1_e1(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    failure_timestamp = now.tv_sec;
+    unhealthy_since_timestamp = now.tv_sec;
+    saint_state = STATE_SAINT_MODE;
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_HEALTHY.");
+}
+void action_s1_e2 (void) {}
+void action_s1_e3 (void) {}
+void action_s2_e1 (void) {}
+void action_s2_e2 (void) {
+    saint_state = STATE_ATTEMPTING_TO_EXIT_SAINT_MODE;
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Event SAINT_MODE_DURATION_EXPIRED; transitioned to STATE_ATTEMPTING_TO_EXIT_SAINT_MODE from STATE_SAINT_MODE.");
+}
+void action_s2_e3 (void) {}
+void action_s3_e1 (void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    failure_timestamp = now.tv_sec;
+    try_release_request_outstanding();
+    saint_state = STATE_SAINT_MODE;
+    log_print(LOG_INFO, SECTION_ENHANCED, "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
+}
+void action_s3_e2 (void) {}
+void action_s3_e3 (void) {
+    try_release_request_outstanding();
+    saint_state = STATE_HEALTHY;
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "Event CLUSTER_SUCCESS; transitioned to STATE_HEALTHY from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
+}
+
+
+void trigger_saint_mode_expired_if_needed(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    if (saint_state == STATE_SAINT_MODE && now.tv_sec >= failure_timestamp + saint_mode_duration) {
+        state_table[saint_state][SAINT_MODE_DURATION_EXPIRED]();
+        // If we've been in saintmode for longer than saint_mode_warning_threshold, emit a stat saying so.
+        if (now.tv_sec >= unhealthy_since_timestamp + saint_mode_warning_threshold) {
+            log_print(LOG_INFO, SECTION_ENHANCED,
+                "saint_mode active for %d seconds -- fusedav.%s.server-%s.long_running_saint_mode:1|c", now.tv_sec-unhealthy_since_timestamp, filesystem_cluster, nodeaddr);
+        }
+    }
+}
+
+void trigger_saint_event(event_t event) {
+    if (!config_grace) return;
+    pthread_mutex_lock(&saint_state_mutex);
+    trigger_saint_mode_expired_if_needed(); // trigger SAINT_MODE_DURATION_EXPIRED if duration has expired.
+    state_table[saint_state][event]();
+    pthread_mutex_unlock(&saint_state_mutex);
+}
+
+state_t get_saint_state(void) {
+    pthread_mutex_lock(&saint_state_mutex);
+    trigger_saint_mode_expired_if_needed();
+    pthread_mutex_unlock(&saint_state_mutex);
+    return saint_state;
+}
 
 bool use_saint_mode(void) {
-    struct timespec now;
-    bool use_saint;
-    if (!config_grace) return false;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    pthread_mutex_lock(&last_failure_mutex);
-    use_saint = (failure_timestamp + saint_mode_duration >= now.tv_sec);
-    pthread_mutex_unlock(&last_failure_mutex);
-    return use_saint;
+    bool sm = false;
+    pthread_mutex_lock(&saint_state_mutex);
+    trigger_saint_mode_expired_if_needed();
+
+    if (saint_state == STATE_HEALTHY) {
+        sm = false;
+    } else if (saint_state == STATE_SAINT_MODE) {
+        sm = true;
+    } else if (saint_state == STATE_ATTEMPTING_TO_EXIT_SAINT_MODE) {
+        if (pthread_mutex_trylock(&request_outstanding) == 0) {
+            request_outstanding_lock_count++;
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Aquire lock for request_outstanding, lock_count: %d", request_outstanding_lock_count);
+            sm = false;
+        } else {
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "Failed to aquire request_outstanding, using saint_mode");
+            sm = true;
+        }
+    }
+
+    pthread_mutex_unlock(&saint_state_mutex);
+    return sm;
 }
 
-void set_saint_mode(void) {
-    struct timespec now;
-    if (!config_grace) return;
-    // First log for metrics; second for logs
-    log_print(LOG_INFO, SECTION_ENHANCED,
-        "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
-    log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT,
-        "Setting cluster saint mode for %lu seconds.", saint_mode_duration);
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    pthread_mutex_lock(&last_failure_mutex);
-    failure_timestamp = now.tv_sec;
-    pthread_mutex_unlock(&last_failure_mutex);
-}
 
 /* For reference, keep the different sockaddr structs available for inspection
  *
