@@ -250,10 +250,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
-                res = curl_easy_perform(session);
-                if(res == CURLE_OK) {
-                    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-                }
+                timed_curl_easy_perform(session, &res, &response_code);
 
                 log_filesystem_nodes("getdir_propfind_callback", res, response_code, idx, path);
             }
@@ -898,10 +895,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
             log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
-            res = curl_easy_perform(session);
-            if(res == CURLE_OK) {
-                curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-            }
+            timed_curl_easy_perform(session, &res, &response_code);
 
             if (slist) curl_slist_free_all(slist);
 
@@ -1018,10 +1012,7 @@ static int dav_rmdir(const char *path) {
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
 
         if (slist) curl_slist_free_all(slist);
 
@@ -1094,10 +1085,8 @@ static int dav_mkdir(const char *path, mode_t mode) {
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
+
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("dav_mkdir", res, response_code, idx, path);
@@ -1201,10 +1190,8 @@ static int dav_rename(const char *from, const char *to) {
 
         // Do the server side move
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
+
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("dav_rename", res, response_code, idx, to);
@@ -1524,9 +1511,15 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
 }
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
 
     BUMP(dav_open);
+
+    if (config->grace && use_saint_mode() && ((info->flags & O_TRUNC) || (info->flags & O_APPEND))) {
+        g_set_error(&gerr, fusedav_quark(), ENETDOWN, "trying to write in saint mode");
+        return processed_gerror("dav_open: ", path, &gerr);
+    }
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
@@ -1547,7 +1540,6 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     // Update stat cache value to reset the file size to 0 on trunc.
     if (info->flags & O_TRUNC) {
         struct stat_cache_value value;
-        struct fusedav_config *config = fuse_get_context()->private_data;
         int fd = filecache_fd(info);
 
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1606,10 +1598,10 @@ static bool file_too_big(off_t fsz, off_t maxsz, const char *path) {
     // We need to know the difference between a file which is exactly,
     // e.g. 256MB, and one that is some bytes larger than that.
     maxsz *= (1024 * 1024);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_IO, "dav_write: fsz (%lu); maxsz (%lu)", fsz, maxsz);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_IO, "file_too_big: fsz (%lu); maxsz (%lu)", fsz, maxsz);
     if (fsz > maxsz) {
         log_print(LOG_NOTICE, SECTION_FUSEDAV_IO, 
-            "dav_write: file size (%lu) is greater than max allowed (%lu) for file %s", fsz, maxsz, path);
+            "file_too_big: file size (%lu) is greater than max allowed (%lu) for file %s", fsz, maxsz, path);
         return true;
     }
     return false;

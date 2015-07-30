@@ -56,5 +56,6 @@ void trigger_saint_mode_expired_if_needed(void);
 void trigger_saint_event(event_t);
 state_t get_saint_state(void);
 bool use_saint_mode(void);
+void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code);
 
 #endif

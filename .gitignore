@@ -27,6 +27,7 @@ config.h.in
 /tests/trunc
 tests/perfanalysis-read
 tests/perfanalysis-write
+tests/one-open-many-writes
 /src/*.plist
 _trial_temp*
 
