@@ -459,6 +459,9 @@ static bool set_health_status(char *addr, char *curladdr) {
  * 1. If in cluster saint mode, back off accessing the cluster for a given period of time
  * 2. If in cluster saint mode, where possible, assume local state is correct.
  * Regarding (2), propfinds should succeed, as should GETs (as if 304).
+ *
+ * We implement a simple state machine to keep track of saint_state. See the diagram at:
+ *     documentation/saint_mode_machine_state.png
  */
 // cluster_failure_timestamp is the most recent time we detected that all connections to the cluster were in some failed mode
 static time_t failure_timestamp = 0;
