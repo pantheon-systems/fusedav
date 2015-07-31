@@ -1621,6 +1621,11 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
 
     log_print(LOG_INFO, SECTION_FUSEDAV_IO, "CALLBACK: dav_write(%s, %lu+%lu)", path ? path : "null path", (unsigned long) offset, (unsigned long) size);
 
+    if (config->grace && use_saint_mode()) {
+        g_set_error(&gerr, fusedav_quark(), ENETDOWN, "trying to write in saint mode");
+        return processed_gerror("dav_write: ", path, &gerr);
+    }
+
     bytes_written = filecache_write(info, buf, size, offset, &gerr);
     if (gerr) {
         return processed_gerror("dav_write: ", path, &gerr);
