@@ -347,6 +347,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         if (!session || inject_error(props_error_spropfindsession)) {
             g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
             free(query_string);
+            // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+            try_release_request_outstanding();
             goto finish;
         }
 
@@ -388,10 +390,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
             last_updated > 0 ? "progressive" : "complete", last_updated);
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
+
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("simple_propfind", res, response_code, idx, path);
@@ -402,11 +402,12 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
         log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s rc: %lu",
             last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
-        // Go into saint mode.
-        set_saint_mode();
+        trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
         g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed, ENETDOWN", path);
         goto finish;
+    } else {
+        trigger_saint_event(CLUSTER_SUCCESS);
     }
 
     // injected error props_error_spropfindunkcode will fall through to the else clause

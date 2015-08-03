@@ -49,8 +49,12 @@ readwhatwaswritten = $(testdir)/readwhatwaswritten
 readwhatwaswritten-flags =
 
 continualwrites = $(testdir)/continualwrites
-# flag -v for verbose, -f# for number of files 'continualwrites-flags=-v -u -f16'
+# flag -v for verbose, -f# for number of files 'continualwrites-flags=-v -w -f16'
 continualwrites-flags =
+
+one-open-many-writes = $(testdir)/one-open-many-writes 
+# flag -v for verbose, -f# for number of files 'one-open-many-writes=-v -w -f16'
+one-open-many-writes-flags =
 
 forensichaventest = $(testdir)/forensic-haven-test
 # currently there are no flags
@@ -62,12 +66,16 @@ trunc = $(testdir)/trunc
 trunc-flags =
 
 saintmode-haproxy = $(testdir)/saintmode-haproxy.sh
-# -v for verbose, -i# for number of write iters'trunc-flags=-v -i 16'
+# -v for verbose, -i# for number of write iters'saintmode-haproxy-flags=-v -i 16'
 saintmode-haproxy-flags =
 
 saintmode-nginx = $(testdir)/saintmode-nginx.sh
-# -v for verbose, -i# for number of write iters'trunc-flags=-v -i 16'
+# -v for verbose, -i# for number of write iters'saintmode-nginx-flags=-v -i 16'
 saintmode-nginx-flags =
+
+saintmode-writes-nginx = $(testdir)/saintmode-writes-nginx.sh
+# -v for verbose, -i# for number of write iters'saintmode-writes-nginx-flags=-v -i 16'
+saintmode-writes-nginx-flags =
 
 unhealthy-haproxy = $(testdir)/unhealthy-haproxy.sh
 # -v for verbose, -i# for number of write iters'trunc-flags=-v -i 16'
@@ -103,7 +111,7 @@ all: run-stress-tests
 run-unit-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-iozone-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy
+run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxyrun-saintmode-writes-nginx
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
 # run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
@@ -181,6 +189,12 @@ run-continualwrites-unit: $(continualwrites)
 $(continualwrites): $(testdir)/continualwrites.c
 	cc $< -std=c99 -g -o $@
 
+run-one-open-many-writes-unit: $(one-open-many-writes)
+	$(one-open-many-writes) $(one-open-many-writes-flags)
+
+$(one-open-many-writes): $(testdir)/one-open-many-writes.c
+	cc $< -std=c99 -g -o $@
+
 run-forensic-haven-unit: $(forensichaventest)
 	$(forensichaventest) -f16 $(forensichaventest-flags)
 
@@ -204,6 +218,9 @@ run-unhealthy-haproxy:
 
 run-saintmode-nginx:
 	$(saintmode-nginx) $(saintmode-nginx-flags)
+
+run-saintmode-writes-nginx:
+	$(saintmode-writes-nginx) $(saintmode-writes-nginx-flags)
 
 .PHONY: run-perfanalysis-write
 run-perfanalysis-write: $(perfanalysis-write)

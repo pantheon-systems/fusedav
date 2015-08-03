@@ -241,6 +241,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
 
                 if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
+                    // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+                    try_release_request_outstanding();
                     return;
                 }
 
@@ -248,10 +250,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
-                res = curl_easy_perform(session);
-                if(res == CURLE_OK) {
-                    curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-                }
+                timed_curl_easy_perform(session, &res, &response_code);
 
                 log_filesystem_nodes("getdir_propfind_callback", res, response_code, idx, path);
             }
@@ -259,11 +258,13 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             if (session) session_temp_handle_destroy(session);
 
             if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
-                set_saint_mode();
+                trigger_saint_event(CLUSTER_FAILURE);
                 set_dynamic_logging();
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: curl failed: %s : rc: %ld\n",
                     curl_easy_strerror(res), response_code);
                 return;
+            } else {
+                trigger_saint_event(CLUSTER_SUCCESS);
             }
 
             if (response_code >= 400 && response_code < 500) {
@@ -460,6 +461,7 @@ static int dav_readdir(
             log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "dav_readdir: Second call to stat_cache_enumerate: %d", ret);
             if (gerr) {
                 // The call to update_directory put the thread into saint mode. Retry now that we are in saint mode.
+                // TODO(kibra): This `use_saint_mode` should NOT lock this thread to trying a server request!
                 if (idx == 0 && gerr->code == ENETDOWN && config->grace && use_saint_mode()) {
                     log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "dav_readdir: Transitioned into saint mode on %s", path);
                     ignore_freshness = true;
@@ -760,6 +762,7 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
         for (int idx = 0; idx < 2; idx++) {
             get_stat(path, stbuf, &tmpgerr);
             if (tmpgerr) {
+                // TODO(kibra): This `use_saint_mode` should NOT lock this thread to trying a server request!
                 if (idx == 0 && tmpgerr->code == ENETDOWN && config->grace && use_saint_mode()) {
                     log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "common_getattr: Transitioned into saint mode on %s", path);
                     continue;
@@ -881,6 +884,8 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             slist = NULL;
             if (!(session = session_request_init(path, NULL, false, new_resolve_list)) || inject_error(fusedav_error_cunlinksession)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
+                // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+                try_release_request_outstanding();
                 return;
             }
 
@@ -890,10 +895,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
             log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
-            res = curl_easy_perform(session);
-            if(res == CURLE_OK) {
-                curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-            }
+            timed_curl_easy_perform(session, &res, &response_code);
 
             if (slist) curl_slist_free_all(slist);
 
@@ -901,10 +903,12 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         }
 
         if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
-            set_saint_mode();
+            trigger_saint_event(CLUSTER_FAILURE);
             set_dynamic_logging();
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: DELETE failed: %s", curl_easy_strerror(res));
             return;
+        } else {
+            trigger_saint_event(CLUSTER_SUCCESS);
         }
     }
 
@@ -998,6 +1002,8 @@ static int dav_rmdir(const char *path) {
 
         if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
+            // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+            try_release_request_outstanding();
             return -ENETDOWN;
         }
 
@@ -1006,10 +1012,7 @@ static int dav_rmdir(const char *path) {
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
 
         if (slist) curl_slist_free_all(slist);
 
@@ -1017,10 +1020,12 @@ static int dav_rmdir(const char *path) {
     }
 
     if (res != CURLE_OK || response_code >= 500) {
-        set_saint_mode();
+        trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): DELETE failed: %s", path, curl_easy_strerror(res));
         return -ENETDOWN;
+    } else {
+        trigger_saint_event(CLUSTER_SUCCESS);
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_rmdir: removed(%s)", path);
@@ -1070,6 +1075,8 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
         if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
+            // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+            try_release_request_outstanding();
             return -ENETDOWN;
         }
 
@@ -1078,20 +1085,20 @@ static int dav_mkdir(const char *path, mode_t mode) {
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
+
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("dav_mkdir", res, response_code, idx, path);
     }
 
     if (res != CURLE_OK || response_code >= 500) {
-        set_saint_mode();
+        trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): MKCOL failed: %s", path, curl_easy_strerror(res));
         return -ENETDOWN;
+    } else {
+        trigger_saint_event(CLUSTER_SUCCESS);
     }
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1160,6 +1167,8 @@ static int dav_rename(const char *from, const char *to) {
 
         if (!(session = session_request_init(from, NULL, false, new_resolve_list))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
+            // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+            try_release_request_outstanding();
             goto finish;
         }
 
@@ -1181,10 +1190,8 @@ static int dav_rename(const char *from, const char *to) {
 
         // Do the server side move
 
-        res = curl_easy_perform(session);
-        if(res == CURLE_OK) {
-            curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, &response_code);
-        }
+        timed_curl_easy_perform(session, &res, &response_code);
+
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("dav_rename", res, response_code, idx, to);
@@ -1197,25 +1204,27 @@ static int dav_rename(const char *from, const char *to) {
      * fails, not 404: error, exit
      */
     if(res != CURLE_OK || response_code >= 500) {
-        set_saint_mode();
+        trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
         log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed: %s", curl_easy_strerror(res));
         goto finish;
-    }
-    else if (response_code >= 400) {
-        if (response_code == 404) {
-            // We allow silent failures because we might have done a rename before the
-            // file ever made it to the server
-            log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with 404, recoverable");
-            // Allow the error code -EIO to percolate down, we need to pass the local move
+    } else {
+        trigger_saint_event(CLUSTER_SUCCESS);
+        if (response_code >= 400) {
+            if (response_code == 404) {
+                // We allow silent failures because we might have done a rename before the
+                // file ever made it to the server
+                log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with 404, recoverable");
+                // Allow the error code -EIO to percolate down, we need to pass the local move
+            }
+            else {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with %d", response_code);
+                goto finish;
+            }
         }
         else {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with %d", response_code);
-            goto finish;
+            server_ret = 0;
         }
-    }
-    else {
-        server_ret = 0;
     }
 
     /* If the server_side failed, then both the stat_cache and filecache moves need to succeed */
@@ -1502,9 +1511,15 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
 }
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
 
     BUMP(dav_open);
+
+    if (config->grace && use_saint_mode() && ((info->flags & O_TRUNC) || (info->flags & O_APPEND))) {
+        g_set_error(&gerr, fusedav_quark(), ENETDOWN, "trying to write in saint mode");
+        return processed_gerror("dav_open: ", path, &gerr);
+    }
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
@@ -1525,7 +1540,6 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     // Update stat cache value to reset the file size to 0 on trunc.
     if (info->flags & O_TRUNC) {
         struct stat_cache_value value;
-        struct fusedav_config *config = fuse_get_context()->private_data;
         int fd = filecache_fd(info);
 
         // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1584,10 +1598,10 @@ static bool file_too_big(off_t fsz, off_t maxsz, const char *path) {
     // We need to know the difference between a file which is exactly,
     // e.g. 256MB, and one that is some bytes larger than that.
     maxsz *= (1024 * 1024);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_IO, "dav_write: fsz (%lu); maxsz (%lu)", fsz, maxsz);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_IO, "file_too_big: fsz (%lu); maxsz (%lu)", fsz, maxsz);
     if (fsz > maxsz) {
         log_print(LOG_NOTICE, SECTION_FUSEDAV_IO, 
-            "dav_write: file size (%lu) is greater than max allowed (%lu) for file %s", fsz, maxsz, path);
+            "file_too_big: file size (%lu) is greater than max allowed (%lu) for file %s", fsz, maxsz, path);
         return true;
     }
     return false;
