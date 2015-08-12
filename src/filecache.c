@@ -457,23 +457,15 @@ static void get_fresh_fd(filecache_t *cache,
     }
 
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
+        long elapsed_time = 0;
         CURL *session;
         struct curl_slist *slist = NULL;
-        bool new_resolve_list;
-
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
 
         // These will be -1 and [0] = '\0' on idx 0; but subsequent iterations we need to clean up from previous time
         if (response_fd >= 0) close(response_fd);
         if (response_filename[0] != '\0') unlink(response_filename);
 
-        session = session_request_init(path, NULL, false, new_resolve_list);
+        session = session_request_init(path, NULL, false);
         if (!session || inject_error(filecache_error_freshsession)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET");
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
@@ -510,9 +502,11 @@ static void get_fresh_fd(filecache_t *cache,
         curl_easy_setopt(session, CURLOPT_WRITEDATA, &response_fd);
         curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_response_to_fd);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         log_filesystem_nodes("get_fresh_fd", res, response_code, idx, path);
+
+        report_status(session, res, response_code, elapsed_time, false);
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
@@ -1032,10 +1026,10 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     for (int idx = 0;
          idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500);
          idx++) {
+        long elapsed_time = 0;
         CURL *session;
         struct curl_slist *slist = NULL;
         FILE *fp;
-        bool new_resolve_list;
 
         fp = fdopen(dup(fd), "r");
         if (!fp) {
@@ -1047,16 +1041,15 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             goto finish;
         }
 
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
+        // REVIEW: We didn't use to check for sesssion == NULL, so now we 
+        // also call try_release_request_outstanding. Is this OK?
+        session = session_request_init(path, NULL, false);
+        if (!session || inject_error(filecache_error_freshsession)) {
+            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "get_fresh_fd: Failed session_request_init on GET");
+            // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+            try_release_request_outstanding();
+            goto finish;
         }
-        else {
-            new_resolve_list = true;
-        }
-
-        // REVIEW: Why don't we check for session == null here?
-        session = session_request_init(path, NULL, false, new_resolve_list);
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
         curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
@@ -1071,13 +1064,15 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
         curl_easy_setopt(session, CURLOPT_WRITEHEADER, etag);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         fclose(fp);
 
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("put_return_etag", res, response_code, idx, path);
+
+        report_status(session, res, response_code, elapsed_time, false);
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {

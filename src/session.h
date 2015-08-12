@@ -25,11 +25,12 @@
 extern int num_filesystem_server_nodes;
 
 int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace);
-CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist);
+CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle);
 void session_config_free(void);
+void report_status(CURL *session, CURLcode res, long response_code, long elapsed_time, bool tmp_session);
 const char *get_base_url(void);
 char *escape_except_slashes(CURL *session, const char *path);
-void session_temp_handle_destroy(CURL *session);
+void delete_tmp_session(CURL *session);
 void log_filesystem_nodes(const char *fcn_name, const CURLcode res, const long response_code, const int iter, const char *path);
 void aggregate_log_print_server(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
     const char *description1, unsigned long *count1, unsigned long value1,
@@ -56,6 +57,6 @@ void trigger_saint_mode_expired_if_needed(void);
 void trigger_saint_event(event_t);
 state_t get_saint_state(void);
 bool use_saint_mode(void);
-void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code);
+void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code, long *elapsed_time);
 
 #endif

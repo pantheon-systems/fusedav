@@ -70,6 +70,9 @@ static __thread char nodeaddr[LOGSTRSZ];
 // When we construct a new slist, we need to track the status to know what action to take.
 enum slist_status {SUCCESS, GETADDRINFO_FAILURE, REQUIRES_NEW_SLIST};
 
+// Do we need to create a new slist? session? both?
+enum new_session_new_slist {NEITHER, SESSION, SLIST, BOTH};
+
 // We track connection health thread-by-thread. Ultimately all threads 
 // should have a similar view of the health of the system. We optimize 
 // for short outages, reducing the opportunities for fusedav to think 
@@ -308,171 +311,6 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
     return 0;
 }
 
-static CURL *session_get_handle(bool new_handle) {
-    CURL *session;
-
-    pthread_once(&session_once, session_tsd_key_init);
-
-    if ((session = pthread_getspecific(session_tsd_key))) {
-        if (new_handle) {
-            log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_get_handle: destroying old handle and creating a new one");
-            handle_cleanup(session);
-        }
-        else {
-            return session;
-        }
-    }
-
-    // create the hash table of node addresses for which we will keep health status
-    // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
-    // since the hashtable keeps track of the health status of connections causing the reinitialization
-
-    // Keep track of start time so we can track how long sessions stay open
-    session_start_time = time(NULL);
-
-    // The first log print will be stripped by log stash because it has the stats designator 1|c, so log one without it
-    log_print(LOG_INFO, SECTION_ENHANCED, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
-    session = curl_easy_init();
-    if (!session) return NULL;
-
-    update_session_count(true);
-    pthread_setspecific(session_tsd_key, session);
-
-    return session;
-}
-
-// get a temporary handles
-static CURL *session_get_temp_handle(void) {
-    CURL *session;
-
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening temporary cURL session.");
-    session = curl_easy_init();
-    if (!session) return NULL;
-
-    update_session_count(true);
-
-    return session;
-}
-
-void session_temp_handle_destroy(CURL *session) {
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
-    if (session) {
-        curl_easy_cleanup(session);
-        update_session_count(false);
-    }
-}
-
-// Return value should be freed using curl_free().
-char *escape_except_slashes(CURL *session, const char *path) {
-    size_t path_len = strlen(path);
-    char *mutable_path = strndup(path, path_len);
-    char *escaped_path = NULL;
-    size_t escaped_path_pos;
-
-    if (mutable_path == NULL) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Could not allocate memory in strndup for escape_except_slashes.");
-        goto finish;
-    }
-
-    // Convert all slashes to the non-escaped "0" character.
-    for (size_t i = 0; i < path_len; ++i) {
-        if (path[i] == '/') {
-            mutable_path[i] = '0';
-        }
-    }
-
-    escaped_path = curl_easy_escape(session, mutable_path, path_len);
-
-    if (escaped_path == NULL) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Could not allocate memory in curl_easy_escape for escape_except_slashes.");
-        goto finish;
-    }
-
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "escape_except_slashes: escaped_path: %s", escaped_path);
-
-    // Restore all slashes.
-    escaped_path_pos = 0;
-    for (size_t i = 0; i < path_len; ++i) {
-        if (path[i] == '/') {
-            escaped_path[escaped_path_pos] = '/';
-        }
-        if (escaped_path[escaped_path_pos] == '%') {
-            escaped_path_pos += 2;
-        }
-        ++escaped_path_pos;
-    }
-
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "escape_except_slashes: final escaped_path: %s", escaped_path);
-
-finish:
-    free(mutable_path);
-    return escaped_path;
-}
-
-static int compare_node_score(const void *x, const void *y) {
-    const struct addr_score_s *a = (const struct addr_score_s *)*(const struct addr_score_s * const *)x;
-    const struct addr_score_s *b = (const struct addr_score_s *)*(const struct addr_score_s * const *)y;
-
-    if (a->score > b->score) return 1;
-    else if (a->score < b->score) return -1;
-    else return 0;
-}
-
-/* Arrange the N elements of ARRAY in random order.
-   Only effective if N is much smaller than RAND_MAX;
-   if this may not be the case, use a better random
-   number generator. */
-static void randomize(void *array[], int n) {
-    struct timespec ts;
-    // Randomize!
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    srand(ts.tv_nsec * ts.tv_sec);
-
-    if (n > 1) {
-        for (int idx = 0; idx < n - 1; idx++) {
-          int jdx = idx + rand() / (RAND_MAX / (n - idx) + 1);
-          void *t = array[jdx];
-          array[jdx] = array[idx];
-          array[idx] = t;
-        }
-    }
-}
-
-static struct health_status_s *get_health_status(char *addr) {
-    return g_hash_table_lookup(node_status.node_hash_table, addr);
-}
-
-static bool set_health_status(char *addr, char *curladdr) {
-    bool added_entry = false;
-    struct health_status_s *health_status = NULL;
-    health_status = g_hash_table_lookup(node_status.node_hash_table, addr);
-    if (health_status) {
-        if (curladdr && health_status->curladdr[0] == '\0') {
-            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: existing entry didn't have curladdr %s", addr);
-        }
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "set_health_status: reusing entry for %s", addr);
-        health_status->current = true;
-    }
-    else {
-        health_status = g_new(struct health_status_s, 1);
-        health_status->score = 0;
-        health_status->timestamp = 0;
-        health_status->current = true;
-        if (curladdr) {
-            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
-        }
-        else {
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: new entry doesn't have curladdr %s", addr);
-        }
-        g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "set_health_status: creating new entry for %s", addr);
-        added_entry = true;
-    }
-    return added_entry;
-}
-
 /* cluster saint mode means:
  * 1. If in cluster saint mode, back off accessing the cluster for a given period of time
  * 2. If in cluster saint mode, where possible, assume local state is correct.
@@ -586,11 +424,9 @@ bool use_saint_mode(void) {
     return sm;
 }
 
-
-void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code) {
+void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code, long *elapsed_time) {
     struct timespec start_time;
     struct timespec now;
-    long elapsed_time;
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     *res = curl_easy_perform(session);
@@ -598,12 +434,249 @@ void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code) 
     if(*res == CURLE_OK) {
         curl_easy_getinfo(session, CURLINFO_RESPONSE_CODE, response_code);
     }
-    if (*res != CURLE_OK || *response_code >= 500) {
-        elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + 
-            ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
+    *elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + 
+        ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
+    if (*res != CURLE_OK) {
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
-                "timed_curl_easy_perform: curl failed: %s : rc: %ld : elapsed_time: %ld\n", 
-                curl_easy_strerror(*res), *response_code, elapsed_time);
+                "timed_curl_easy_perform: curl failed: %s : *elapsed_time: %ld\n", 
+                curl_easy_strerror(*res), *elapsed_time);
+    }
+    else if (*response_code >= 500) {
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+                "timed_curl_easy_perform: rc: %ld : *elapsed_time: %ld\n", 
+                *response_code, *elapsed_time);
+    }
+}
+
+// Return value should be freed using curl_free().
+char *escape_except_slashes(CURL *session, const char *path) {
+    size_t path_len = strlen(path);
+    char *mutable_path = strndup(path, path_len);
+    char *escaped_path = NULL;
+    size_t escaped_path_pos;
+
+    if (mutable_path == NULL) {
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Could not allocate memory in strndup for escape_except_slashes.");
+        goto finish;
+    }
+
+    // Convert all slashes to the non-escaped "0" character.
+    for (size_t i = 0; i < path_len; ++i) {
+        if (path[i] == '/') {
+            mutable_path[i] = '0';
+        }
+    }
+
+    escaped_path = curl_easy_escape(session, mutable_path, path_len);
+
+    if (escaped_path == NULL) {
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "Could not allocate memory in curl_easy_escape for escape_except_slashes.");
+        goto finish;
+    }
+
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "escape_except_slashes: escaped_path: %s", escaped_path);
+
+    // Restore all slashes.
+    escaped_path_pos = 0;
+    for (size_t i = 0; i < path_len; ++i) {
+        if (path[i] == '/') {
+            escaped_path[escaped_path_pos] = '/';
+        }
+        if (escaped_path[escaped_path_pos] == '%') {
+            escaped_path_pos += 2;
+        }
+        ++escaped_path_pos;
+    }
+
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "escape_except_slashes: final escaped_path: %s", escaped_path);
+
+finish:
+    free(mutable_path);
+    return escaped_path;
+}
+
+/*  START SESSION CREATE/DELETE CODE */
+
+/* Arrange the N elements of ARRAY in random order.
+   Only effective if N is much smaller than RAND_MAX;
+   if this may not be the case, use a better random
+   number generator. */
+static void randomize(void *array[], int n) {
+    struct timespec ts;
+    // Randomize!
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    srand(ts.tv_nsec * ts.tv_sec);
+
+    if (n > 1) {
+        for (int idx = 0; idx < n - 1; idx++) {
+          int jdx = idx + rand() / (RAND_MAX / (n - idx) + 1);
+          void *t = array[jdx];
+          array[jdx] = array[idx];
+          array[idx] = t;
+        }
+    }
+}
+
+static int compare_node_score(const void *x, const void *y) {
+    const struct addr_score_s *a = (const struct addr_score_s *)*(const struct addr_score_s * const *)x;
+    const struct addr_score_s *b = (const struct addr_score_s *)*(const struct addr_score_s * const *)y;
+
+    if (a->score > b->score) return 1;
+    else if (a->score < b->score) return -1;
+    else return 0;
+}
+
+static bool set_health_status(char *addr, char *curladdr) {
+    bool added_entry = false;
+    struct health_status_s *health_status = NULL;
+    health_status = g_hash_table_lookup(node_status.node_hash_table, addr);
+    if (health_status) {
+        if (curladdr && health_status->curladdr[0] == '\0') {
+            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: existing entry didn't have curladdr %s", addr);
+        }
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "set_health_status: reusing entry for %s", addr);
+        health_status->current = true;
+    }
+    else {
+        health_status = g_new(struct health_status_s, 1);
+        health_status->score = 0;
+        health_status->timestamp = 0;
+        health_status->current = true;
+        if (curladdr) {
+            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
+        }
+        else {
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_health_status: new entry doesn't have curladdr %s", addr);
+        }
+        g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "set_health_status: creating new entry for %s", addr);
+        added_entry = true;
+    }
+    return added_entry;
+}
+
+static struct health_status_s *get_health_status(char *addr) {
+    return g_hash_table_lookup(node_status.node_hash_table, addr);
+}
+
+// JB TODO: if we timed out, we construct_resolve_slist but don't need a new session. Make this happen.
+
+// JB TODO: separate out construct_resolve_slist into two parts.
+// Part 1 to check if slist changed; Part 2 to make a new slist
+
+    // 1. new_slist is false
+    // a. slist timeout has not elapsed: call construct_resolve_slist here but not
+    // below. No new slist, no new session 
+    // b. slist timeout has elapsed and no new nodes added or removed: create 
+    // new slist here, but not below. New slist, no new session, new slist 
+    // will take effect when curl gets around to it (a couple of minutes)
+    // c. slist timeout has elapsed and new node added or deleted: create 
+    // new slist and set new_slist below; this slist will be deleted when 
+    // we make a new session, and then recreated in the call to 
+    // construct_resolve_slist below since we set new_slist.
+    // d. slist timeout has not elapsed, but there happens to be a node added
+    // or deleted: it will not be detected in this call but only later when 
+    // slist timeout has elapsed. So, for the duration of slist timeout, 
+    // new nodes will not yet get traffic; deleted nodes will continue to get traffic
+    // 2. new_slist is true
+    // a. Skip this call to construct_resolve_slist, create new session below, then
+    // call construct_resolve_slist below to create the new slist.
+    //
+    // If there is an added or deleted node, construct_slist is called redundantly;
+    // the results of the first call are thrown out when a new session is created,
+    // then the new slist is created again.
+    //
+    // The purpose of this initial call to construct_resolve_slist is to determine
+    // whether a node has been added or deleted so we can take action and
+    // make sure a new session and slist get created.
+
+static void construct_resolve_slist(GHashTable *addr_table, bool new_session) {
+    int addr_score_idx = 0;
+    GHashTableIter iter;
+    gpointer key, value;
+    bool changed_list = false; // Did we change the list?
+    struct addr_score_s *addr_score[MAX_NODES + 1] = {NULL};
+
+    changed_list = new_session;
+
+    // Is there anything in node_hash_table not in addr table,
+    // e.g. a deleted addr
+    g_hash_table_iter_init (&iter, node_status.node_hash_table);
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        bool exists = false;
+        // Is this address in addr_table?
+        exists = g_hash_table_lookup(addr_table, key);
+        if (!exists) {
+            // delete the node
+            g_hash_table_iter_remove(&iter);
+            changed_list = true;
+        }
+    }
+    // Is there anything in addr_table not in node_hash_table
+    // e.g. an added addr
+    g_hash_table_iter_init (&iter, addr_table);
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        bool exists = false;
+        // Is this address in addr_table?
+        exists = g_hash_table_lookup(node_status.node_hash_table, key);
+        if (!exists) {
+            // Add to node_hash_table
+            set_health_status(logstr(key), value);
+            changed_list = true;
+        }
+    }
+
+    // Prepare a sortable array
+    g_hash_table_iter_init (&iter, node_status.node_hash_table);
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: hash_table [%p], iter [%p]",
+        node_status.node_hash_table, iter);
+
+    addr_score_idx = 0;
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        struct health_status_s *healthstatus = (struct health_status_s *)value;
+
+        // We need to sort on health score, but use the addr name.
+        addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
+        // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
+        // This will update the hashtable entry. It's a pointer, so update will stick
+        if (!new_session && healthstatus->score != 0) {
+            --healthstatus->score;
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+                    "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
+                    healthstatus->curladdr, healthstatus->score);
+            changed_list = true;
+        }
+
+        // Save values into sortable array
+        strncpy(addr_score[addr_score_idx]->addr, healthstatus->curladdr, IPSTR_SZ);
+        addr_score[addr_score_idx]->score = healthstatus->score;
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d], addr [%s], score [%d]",
+            addr_score_idx, addr_score[addr_score_idx]->addr, addr_score[addr_score_idx]->score);
+        ++addr_score_idx;
+    }
+
+    // Randomize first; then sort and expect that the order of items with the same score (think '0') stays randomized
+    randomize((void *)addr_score, addr_score_idx);
+
+    // sort the array
+    qsort(addr_score, addr_score_idx, sizeof(struct addr_score_s *), compare_node_score);
+
+    if (addr_score[0]->score != 0) {
+        // All connections are in some state of bad
+        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "construct_resolve_slist: top entry is non-zero: %s -- %d",
+            addr_score[0]->addr, addr_score[0]->score);
+    }
+
+    // addr_score_idx is the number of addresses we processed above
+    for (int idx = 0; idx < addr_score_idx; idx++) {
+        if (changed_list) { // if we've potentially changed the list, let's see the new one
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+                    "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
+                    addr_score[idx]->addr, addr_score[idx]->score);
+        }
+        node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, addr_score[idx]->addr);
+        g_free(addr_score[idx]);
     }
 }
 
@@ -672,7 +745,7 @@ void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code) 
  * We do this by calling getaddrinfo ourselves, then randomizing the list.
  */
 
-static int construct_resolve_slist(bool force) {
+static GHashTable *create_new_addr_table(void) {
     // getaddrinfo will put the linked list here
     const struct addrinfo *ai;
     struct addrinfo *aihead;
@@ -680,44 +753,16 @@ static int construct_resolve_slist(bool force) {
     // turns out to be just SOCK_STREAM.
     // REVIEW: is this true?
     struct addrinfo hints;
-    // timeout interval in seconds
-    // If this interval has passed, we recreate the list. Within this interval,
-    // we reuse the current list.
-    // REVIEW: arbitrary. Is there a better value than 2 minutes?
-    const time_t resolve_slist_timeout = 120;
-    // Keep a timer; at periodic intervals we reset the resolve_slist.
-    // static so it persists between calls
-    static __thread time_t prevtime = 0;
-    time_t curtime;
-    // number of ip addresses returned from getaddrinfo
     int count = 0;
-    int addr_score_idx = 0;
-    // result from function
-    enum slist_status status = SUCCESS;
-    int res = -1;
-    bool reinserted_into_rotation = false; // Did we reinsert a previously unhealthy connection back into rotation?
-    bool removed_from_rotation = false; // Did we remove a node from rotation?
-    struct addr_score_s *addr_score[MAX_NODES + 1] = {NULL};
-    GHashTableIter iter;
-    gpointer key, value;
+    int res;
 
-    // If the list is still young, just return. The current list is still valid
-    curtime = time(NULL);
-
-    if (!force && node_status.resolve_slist && (curtime - prevtime < resolve_slist_timeout)) {
-        // status = SUCCESS; Not an error
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT,
-            "construct_resolve_slist: timeout has not elapsed; return with current slist (%p)", node_status.resolve_slist);
-        return status;
-    }
-
-    // Ready for the next invocation.
-    prevtime = curtime;
+    GHashTable *addr_table;
 
     // Free the current list
     curl_slist_free_all(node_status.resolve_slist);
     node_status.resolve_slist = NULL;
 
+    /*  JB
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "session_get_handle: node_status = %p", &node_status);
     if (node_status.node_hash_table == NULL) {
         node_status.node_hash_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
@@ -730,6 +775,9 @@ static int construct_resolve_slist(bool force) {
         struct health_status_s *healthstatus = (struct health_status_s *)value;
         healthstatus->current = false;
     }
+    */
+    
+    addr_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 
     // Turn hints off
     memset(&hints, 0, sizeof(struct addrinfo));
@@ -744,7 +792,6 @@ static int construct_resolve_slist(bool force) {
         filesystem_domain, filesystem_port);
     res = getaddrinfo(filesystem_domain, filesystem_port, &hints, &aihead);
     if(res) {
-        status = GETADDRINFO_FAILURE;
         log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: getaddrinfo returns error: %d (%s)",
             res, gai_strerror(res));
 
@@ -752,16 +799,8 @@ static int construct_resolve_slist(bool force) {
         // do its default thing. If its call to getaddrinfo succeeds, the
         // first IP will be used (breaks load balancing).  If it fails as it does here,
         // it will do its own error processing.
-        return status;
+        return NULL;
     }
-
-    // If we got here, we are golden!
-    // By setting this to SUCCESS, curl will not immediately start using our new list.
-    // It will take some time (a couple of minutes?) before it makes the switch.
-    // However, if we detect a change in status (added or deleted node, or a change in
-    // health status of a node) we will force curl to create a new session and use the
-    // new list.
-    status = SUCCESS;
 
     /* getaddrinfo returned a list of addrinfo structs (for our purposes, IP addresses).
      * Some of those structs represent IPv4, others IPv6. We decide which is which
@@ -819,96 +858,215 @@ static int construct_resolve_slist(bool force) {
 
         strcat(ipstr, ipaddr);
 
-        // Check if ipstr is in hashtable, or put it there.
-        // If we see a new entry, make sure we force curl to create a new session to use the new list
-        if (set_health_status(logstr(ipaddr), ipstr)) {
-            status = REQUIRES_NEW_SLIST;
-        }
+        g_hash_table_replace(addr_table, g_strdup(logstr(ipaddr)), ipstr);
+
         // ipstr gets strdup'ed before being made the hashtable key, so free it here
         free(ipstr);
 
         ++count;
     }
-
-    // TODO Originally, we were going to up the global variable num_filesystem_server_nodes to the count of nodes
-    // returned by getaddrinfo, but are afraid that will cause too much load if the cluster is having difficulties
-    // if (count > num_filesystem_server_nodes) num_filesystem_server_nodes = count;
-
-    // Prepare a sortable array
-    g_hash_table_iter_init (&iter, node_status.node_hash_table);
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "construct_resolve_slist: hash_table [%p], iter [%p]",
-        node_status.node_hash_table, iter);
-
-    addr_score_idx = 0;
-    while (g_hash_table_iter_next (&iter, &key, &value)) {
-        struct health_status_s *healthstatus = (struct health_status_s *)value;
-
-        // If this entry was not updated while processing getaddrinfo, assume the node has been deleted
-        // and remove it from the list
-        if (healthstatus->current == false) {
-            g_hash_table_iter_remove(&iter);
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-                "construct_resolve_slist: \'%s\' no longer returned from getaddrinfo; removing",
-                healthstatus->curladdr);
-            removed_from_rotation = true;
-            status = REQUIRES_NEW_SLIST;
-            continue;
-        }
-
-        // We need to sort on health score, but use the addr name.
-        addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
-        // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
-        // This will update the hashtable entry. It's a pointer, so update will stick
-        if (!force && healthstatus->score != 0) {
-            --healthstatus->score;
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: decrementing score; addr [%s], score [%d]",
-                healthstatus->curladdr, healthstatus->score);
-            reinserted_into_rotation = true;
-            status = REQUIRES_NEW_SLIST;
-        }
-
-        // Save values into sortable array
-        strncpy(addr_score[addr_score_idx]->addr, healthstatus->curladdr, IPSTR_SZ);
-        addr_score[addr_score_idx]->score = healthstatus->score;
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d], addr [%s], score [%d]",
-            addr_score_idx, addr_score[addr_score_idx]->addr, addr_score[addr_score_idx]->score);
-        ++addr_score_idx;
-    }
-
-    if (count != addr_score_idx) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "construct_resolve_slist: addr_score_idx [%d] != count [%d]",
-            addr_score_idx, count);
-    }
-    // Randomize first; then sort and expect that the order of items with the same score (think '0') stays randomized
-    randomize((void *)addr_score, count);
-
-    // sort the array
-    qsort(addr_score, count, sizeof(struct addr_score_s *), compare_node_score);
-
-    if (addr_score[0]->score != 0) {
-        // All connections are in some state of bad
-        log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "construct_resolve_slist: top entry is non-zero: %s -- %d",
-            addr_score[0]->addr, addr_score[0]->score);
-    }
-
-    // addr_score_idx is the number of addresses we processed above
-    for (int idx = 0; idx < addr_score_idx; idx++) {
-        if (force || reinserted_into_rotation || removed_from_rotation) { // if we've potentially changed the list, let's see the new one
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "construct_resolve_slist: inserting into resolve_slist: %s, score %d",
-                addr_score[idx]->addr, addr_score[idx]->score);
-        }
-        node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, addr_score[idx]->addr);
-        g_free(addr_score[idx]);
-    }
-
-    return status;
+    return addr_table;
 }
 
-CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool new_slist) {
+/* delete_tmp_session is a slimmed down version of handle_cleanup */
+void delete_tmp_session(CURL *session) {
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
+    if (session) {
+        curl_easy_cleanup(session);
+        update_session_count(false);
+    }
+}
+
+static void delete_session(CURL *session, bool tmp_session) {
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "session_get_handle: destroying old handle and creating a new one");
+    if (tmp_session) {
+        delete_tmp_session(session);
+    }
+    else {
+        handle_cleanup(session);
+    }
+}
+
+void report_status(CURL *session, CURLcode res, long response_code, long elapsed_time, bool tmp_session) {
+    const int time_limit = 30 * 1000 * 1000; // 30 seconds
+    if (res != CURLE_OK) {
+        // log something
+        delete_session(session, tmp_session);
+        return;
+    }
+
+    if (response_code >= 500) {
+        // log something
+        delete_session(session, tmp_session);
+        return;
+    }
+
+    if (elapsed_time > time_limit) {
+        // log something
+        delete_session(session, tmp_session);
+        return;
+    }
+}
+
+static bool valid_slist(void) {
+    if (node_status.resolve_slist) {
+        return true;
+    }
+
+    return false;
+}
+
+static bool slist_timed_out(void) {
+    // timeout interval in seconds
+    // If this interval has passed, we recreate the list. Within this interval,
+    // we reuse the current list.
+    const time_t resolve_slist_timeout = 120;
+    // Keep a timer; at periodic intervals we reset the resolve_slist.
+    // static so it persists between calls
+    static __thread time_t prevtime = 0;
+    time_t curtime;
+
+    // If the list is still young, just return. The current list is still valid
+    curtime = time(NULL);
+
+    if (curtime - prevtime < resolve_slist_timeout) {
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT,
+            "slist_timed_out: timeout has not elapsed; return with current slist (%p)", node_status.resolve_slist);
+        return false;
+    }
+
+    // Ready for the next invocation.
+    prevtime = curtime;
+    return true;
+}
+
+// Check that the new list of addresses matches the old list
+static bool slist_changed(GHashTable *addr_table) {
+    bool ret = false;
+    GHashTableIter iter;
+    gpointer key, value;
+
+    // If the two tables have different sizes, we know we have to recreate the slist
+    if (g_hash_table_size(addr_table) != g_hash_table_size(node_status.node_hash_table)) {
+        return true;
+    }
+
+    // Is there anything in node_hash_table not in addr table,
+    // e.g. a deleted addr
+    g_hash_table_iter_init (&iter, node_status.node_hash_table);
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        bool exists = false;
+        // Is this address in addr_table?
+        exists = g_hash_table_lookup(addr_table, key);
+        if (!exists) {
+            ret = true;
+            break;
+        }
+    }
+    // If ret is already true, we already need a new session, so short-circuit.
+    if (ret == false) {
+        // Is there anything in addr_table not in node_hash_table
+        // e.g. an added addr
+        g_hash_table_iter_init (&iter, addr_table);
+        while (g_hash_table_iter_next (&iter, &key, &value)) {
+            bool exists = false;
+            // Is this address in addr_table?
+            exists = g_hash_table_lookup(node_status.node_hash_table, key);
+            if (!exists) {
+                ret = true;
+                break;
+            }
+        }
+    }
+    return ret;
+}
+
+static enum new_session_new_slist needs_new_session(GHashTable *addr_table) {
+    CURL *session;
+    enum new_session_new_slist status = NEITHER;
+
+    // session is null
+    pthread_once(&session_once, session_tsd_key_init);
+
+    session = pthread_getspecific(session_tsd_key);
+    if (!session) {
+        status = BOTH;
+    }
+
+    // no slist
+    if (!valid_slist()) {
+        status = BOTH;
+    }
+
+    // timeout
+    if (slist_timed_out()) {
+        status = SLIST;
+    }
+
+    if (slist_changed(addr_table)) {
+        status = BOTH;
+    }
+
+    // We're going to create a new session, so get rid of the old
+    if (status == SESSION || status == BOTH) {
+        handle_cleanup(session);
+    }
+
+    return NEITHER;
+}
+
+static CURL *update_session(GHashTable *addr_table, bool tmp_session, enum slist_status status) {
+    CURL *session;
+
+    // create the hash table of node addresses for which we will keep health status
+    // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
+    // since the hashtable keeps track of the health status of connections causing the reinitialization
+
+    // The first log print will be stripped by log stash because it has the stats designator 1|c, so log one without it
+    log_print(LOG_INFO, SECTION_ENHANCED, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
+
+    // We might be just getting a new slist due to a timeout rather than a new session
+    session = pthread_getspecific(session_tsd_key);
+    if (!session) {
+        session = curl_easy_init();
+    }
+    if (!session) return NULL;
+
+    update_session_count(true);
+
+    // We don't want a tmp session to muck with start time and resetting the main session
+    if (!tmp_session) {
+        // Keep track of start time so we can track how long sessions stay open
+        session_start_time = time(NULL);
+        pthread_setspecific(session_tsd_key, session);
+    }
+
+    construct_resolve_slist(addr_table, status);
+
+    return session;
+}
+
+static CURL *get_session(bool tmp_session) {
+    CURL *session;
+    enum new_session_new_slist status;
+
+    GHashTable *addr_table;
+    addr_table = create_new_addr_table();
+    status = needs_new_session(addr_table);
+    if (status != NEITHER) {
+        session = update_session(addr_table, tmp_session, status);
+    }
+    else {
+        session = pthread_getspecific(session_tsd_key);
+    }
+    return session;
+}
+
+CURL *session_request_init(const char *path, const char *query_string, bool tmp_session) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
-    enum slist_status status;
 
     // If the whole cluster is sad, avoid access altogether for a given period of time.
     // Calls to this function, on detecting this error, set ENETDOWN, which is appropriate
@@ -917,65 +1075,10 @@ CURL *session_request_init(const char *path, const char *query_string, bool temp
         return NULL;
     }
 
-    // 1. new_slist is false
-    // a. slist timeout has not elapsed: call construct_resolve_slist here but not
-    // below. No new slist, no new session 
-    // b. slist timeout has elapsed and no new nodes added or removed: create 
-    // new slist here, but not below. New slist, no new session, new slist 
-    // will take effect when curl gets around to it (a couple of minutes)
-    // c. slist timeout has elapsed and new node added or deleted: create 
-    // new slist and set new_slist below; this slist will be deleted when 
-    // we make a new session, and then recreated in the call to 
-    // construct_resolve_slist below since we set new_slist.
-    // d. slist timeout has not elapsed, but there happens to be a node added
-    // or deleted: it will not be detected in this call but only later when 
-    // slist timeout has elapsed. So, for the duration of slist timeout, 
-    // new nodes will not yet get traffic; deleted nodes will continue to get traffic
-    // 2. new_slist is true
-    // a. Skip this call to construct_resolve_slist, create new session below, then
-    // call construct_resolve_slist below to create the new slist.
-    //
-    // If there is an added or deleted node, construct_slist is called redundantly;
-    // the results of the first call are thrown out when a new session is created,
-    // then the new slist is created again.
-    //
-    // The purpose of this initial call to construct_resolve_slist is to determine
-    // whether a node has been added or deleted so we can take action and
-    // make sure a new session and slist get created.
-
-    status = SUCCESS; // eliminates warning about it might be unitialized
-    if (new_slist == false) {
-        // If we add or delete a node, or change its health status, we need to signal here to 
-        // create a new session
-        status = construct_resolve_slist(new_slist);
-
-        if (status == REQUIRES_NEW_SLIST) {
-            new_slist = true;
-        }
-    }
-
-    if (temporary_handle) {
-        session = session_get_temp_handle();
-    }
-    else {
-        session = session_get_handle(new_slist);
-    }
+    session = get_session(tmp_session);
 
     if (!session) {
         log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_request_init: session handle NULL.");
-        return NULL;
-    }
-
-    curl_easy_reset(session);
-
-    // If we got a new handle above, we need to reset slist
-    if (new_slist) {
-        status = construct_resolve_slist(new_slist);
-    }
-
-    // Treat this failure as a session failure; no point in continuing
-    if (status == GETADDRINFO_FAILURE) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_request_init: GETADDRINFO_FAILURE.");
         return NULL;
     }
 

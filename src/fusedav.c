@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <grp.h>
 #include <pwd.h>
 #include <sys/prctl.h>
@@ -228,18 +229,10 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             free(existing);
 
             for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
-                bool temporary_handle = true; // self-documenting
-                bool new_resolve_list;
+                bool tmp_session = true;
+                long elapsed_time = 0;
 
-                // Assume all is ok the first round; with each failure, rescramble
-                if (idx == 0) {
-                    new_resolve_list = false;
-                }
-                else {
-                    new_resolve_list = true;
-                }
-
-                if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
+                if (!(session = session_request_init(path, NULL, tmp_session)) || inject_error(fusedav_error_propfindsession)) {
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
                     // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                     try_release_request_outstanding();
@@ -250,12 +243,14 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
-                timed_curl_easy_perform(session, &res, &response_code);
+                timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
                 log_filesystem_nodes("getdir_propfind_callback", res, response_code, idx, path);
+
+                report_status(session, res, response_code, elapsed_time, tmp_session);
             }
 
-            if (session) session_temp_handle_destroy(session);
+            delete_tmp_session(session);
 
             if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
                 trigger_saint_event(CLUSTER_FAILURE);
@@ -871,18 +866,9 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
             CURL *session;
             struct curl_slist *slist = NULL;
-            bool new_resolve_list;
+            long elapsed_time = 0;
 
-            // Assume all is ok the first round; with each failure, rescramble
-            if (idx == 0) {
-                new_resolve_list = false;
-            }
-            else {
-                new_resolve_list = true;
-            }
-
-            slist = NULL;
-            if (!(session = session_request_init(path, NULL, false, new_resolve_list)) || inject_error(fusedav_error_cunlinksession)) {
+            if (!(session = session_request_init(path, NULL, false)) || inject_error(fusedav_error_cunlinksession)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
                 // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                 try_release_request_outstanding();
@@ -895,11 +881,13 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
             log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
-            timed_curl_easy_perform(session, &res, &response_code);
+            timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
             if (slist) curl_slist_free_all(slist);
 
             log_filesystem_nodes("common_unlink", res, response_code, idx, path);
+
+            report_status(session, res, response_code, elapsed_time, false);
         }
 
         if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
@@ -988,19 +976,9 @@ static int dav_rmdir(const char *path) {
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
-        bool new_resolve_list;
+        long elapsed_time = 0;
 
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
-
-        slist = NULL;
-
-        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
+        if (!(session = session_request_init(fn, NULL, false))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1012,11 +990,13 @@ static int dav_rmdir(const char *path) {
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("dav_rmdir", res, response_code, idx, path);
+
+        report_status(session, res, response_code, elapsed_time, false);
     }
 
     if (res != CURLE_OK || response_code >= 500) {
@@ -1061,19 +1041,9 @@ static int dav_mkdir(const char *path, mode_t mode) {
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
-        bool new_resolve_list;
+        long elapsed_time = 0;
 
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
-
-        slist = NULL;
-
-        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
+        if (!(session = session_request_init(fn, NULL, false))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1085,11 +1055,13 @@ static int dav_mkdir(const char *path, mode_t mode) {
         slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("dav_mkdir", res, response_code, idx, path);
+
+        report_status(session, res, response_code, elapsed_time, false);
     }
 
     if (res != CURLE_OK || response_code >= 500) {
@@ -1153,19 +1125,9 @@ static int dav_rename(const char *from, const char *to) {
         struct curl_slist *slist = NULL;
         char *header = NULL;
         char *escaped_to;
-        bool new_resolve_list;
+        long elapsed_time = 0;
 
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
-
-        slist = NULL;
-
-        if (!(session = session_request_init(from, NULL, false, new_resolve_list))) {
+        if (!(session = session_request_init(from, NULL, false))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1190,11 +1152,13 @@ static int dav_rename(const char *from, const char *to) {
 
         // Do the server side move
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("dav_rename", res, response_code, idx, to);
+
+        report_status(session, res, response_code, elapsed_time, false);
     }
 
     /* move:

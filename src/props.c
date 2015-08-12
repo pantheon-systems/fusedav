@@ -329,21 +329,13 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         struct curl_slist *slist = NULL;
         char *header = NULL;
         char *query_string = NULL;
-        bool new_resolve_list;
-
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
+        long elapsed_time = 0;
 
         // Set up the request handle.
         if (last_updated > 0) {
             asprintf(&query_string, "changes_since=%lu", last_updated);
         }
-        session = session_request_init(path, query_string, false, new_resolve_list);
+        session = session_request_init(path, query_string, false);
         if (!session || inject_error(props_error_spropfindsession)) {
             g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
             free(query_string);
@@ -390,13 +382,15 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
             last_updated > 0 ? "progressive" : "complete", last_updated);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
         log_filesystem_nodes("simple_propfind", res, response_code, idx, path);
         free(query_string);
         query_string = NULL;
+
+        report_status(session, res, response_code, elapsed_time, false);
     }
 
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
