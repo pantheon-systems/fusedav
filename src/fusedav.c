@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <grp.h>
 #include <pwd.h>
 #include <sys/prctl.h>
@@ -185,6 +186,7 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
 static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st,
     unsigned long status_code, GError **gerr) {
 
+    static const char *funcname = "getdir_propfind_callback";
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     GError *subgerr1 = NULL ;
@@ -194,15 +196,15 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: %s (%lu)", path, status_code);
+    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", funcname, path, status_code);
 
     if (status_code == 410) {
         struct stat_cache_value *existing;
 
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: DELETE %s (%lu)", path, status_code);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: DELETE %s (%lu)", funcname, path, status_code);
         existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
         if (subgerr1) {
-            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
+            g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
             return;
         }
 
@@ -228,19 +230,11 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             free(existing);
 
             for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
-                bool temporary_handle = true; // self-documenting
-                bool new_resolve_list;
+                bool tmp_session = true;
+                long elapsed_time = 0;
 
-                // Assume all is ok the first round; with each failure, rescramble
-                if (idx == 0) {
-                    new_resolve_list = false;
-                }
-                else {
-                    new_resolve_list = true;
-                }
-
-                if (!(session = session_request_init(path, NULL, temporary_handle, new_resolve_list)) || inject_error(fusedav_error_propfindsession)) {
-                    g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback(%s): failed to get request session", path);
+                if (!(session = session_request_init(path, NULL, tmp_session)) || inject_error(fusedav_error_propfindsession)) {
+                    g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                     // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                     try_release_request_outstanding();
                     return;
@@ -249,19 +243,19 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 // This makes a "HEAD" call
                 curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; calling HEAD on %s", path);
-                timed_curl_easy_perform(session, &res, &response_code);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: saw 410; calling HEAD on %s", funcname, path);
+                timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
-                log_filesystem_nodes("getdir_propfind_callback", res, response_code, idx, path);
+                process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
             }
 
-            if (session) session_temp_handle_destroy(session);
+            delete_tmp_session(session);
 
             if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
                 trigger_saint_event(CLUSTER_FAILURE);
                 set_dynamic_logging();
-                g_set_error(gerr, fusedav_quark(), ENETDOWN, "getdir_propfind_callback: curl failed: %s : rc: %ld\n",
-                    curl_easy_strerror(res), response_code);
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: curl failed: %s : rc: %ld\n",
+                    funcname, curl_easy_strerror(res), response_code);
                 return;
             } else {
                 trigger_saint_event(CLUSTER_SUCCESS);
@@ -269,19 +263,19 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
 
             if (response_code >= 400 && response_code < 500) {
                 // fall through to delete
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; executed HEAD; file doesn't exist: %s", path);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: saw 410; executed HEAD; file doesn't exist: %s", funcname, path);
             }
             else {
                 // REVIEW: if the file exists, do we want to call stat_cache_value_set and update its ->updated value?
                 if (response_code >= 200 && response_code < 300) {
                     // We're not deleting since it exists; jump out!
-                    log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: saw 410; executed HEAD; file exists: %s", path);
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: saw 410; executed HEAD; file exists: %s", funcname, path);
                 }
                 else {
                     // On error, prefer retaining a file which should be deleted over deleting a file which should be retained
                     g_set_error(gerr, fusedav_quark(), EINVAL,
-                        "getdir_propfind_callback(%s): saw 410; HEAD returns unexpected response from curl %ld",
-                        path, response_code);
+                        "%s(%s): saw 410; HEAD returns unexpected response from curl %ld",
+                        funcname, path, response_code);
                 }
                 return;
             }
@@ -292,20 +286,20 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         filecache_delete(config->cache, path, true, &subgerr2);
         // If we need to combine 2 errors, use one of the error messages in the propagated prefix
         if (subgerr1 && subgerr2) {
-            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: %s :: ", subgerr2->message);
+            g_propagate_prefixed_error(gerr, subgerr1, "%s: %s :: ", funcname, subgerr2->message);
         }
         else if (subgerr1) {
-            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
+            g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
         }
         else if (subgerr2) {
-            g_propagate_prefixed_error(gerr, subgerr2, "getdir_propfind_callback: ");
+            g_propagate_prefixed_error(gerr, subgerr2, "%s: ", funcname);
         }
     }
     else {
-        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "getdir_propfind_callback: CREATE %s (%lu)", path, status_code);
+        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: CREATE %s (%lu)", funcname, path, status_code);
         stat_cache_value_set(config->cache, path, &value, &subgerr1);
         if (subgerr1) {
-            g_propagate_prefixed_error(gerr, subgerr1, "getdir_propfind_callback: ");
+            g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
             return;
         }
     }
@@ -848,6 +842,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
 }
 
 static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
+    static const char *funcname = "common_unlink";
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat st;
     GError *gerr2 = NULL;
@@ -855,12 +850,12 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
     get_stat(path, &st, &gerr2);
     if (gerr2) {
-        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+        g_propagate_prefixed_error(gerr, gerr2, "%s: ", funcname);
         return;
     }
 
     if (!S_ISREG(st.st_mode) || inject_error(fusedav_error_cunlinkisdir)) {
-        g_set_error(gerr, fusedav_quark(), EISDIR, "common_unlink: is a directory");
+        g_set_error(gerr, fusedav_quark(), EISDIR, "%s: is a directory", funcname);
         return;
     }
 
@@ -871,19 +866,10 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
             CURL *session;
             struct curl_slist *slist = NULL;
-            bool new_resolve_list;
+            long elapsed_time = 0;
 
-            // Assume all is ok the first round; with each failure, rescramble
-            if (idx == 0) {
-                new_resolve_list = false;
-            }
-            else {
-                new_resolve_list = true;
-            }
-
-            slist = NULL;
-            if (!(session = session_request_init(path, NULL, false, new_resolve_list)) || inject_error(fusedav_error_cunlinksession)) {
-                g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink(%s): failed to get request session", path);
+            if (!(session = session_request_init(path, NULL, false)) || inject_error(fusedav_error_cunlinksession)) {
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                 // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                 try_release_request_outstanding();
                 return;
@@ -891,42 +877,42 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
             curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
 
-            slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: %s", path);
+            slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "%s: %s", funcname, path);
             if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-            log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "common_unlink: calling DELETE on %s", path);
-            timed_curl_easy_perform(session, &res, &response_code);
+            log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "%s: calling DELETE on %s", funcname, path);
+            timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
             if (slist) curl_slist_free_all(slist);
 
-            log_filesystem_nodes("common_unlink", res, response_code, idx, path);
+            process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
         }
 
         if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
             trigger_saint_event(CLUSTER_FAILURE);
             set_dynamic_logging();
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "common_unlink: DELETE failed: %s", curl_easy_strerror(res));
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: DELETE failed: %s", funcname, curl_easy_strerror(res));
             return;
         } else {
             trigger_saint_event(CLUSTER_SUCCESS);
         }
     }
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling filecache_delete on %s", path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "%s: calling filecache_delete on %s", funcname, path);
     filecache_delete(config->cache, path, true, &gerr2);
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "common_unlink: calling stat_cache_delete on %s", path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "%s: calling stat_cache_delete on %s", funcname, path);
     stat_cache_delete(config->cache, path, &gerr3);
 
     // If we need to combine 2 errors, use one of the error messages in the propagated prefix
     if (gerr2 && gerr3) {
-        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: %s :: ", gerr3->message);
+        g_propagate_prefixed_error(gerr, gerr2, "%s: %s :: ", funcname, gerr3->message);
     }
     else if (gerr2) {
-        g_propagate_prefixed_error(gerr, gerr2, "common_unlink: ");
+        g_propagate_prefixed_error(gerr, gerr2, "%s: ", funcname);
     }
     else if (gerr3) {
-        g_propagate_prefixed_error(gerr, gerr3, "common_unlink: ");
+        g_propagate_prefixed_error(gerr, gerr3, "%s: ", funcname);
     }
 
     return;
@@ -950,6 +936,7 @@ static int dav_unlink(const char *path) {
 }
 
 static int dav_rmdir(const char *path) {
+    static const char *funcname = "dav_rmdir";
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
     char fn[PATH_MAX];
@@ -960,15 +947,15 @@ static int dav_rmdir(const char *path) {
 
     BUMP(dav_rmdir);
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_rmdir(%s)", path);
+    log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: %s(%s)", funcname, path);
 
     get_stat(path, &st, &gerr);
     if (gerr) {
-        return processed_gerror("dav_rmdir: ", path, &gerr);
+        return processed_gerror(funcname, path, &gerr);
     }
 
     if (!S_ISDIR(st.st_mode)) {
-        log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: failed to remove `%s\': Not a directory", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "%s: failed to remove `%s\': Not a directory", funcname, path);
         return -ENOTDIR;
     }
 
@@ -981,27 +968,17 @@ static int dav_rmdir(const char *path) {
     // so the stat cache should be up to date.
     has_child = stat_cache_dir_has_child(config->cache, path);
     if (has_child) {
-        log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: failed to remove `%s\': Directory not empty ", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "%s: failed to remove `%s\': Directory not empty ", funcname, path);
         return -ENOTEMPTY;
     }
 
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
-        bool new_resolve_list;
+        long elapsed_time = 0;
 
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
-
-        slist = NULL;
-
-        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
-            log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): failed to get session", path);
+        if (!(session = session_request_init(fn, NULL, false))) {
+            log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): failed to get session", funcname, path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
             return -ENETDOWN;
@@ -1009,42 +986,43 @@ static int dav_rmdir(const char *path) {
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "DELETE");
 
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_rmdir: %s", path);
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "%s: %s", funcname, path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("dav_rmdir", res, response_code, idx, path);
+        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
     }
 
     if (res != CURLE_OK || response_code >= 500) {
         trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
-        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_rmdir(%s): DELETE failed: %s", path, curl_easy_strerror(res));
+        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): DELETE failed: %s", funcname, path, curl_easy_strerror(res));
         return -ENETDOWN;
     } else {
         trigger_saint_event(CLUSTER_SUCCESS);
     }
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "dav_rmdir: removed(%s)", path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "%s: removed(%s)", funcname, path);
 
     stat_cache_delete(config->cache, path, &gerr);
     if (gerr) {
-        return processed_gerror("dav_rmdir: ", path, &gerr);
+        return processed_gerror(funcname, path, &gerr);
     }
 
     // Delete Updated_children entry for path
     stat_cache_updated_children(config->cache, path, 0, &gerr);
     if (gerr) {
-        return processed_gerror("dav_rmdir: ", path, &gerr);
+        return processed_gerror(funcname, path, &gerr);
     }
 
     return 0;
 }
 
 static int dav_mkdir(const char *path, mode_t mode) {
+    static const char *funcname = "dav_mkdir";
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
     char fn[PATH_MAX];
@@ -1054,27 +1032,17 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
     BUMP(dav_mkdir);
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: dav_mkdir(%s, %04o)", path, mode);
+    log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: %s(%s, %04o)", funcname, path, mode);
 
     snprintf(fn, sizeof(fn), "%s/", path);
 
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
-        bool new_resolve_list;
+        long elapsed_time = 0;
 
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
-
-        slist = NULL;
-
-        if (!(session = session_request_init(fn, NULL, false, new_resolve_list))) {
-            log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): failed to get session", path);
+        if (!(session = session_request_init(fn, NULL, false))) {
+            log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): failed to get session", funcname, path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
             return -ENETDOWN;
@@ -1082,20 +1050,20 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "MKCOL");
 
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "dav_mkdir: %s", path);
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_DIR, "%s: %s", funcname, path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("dav_mkdir", res, response_code, idx, path);
+        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
     }
 
     if (res != CURLE_OK || response_code >= 500) {
         trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
-        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "dav_mkdir(%s): MKCOL failed: %s", path, curl_easy_strerror(res));
+        log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): MKCOL failed: %s", funcname, path, curl_easy_strerror(res));
         return -ENETDOWN;
     } else {
         trigger_saint_event(CLUSTER_SUCCESS);
@@ -1112,13 +1080,14 @@ static int dav_mkdir(const char *path, mode_t mode) {
     }
 
     if (gerr) {
-        return processed_gerror("dav_mkdir: ", path, &gerr);
+        return processed_gerror(funcname, path, &gerr);
     }
 
     return 0;
 }
 
 static int dav_rename(const char *from, const char *to) {
+    static const char *funcname = "dav_rename";
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
     int server_ret = -EIO;
@@ -1135,7 +1104,7 @@ static int dav_rename(const char *from, const char *to) {
     assert(from);
     assert(to);
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_rename(%s, %s)", from, to);
+    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: %s(%s, %s)", funcname, from, to);
 
     get_stat(from, &st, &gerr);
     if (gerr) {
@@ -1153,20 +1122,10 @@ static int dav_rename(const char *from, const char *to) {
         struct curl_slist *slist = NULL;
         char *header = NULL;
         char *escaped_to;
-        bool new_resolve_list;
+        long elapsed_time = 0;
 
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
-
-        slist = NULL;
-
-        if (!(session = session_request_init(from, NULL, false, new_resolve_list))) {
-            log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: failed to get session for %d:%s", fd, from);
+        if (!(session = session_request_init(from, NULL, false))) {
+            log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "%s: failed to get session for %d:%s", funcname, fd, from);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
             goto finish;
@@ -1184,17 +1143,17 @@ static int dav_rename(const char *from, const char *to) {
         free(header);
         header = NULL;
 
-        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: %s to %s", from, to);
+        slist = enhanced_logging(slist, LOG_INFO, SECTION_FUSEDAV_FILE, "%s: %s to %s", funcname, from, to);
 
         curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
         // Do the server side move
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("dav_rename", res, response_code, idx, to);
+        process_status(funcname, session, res, response_code, elapsed_time, idx, to, false);
     }
 
     /* move:
@@ -1206,7 +1165,7 @@ static int dav_rename(const char *from, const char *to) {
     if(res != CURLE_OK || response_code >= 500) {
         trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
-        log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed: %s", curl_easy_strerror(res));
+        log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "%s: MOVE failed: %s", funcname, curl_easy_strerror(res));
         goto finish;
     } else {
         trigger_saint_event(CLUSTER_SUCCESS);
@@ -1214,11 +1173,11 @@ static int dav_rename(const char *from, const char *to) {
             if (response_code == 404) {
                 // We allow silent failures because we might have done a rename before the
                 // file ever made it to the server
-                log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with 404, recoverable");
+                log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "%s: MOVE failed with 404, recoverable", funcname);
                 // Allow the error code -EIO to percolate down, we need to pass the local move
             }
             else {
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: MOVE failed with %d", response_code);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "%s: MOVE failed with %d", funcname, response_code);
                 goto finish;
             }
         }
@@ -1230,7 +1189,7 @@ static int dav_rename(const char *from, const char *to) {
     /* If the server_side failed, then both the stat_cache and filecache moves need to succeed */
     entry = stat_cache_value_get(config->cache, from, true, &gerr);
     if (gerr) {
-        local_ret = processed_gerror("dav_rename: ", from, &gerr);
+        local_ret = processed_gerror(funcname, from, &gerr);
         goto finish;
     }
 
@@ -1240,18 +1199,18 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_rename: stat cache moving source entry to destination %d:%s", fd, to);
+    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "%s: stat cache moving source entry to destination %d:%s", funcname, fd, to);
     stat_cache_value_set(config->cache, to, entry, &gerr);
     if (gerr) {
-        local_ret = processed_gerror("dav_rename: ", to, &gerr);
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: failed stat cache moving source entry to destination %d:%s", fd, to);
+        local_ret = processed_gerror(funcname, to, &gerr);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "%s: failed stat cache moving source entry to destination %d:%s", funcname, fd, to);
         // If the local stat_cache move fails, leave the filecache alone so we don't get mixed state
         goto finish;
     }
 
     stat_cache_delete(config->cache, from, &gerr);
     if (gerr) {
-        local_ret = processed_gerror("dav_rename: ", from, &gerr);
+        local_ret = processed_gerror(funcname, from, &gerr);
         goto finish;
     }
 
@@ -1261,17 +1220,17 @@ static int dav_rename(const char *from, const char *to) {
         filecache_delete(config->cache, to, true, &tmpgerr);
         if (tmpgerr) {
             // Don't propagate but do log
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: filecache_delete failed %d:%s -- %s", fd, to, tmpgerr->message);
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "%s: filecache_delete failed %d:%s -- %s", funcname, fd, to, tmpgerr->message);
             g_clear_error(&tmpgerr);
         }
-        local_ret = processed_gerror("dav_rename: ", to, &gerr);
+        local_ret = processed_gerror(funcname, to, &gerr);
         goto finish;
     }
     local_ret = 0;
 
 finish:
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "Exiting: dav_rename(%s, %s); %d %d", from, to, server_ret, local_ret);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "Exiting: %s(%s, %s); %d %d", funcname, from, to, server_ret, local_ret);
 
     free(entry);
 

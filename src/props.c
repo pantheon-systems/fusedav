@@ -311,6 +311,7 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
 
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
         void *userdata, GError **gerr) {
+    static const char *funcname = "simple_propfind";
     static __thread unsigned long count = 0;
     static __thread time_t previous_time = 0;
     char *description = NULL;
@@ -329,23 +330,15 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         struct curl_slist *slist = NULL;
         char *header = NULL;
         char *query_string = NULL;
-        bool new_resolve_list;
-
-        // Assume all is ok the first round; with each failure, rescramble
-        if (idx == 0) {
-            new_resolve_list = false;
-        }
-        else {
-            new_resolve_list = true;
-        }
+        long elapsed_time = 0;
 
         // Set up the request handle.
         if (last_updated > 0) {
             asprintf(&query_string, "changes_since=%lu", last_updated);
         }
-        session = session_request_init(path, query_string, false, new_resolve_list);
+        session = session_request_init(path, query_string, false);
         if (!session || inject_error(props_error_spropfindsession)) {
-            g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed to get request session", path);
+            g_set_error(gerr, props_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
             free(query_string);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -375,7 +368,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         slist = curl_slist_append(slist, header);
         slist = curl_slist_append(slist, "Content-Type: text/xml");
 
-        slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "simple_propfind: %s", path);
+        slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_PROPS_DEFAULT, "%s: %s", funcname, path);
 
         free(header);
         header = NULL;
@@ -387,24 +380,25 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             "<D:propfind xmlns:D=\"DAV:\"><D:allprop/></D:propfind>");
 
         // Perform the request and parse the response.
-        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: About to perform (%s) PROPFIND (%ul).",
-            last_updated > 0 ? "progressive" : "complete", last_updated);
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "%s: About to perform (%s) PROPFIND (%ul).",
+            funcname, last_updated > 0 ? "progressive" : "complete", last_updated);
 
-        timed_curl_easy_perform(session, &res, &response_code);
+        timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
         if (slist) curl_slist_free_all(slist);
 
-        log_filesystem_nodes("simple_propfind", res, response_code, idx, path);
         free(query_string);
         query_string = NULL;
+
+        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
     }
 
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
-        log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND failed: %s rc: %lu",
-            last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
+        log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "%s: (%s) PROPFIND failed: %s rc: %lu",
+            funcname, last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
         trigger_saint_event(CLUSTER_FAILURE);
         set_dynamic_logging();
-        g_set_error(gerr, props_quark(), ENETDOWN, "simple_propfind(%s): failed, ENETDOWN", path);
+        g_set_error(gerr, props_quark(), ENETDOWN, "%s(%s): failed, ENETDOWN", funcname, path);
         goto finish;
     } else {
         trigger_saint_event(CLUSTER_SUCCESS);
@@ -414,47 +408,52 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (response_code == 207 && !inject_error(props_error_spropfindunkcode)) {
         // Finalize parsing.
         if (state.failure || inject_error(props_error_spropfindstatefailure)) {
-            log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
-            g_set_error(gerr, props_quark(), E_SC_PROPSERR, "simple_propfind: Could not finalize parsing of the 207 response because it's already in a failed state.");
+            log_print(LOG_ERR, SECTION_PROPS_DEFAULT, 
+                    "%s: Could not finalize parsing of the 207 response because it's already in a failed state.", funcname);
+            g_set_error(gerr, props_quark(), E_SC_PROPSERR, 
+                    "%s: Could not finalize parsing of the 207 response because it's already in a failed state.", funcname);
             goto finish;
         }
 
         if (XML_Parse(parser, NULL, 0, 1) == 0 || inject_error(props_error_spropfindxmlparse)) {
             int error_code = XML_GetErrorCode(parser);
-            g_set_error(gerr, props_quark(), E_SC_PROPSERR, "simple_propfind: Finalizing parsing failed with error: %s", XML_ErrorString(error_code));
+            g_set_error(gerr, props_quark(), E_SC_PROPSERR, "%s: Finalizing parsing failed with error: %s", 
+                    funcname, XML_ErrorString(error_code));
             goto finish;
         }
         else {
-            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "simple_propfind: Finished final parsing on the PROPFIND response.");
+            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "%s: Finished final parsing on the PROPFIND response.", funcname);
         }
     }
     else if (response_code == 404 && !inject_error(props_error_spropfindunkcode)) {
         GError *subgerr = NULL;
         // Tell the callback that the item is gone.
-        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: 410 response, 404.");
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "%s: 410 response, 404.", funcname);
         memset(&state.rstate, 0, sizeof(struct response_state));
         state.callback(state.userdata, path, state.rstate.st, 410, &subgerr);
         if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "simple_propfind: ");
+            g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
             goto finish;
         }
     }
     else if (response_code == 412 && !inject_error(props_error_spropfindunkcode)) {
-        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: 412 response, ESTALE.");
+        log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "%s: 412 response, ESTALE.", funcname);
         ret = -ESTALE;
         goto finish;
     }
     else {
-        g_set_error(gerr, props_quark(), E_SC_PROPSERR, "simple_propfind: (%s) PROPFIND failed with response code: %lu", last_updated > 0 ? "progressive" : "complete", response_code);
+        g_set_error(gerr, props_quark(), E_SC_PROPSERR, "%s: (%s) PROPFIND failed with response code: %lu", 
+                funcname, last_updated > 0 ? "progressive" : "complete", response_code);
         goto finish;
     }
 
-    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "simple_propfind: (%s) PROPFIND completed on path %s", last_updated > 0 ? "progressive" : "complete", path);
+    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "%s: (%s) PROPFIND completed on path %s", 
+            funcname, last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
 
 finish:
     asprintf(&description, "%s-propfinds", last_updated > 0 ? "progressive" : "complete");
-    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind", &previous_time, description, &count, 1, NULL, NULL, 0);
+    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &previous_time, description, &count, 1, NULL, NULL, 0);
     free(description);
     XML_ParserFree(parser);
     return ret;
