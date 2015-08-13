@@ -37,6 +37,7 @@ static G_DEFINE_QUARK(FUSEDAV_CONFIG, fusedav_config)
 enum {
      KEY_HELP,
      KEY_VERSION,
+     KEY_IGNORE,
 };
 
 #define FUSEDAV_OPT(t, p, v) { t, offsetof(struct fusedav_config, p), v }
@@ -55,6 +56,7 @@ static struct fuse_opt fusedav_opts[] = {
     FUSE_OPT_KEY("-h",             KEY_HELP),
     FUSE_OPT_KEY("--help",         KEY_HELP),
     FUSE_OPT_KEY("-?",             KEY_HELP),
+    FUSE_OPT_KEY("-n",             KEY_IGNORE),
     FUSE_OPT_END
 };
 
@@ -72,6 +74,9 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
             return 0;
         }
         break;
+
+    case KEY_IGNORE:
+	return 0;
 
     case KEY_HELP:
         fprintf(stderr,
