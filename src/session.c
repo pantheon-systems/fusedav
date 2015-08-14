@@ -206,6 +206,14 @@ void session_config_free(void) {
     free(client_certificate);
 }
 
+static void update_session_count(bool add) {
+    static int current_session_count = 0;
+
+    if (add) __sync_fetch_and_add(&current_session_count, 1);
+    else __sync_fetch_and_sub(&current_session_count, 1);
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "update_session_count: %d", current_session_count);
+}
+
 // Call handle_cleanup when reinitializing a handle, or called from session_destroy when thread exits
 static void handle_cleanup(void *s) {
     CURL *session = s;
@@ -224,6 +232,7 @@ static void handle_cleanup(void *s) {
     curl_slist_free_all(node_status.resolve_slist);
     node_status.resolve_slist = NULL;
     curl_easy_cleanup(session);
+    if (session) update_session_count(false);
 }
 
 // When a thread exits, we also want to free its hashtable. We don't want to free the hashtable if we are just
@@ -325,6 +334,9 @@ static CURL *session_get_handle(bool new_handle) {
     log_print(LOG_INFO, SECTION_ENHANCED, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
     session = curl_easy_init();
+    if (!session) return NULL;
+
+    update_session_count(true);
     pthread_setspecific(session_tsd_key, session);
 
     return session;
@@ -336,13 +348,19 @@ static CURL *session_get_temp_handle(void) {
 
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening temporary cURL session.");
     session = curl_easy_init();
+    if (!session) return NULL;
+
+    update_session_count(true);
 
     return session;
 }
 
 void session_temp_handle_destroy(CURL *session) {
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
-    if (session) curl_easy_cleanup(session);
+    if (session) {
+        curl_easy_cleanup(session);
+        update_session_count(false);
+    }
 }
 
 // Return value should be freed using curl_free().
