@@ -228,6 +228,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
         const CURLcode res, const long response_code, const long elapsed_time, const char *path) {
     char *failure_str = NULL;
     char *error_str = NULL;
+    bool slow_request = false;
     asprintf(&failure_str, "%d_failures", iter + 1);
 
     if (res != CURLE_OK) {
@@ -236,27 +237,35 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
         asprintf(&error_str, "%s :: %lu", "no curl error", response_code);
     } else if (elapsed_time >= 0) {
         asprintf(&error_str, "%s :: %lu", "slow_request", elapsed_time);
+        slow_request = true;
     }
 
-    // Track number of failures
-    log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s:1|c",
-        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, failure_str);
-
-    free(failure_str);
-
+    // Stats log for all errors
     // Distinguish curl from 500-status failures from slow requests
     log_print(LOG_INFO, SECTION_ENHANCED,
         "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s:1|c",
         fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
 
-    log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.failures:1|c",
-        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr);
-
     log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
-        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.failures",
-        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr);
+        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s",
+        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
+
+    // Don't treat slow requests as 'failures'; it messes up the failure/recovery stats
+    if (!slow_request) {
+        // Stats log
+        // Is this the first, second, or third failure for this request?
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s:1|c",
+            fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, failure_str);
+
+        free(failure_str);
+
+        // Stats log
+        // Total failures
+        log_print(LOG_INFO, SECTION_ENHANCED,
+            "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.failures:1|c",
+            fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr);
+    }
 
     free(error_str);
 }
