@@ -69,12 +69,6 @@ void (*const state_table [NUM_STATES][NUM_EVENTS]) (void) = {
 #define LOGSTRSZ 80
 static __thread char nodeaddr[LOGSTRSZ];
 
-// When we construct a new slist, we need to track the status to know what action to take.
-enum slist_status {SUCCESS, GETADDRINFO_FAILURE, REQUIRES_NEW_SLIST};
-
-// Do we need to create a new slist? session? both?
-enum new_session_new_slist {NEITHER, SESSION, SLIST, BOTH};
-
 // status of a node in a cluster
 static const unsigned int HEALTHY = 0;
 static const unsigned int RECOVERING = 1;
@@ -905,18 +899,10 @@ static GHashTable *create_new_addr_table(void) {
 
     GHashTable *addr_table;
 
-    /*
-    // Free the current list
-    curl_slist_free_all(node_status.resolve_slist);
-    node_status.resolve_slist = NULL;
-    */
-
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: node_status = %p", funcname, &node_status);
     if (node_status.node_hash_table == NULL) {
         node_status.node_hash_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
     }
-
-    addr_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 
     // Turn hints off
     memset(&hints, 0, sizeof(struct addrinfo));
@@ -940,6 +926,9 @@ static GHashTable *create_new_addr_table(void) {
         // it will do its own error processing.
         return NULL;
     }
+
+    addr_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+
 
     /* getaddrinfo returned a list of addrinfo structs (for our purposes, IP addresses).
      * Some of those structs represent IPv4, others IPv6. We decide which is which
@@ -1014,7 +1003,6 @@ void delete_tmp_session(CURL *session) {
     if (session) {
         curl_easy_cleanup(session);
         session = NULL;
-        update_session_count(false);
     }
 }
 
@@ -1097,7 +1085,7 @@ static bool slist_timed_out(void) {
     // timeout interval in seconds
     // If this interval has passed, we recreate the list. Within this interval,
     // we reuse the current list.
-    const time_t resolve_slist_timeout = 120;
+    static const time_t resolve_slist_timeout = 120;
     // Keep a timer; at periodic intervals we reset the resolve_slist.
     // static so it persists between calls
     static __thread time_t prevtime = 0;
@@ -1158,10 +1146,10 @@ static bool slist_changed(GHashTable *addr_table) {
     return ret;
 }
 
-static enum new_session_new_slist needs_new_session(GHashTable *addr_table) {
+static bool needs_new_session(GHashTable *addr_table) {
     CURL *session;
     const char *funcname = "needs_new_session";
-    enum new_session_new_slist status = NEITHER;
+    bool new_session = false;
 
     // session is null
     pthread_once(&session_once, session_tsd_key_init);
@@ -1172,37 +1160,38 @@ static enum new_session_new_slist needs_new_session(GHashTable *addr_table) {
     // most serious (BOTH) precede the less serious (SESSION, then SLIST)
     if (!session) {
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: !session", funcname);
-        status = BOTH;
+        new_session = true;
     }
 
     // no slist
     else if (!valid_slist()) {
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: !valid_slist", funcname);
-        status = BOTH;
+        new_session = true;
     }
 
     else if (slist_changed(addr_table)) {
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: slist_changed", funcname);
-        status = BOTH;
+        new_session = true;
     }
 
     // timeout
     else if (slist_timed_out()) {
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: slist_timed_out", funcname);
-        status = SLIST;
+        // Don't need new session on timeout
     }
 
     // We're going to create a new session, so get rid of the old
-    if (status == SESSION || status == BOTH) {
+    if (new_session) {
         session_cleanup(session);
     }
 
-    return status;
+    return new_session;
 }
 
-static CURL *update_session(GHashTable *addr_table, bool tmp_session, enum slist_status status) {
+static CURL *update_session(GHashTable *addr_table, bool tmp_session) {
     static const char *funcname = "update_session";
-    CURL *session;
+    CURL *session = NULL;
+    bool new_session = false;
 
     // create the hash table of node addresses for which we will keep health status
     // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
@@ -1212,46 +1201,56 @@ static CURL *update_session(GHashTable *addr_table, bool tmp_session, enum slist
     log_print(LOG_INFO, SECTION_ENHANCED, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
 
-    // We might be just getting a new slist due to a timeout rather than a new session
-    session = pthread_getspecific(session_tsd_key);
-    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: session: %p", session);
-    if (!session) {
+    // if tmp_session, we need to get a new session for this request; otherwise see if we already have a session
+    if (!tmp_session) {
+        // We might be just getting a new slist due to a timeout rather than a new session
+        session = pthread_getspecific(session_tsd_key);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: session: %p", session);
+    }
+    if (session) {
+        // Unset curl DNS cache
+        // Might be able to do it by adding '-' before entries and passing list to CURL_RESOLVE
+        // then pass the new list right after. Needs trying.
+    }
+    else {
         session = curl_easy_init();
+        if (!session) return NULL;
         // We don't want a tmp session to muck with start time and resetting the main session
         if (!tmp_session) {
             // Keep track of start time so we can track how long sessions stay open
             session_start_time = time(NULL);
             pthread_setspecific(session_tsd_key, session);
             log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: new session: %p", session);
+            update_session_count(true);
+            new_session = true;
         }
     }
-    if (!session) return NULL;
-
-    update_session_count(true);
 
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, 
             "%s: construct_resolve_slist: addr_table (%p)", funcname, addr_table);
-    construct_resolve_slist(addr_table, status);
+    construct_resolve_slist(addr_table, new_session);
 
     return session;
 }
 
 static CURL *get_session(bool tmp_session) {
     CURL *session;
-    enum new_session_new_slist status;
     static const char * funcname = "get_session";
 
     GHashTable *addr_table;
     addr_table = create_new_addr_table();
-    status = needs_new_session(addr_table);
-    if (status == BOTH || status == SESSION) {
-        session = update_session(addr_table, tmp_session, status);
+    // On getaddrinfo failure, NULL gets returned; pass it through
+    if (addr_table == NULL) return NULL;
+
+    if (needs_new_session(addr_table)) {
+        session = update_session(addr_table, tmp_session);
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: update_session (%p)", funcname, session);
     }
     else {
         session = pthread_getspecific(session_tsd_key);
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: pthread session (%p)", funcname, session);
     }
+
     g_hash_table_destroy(addr_table);
     return session;
 }
