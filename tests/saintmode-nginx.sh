@@ -18,6 +18,7 @@ EOF
 
 verbose=0
 iters=0
+noonebox=0
 
 while getopts "hi:ov" OPTION
 do
