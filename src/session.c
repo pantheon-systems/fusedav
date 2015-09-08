@@ -1214,7 +1214,10 @@ static CURL *update_session(GHashTable *addr_table, bool tmp_session) {
     }
     else {
         session = curl_easy_init();
-        if (!session) return NULL;
+        if (!session) {
+            log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "%s: curl_easy_init returns NULL");
+            return NULL;
+        }
         // We don't want a tmp session to muck with start time and resetting the main session
         if (!tmp_session) {
             // Keep track of start time so we can track how long sessions stay open
