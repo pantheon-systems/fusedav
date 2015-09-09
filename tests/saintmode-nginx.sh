@@ -18,8 +18,9 @@ EOF
 
 verbose=0
 iters=0
+noonebox=0
 
-while getopts "hi:v" OPTION
+while getopts "hi:ov" OPTION
 do
      case $OPTION in
          h)
@@ -28,6 +29,9 @@ do
              ;;
          i)
              iters=$OPTARG
+             ;;
+         o)
+             noonebox=1
              ;;
          v)
              verbose=1
@@ -63,6 +67,9 @@ else
 	onebox=0
 fi
 
+if [ $noonebox -eq 1 ]; then
+	onebox=0
+fi
 
 # Most tests need to be in the files directory, but this one needs to be
 # one up.
