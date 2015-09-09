@@ -1146,10 +1146,16 @@ static bool slist_changed(GHashTable *addr_table) {
     return ret;
 }
 
-static bool needs_new_session(GHashTable *addr_table) {
+static bool needs_new_session(GHashTable *addr_table, bool tmp_session) {
     CURL *session;
     const char *funcname = "needs_new_session";
     bool new_session = false;
+
+    // Short circuit on tmp_session; we always need a new session
+    if (tmp_session) {
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: tmp_session is true", funcname);
+        return true;
+    }
 
     // session is null
     pthread_once(&session_once, session_tsd_key_init);
@@ -1245,7 +1251,7 @@ static CURL *get_session(bool tmp_session) {
     // On getaddrinfo failure, NULL gets returned; pass it through
     if (addr_table == NULL) return NULL;
 
-    if (needs_new_session(addr_table)) {
+    if (needs_new_session(addr_table, tmp_session)) {
         session = update_session(addr_table, tmp_session);
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: update_session (%p)", funcname, session);
     }
