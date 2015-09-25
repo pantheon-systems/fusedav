@@ -220,10 +220,8 @@ static void update_session_count(bool add) {
 
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
         const CURLcode res, const long response_code, const long elapsed_time, const char *path) {
-    char *failure_str = NULL;
     char *error_str = NULL;
     bool slow_request = false;
-    asprintf(&failure_str, "%d_failures", iter + 1);
 
     if (res != CURLE_OK) {
         asprintf(&error_str, "%s :: %s", curl_easy_strerror(res), "no rc");
@@ -246,6 +244,9 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
 
     // Don't treat slow requests as 'failures'; it messes up the failure/recovery stats
     if (!slow_request) {
+        char *failure_str = NULL;
+        asprintf(&failure_str, "%d_failures", iter + 1);
+
         // Stats log
         // Is this the first, second, or third failure for this request?
         log_print(LOG_INFO, SECTION_ENHANCED,
