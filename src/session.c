@@ -995,6 +995,7 @@ static GHashTable *create_new_addr_table(void) {
 
         ++count;
     }
+    freeaddrinfo(aihead);
     return addr_table;
 }
 
