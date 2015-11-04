@@ -708,7 +708,7 @@ static bool set_health_status(char *addr, char *curladdr) {
         }
         else {
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
-                    "%s: new entry doesn't have curladdr %s", addr);
+                    "%s: new entry doesn't have curladdr %s", funcname, addr);
         }
         g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, 
@@ -718,7 +718,7 @@ static bool set_health_status(char *addr, char *curladdr) {
     return added_entry;
 }
 
-static void construct_resolve_slist(GHashTable *addr_table, bool new_session) {
+static void construct_resolve_slist(GHashTable *addr_table) {
     static const char *funcname = "construct_resolve_slist";
     int addr_score_idx = 0;
     GHashTableIter iter;
@@ -726,10 +726,7 @@ static void construct_resolve_slist(GHashTable *addr_table, bool new_session) {
     // Did we change the list? Used to decide to print new list
     // We get a new list if we get a new session, or we add or delete a node 
     // from the cluster; or if we update a health score
-    bool changed_list = false;
     struct addr_score_s *addr_score[MAX_NODES + 1] = {NULL};
-
-    changed_list = new_session;
 
     // Is there anything in node_hash_table not in addr table,
     // e.g. a deleted addr
@@ -743,7 +740,6 @@ static void construct_resolve_slist(GHashTable *addr_table, bool new_session) {
         if (!exists) {
             // delete the node
             g_hash_table_iter_remove(&iter);
-            changed_list = true;
             log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: removed from hash table: %s", 
                     funcname, key);
         }
@@ -758,7 +754,6 @@ static void construct_resolve_slist(GHashTable *addr_table, bool new_session) {
         if (!exists) {
             // Add to node_hash_table
             set_health_status(logstr(key), value);
-            changed_list = true;
             log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: added to hash table: %s :: %s", 
                     funcname, key, value);
         }
@@ -775,15 +770,6 @@ static void construct_resolve_slist(GHashTable *addr_table, bool new_session) {
 
         // We need to sort on health score, but use the addr name.
         addr_score[addr_score_idx] = g_new(struct addr_score_s, 1);
-        // Take the opportunity to decrement the score by the amount of time which has passed since it last went bad.
-        // This will update the hashtable entry. It's a pointer, so update will stick
-        if (!new_session && healthstatus->score != HEALTHY) {
-            --healthstatus->score;
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
-                    "%s: decrementing score; addr [%s], score [%d]",
-                    funcname, healthstatus->curladdr, healthstatus->score);
-            changed_list = true;
-        }
 
         // Save values into sortable array
         strncpy(addr_score[addr_score_idx]->addr, healthstatus->curladdr, IPSTR_SZ);
@@ -807,11 +793,9 @@ static void construct_resolve_slist(GHashTable *addr_table, bool new_session) {
 
     // addr_score_idx is the number of addresses we processed above
     for (int idx = 0; idx < addr_score_idx; idx++) {
-        if (changed_list) { // if we've potentially changed the list, let's see the new one
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
-                    "%s: inserting into resolve_slist (%p): %s, score %d",
-                    funcname, node_status.resolve_slist, addr_score[idx]->addr, addr_score[idx]->score);
-        }
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+                "%s: inserting into resolve_slist (%p): %s, score %d",
+                funcname, node_status.resolve_slist, addr_score[idx]->addr, addr_score[idx]->score);
         node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, addr_score[idx]->addr);
         g_free(addr_score[idx]);
     }
@@ -1087,7 +1071,7 @@ static bool slist_timed_out(void) {
     // timeout interval in seconds
     // If this interval has passed, we recreate the list. Within this interval,
     // we reuse the current list.
-    static const time_t resolve_slist_timeout = 120;
+    static const time_t resolve_slist_timeout = 600;
     // Keep a timer; at periodic intervals we reset the resolve_slist.
     // static so it persists between calls
     static __thread time_t prevtime = 0;
@@ -1104,51 +1088,11 @@ static bool slist_timed_out(void) {
 
     // Ready for the next invocation.
     prevtime = curtime;
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "slist_timed_out: timeout has elapsed on %s", nodeaddr);
     return true;
 }
 
-// Check that the new list of addresses matches the old list
-static bool slist_changed(GHashTable *addr_table) {
-    bool ret = false;
-    GHashTableIter iter;
-    gpointer key, value;
-
-    // If the two tables have different sizes, we know we have to recreate the slist
-    if (g_hash_table_size(addr_table) != g_hash_table_size(node_status.node_hash_table)) {
-        return true;
-    }
-
-    // Is there anything in node_hash_table not in addr table,
-    // e.g. a deleted addr
-    g_hash_table_iter_init (&iter, node_status.node_hash_table);
-    while (g_hash_table_iter_next (&iter, &key, &value)) {
-        bool exists = false;
-        // Is this address in addr_table?
-        exists = g_hash_table_lookup(addr_table, key);
-        if (!exists) {
-            ret = true;
-            break;
-        }
-    }
-    // If ret is already true, we already need a new session, so short-circuit.
-    if (ret == false) {
-        // Is there anything in addr_table not in node_hash_table
-        // e.g. an added addr
-        g_hash_table_iter_init (&iter, addr_table);
-        while (g_hash_table_iter_next (&iter, &key, &value)) {
-            bool exists = false;
-            // Is this address in addr_table?
-            exists = g_hash_table_lookup(node_status.node_hash_table, key);
-            if (!exists) {
-                ret = true;
-                break;
-            }
-        }
-    }
-    return ret;
-}
-
-static bool needs_new_session(GHashTable *addr_table, bool tmp_session) {
+static bool needs_new_session(bool tmp_session) {
     CURL *session;
     const char *funcname = "needs_new_session";
     bool new_session = false;
@@ -1177,15 +1121,10 @@ static bool needs_new_session(GHashTable *addr_table, bool tmp_session) {
         new_session = true;
     }
 
-    else if (slist_changed(addr_table)) {
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: slist_changed", funcname);
-        new_session = true;
-    }
-
     // timeout
     else if (slist_timed_out()) {
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: slist_timed_out", funcname);
-        // Don't need new session on timeout
+        new_session = true;
     }
 
     // We're going to create a new session, so get rid of the old
@@ -1196,10 +1135,16 @@ static bool needs_new_session(GHashTable *addr_table, bool tmp_session) {
     return new_session;
 }
 
-static CURL *update_session(GHashTable *addr_table, bool tmp_session) {
+static CURL *update_session(bool tmp_session) {
     static const char *funcname = "update_session";
     CURL *session = NULL;
-    bool new_session = false;
+
+    // We only need a new addr_table if we need a new session, and if we call update_session,
+    // we need a new session
+    GHashTable *addr_table;
+    addr_table = create_new_addr_table();
+    // On getaddrinfo failure, NULL gets returned; pass it through
+    if (addr_table == NULL) return NULL;
 
     // create the hash table of node addresses for which we will keep health status
     // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
@@ -1211,35 +1156,30 @@ static CURL *update_session(GHashTable *addr_table, bool tmp_session) {
 
     // if tmp_session, we need to get a new session for this request; otherwise see if we already have a session
     if (!tmp_session) {
-        // We might be just getting a new slist due to a timeout rather than a new session
         session = pthread_getspecific(session_tsd_key);
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: session: %p", session);
-    }
-    if (session) {
-        // Unset curl DNS cache
-        // Might be able to do it by adding '-' before entries and passing list to CURL_RESOLVE
-        // then pass the new list right after. Needs trying.
-    }
-    else {
-        session = curl_easy_init();
-        if (!session) {
-            log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "%s: curl_easy_init returns NULL");
-            return NULL;
-        }
-        // We don't want a tmp session to muck with start time and resetting the main session
-        if (!tmp_session) {
-            // Keep track of start time so we can track how long sessions stay open
-            session_start_time = time(NULL);
-            pthread_setspecific(session_tsd_key, session);
-            log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: new session: %p", session);
-            update_session_count(true);
-            new_session = true;
+        if (session) {
+            log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "%s: Got unexpected already-existing session; deleting: %p", funcname, session);
+            session_cleanup(session);
         }
     }
 
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, 
-            "%s: construct_resolve_slist: addr_table (%p)", funcname, addr_table);
-    construct_resolve_slist(addr_table, new_session);
+    session = curl_easy_init();
+    if (!session) {
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "%s: curl_easy_init returns NULL", funcname);
+        return NULL;
+    }
+    // We don't want a tmp session to muck with start time and resetting the main session
+    if (!tmp_session) {
+        // Keep track of start time so we can track how long sessions stay open
+        session_start_time = time(NULL);
+        pthread_setspecific(session_tsd_key, session);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: new session: %p", funcname, session);
+        update_session_count(true);
+    }
+
+    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: construct_resolve_slist: addr_table (%p)", funcname, addr_table);
+    construct_resolve_slist(addr_table);
+    g_hash_table_destroy(addr_table);
 
     return session;
 }
@@ -1248,13 +1188,8 @@ static CURL *get_session(bool tmp_session) {
     CURL *session;
     static const char * funcname = "get_session";
 
-    GHashTable *addr_table;
-    addr_table = create_new_addr_table();
-    // On getaddrinfo failure, NULL gets returned; pass it through
-    if (addr_table == NULL) return NULL;
-
-    if (needs_new_session(addr_table, tmp_session)) {
-        session = update_session(addr_table, tmp_session);
+    if (needs_new_session(tmp_session)) {
+        session = update_session(tmp_session);
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: update_session (%p)", funcname, session);
     }
     else {
@@ -1262,7 +1197,6 @@ static CURL *get_session(bool tmp_session) {
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: pthread session (%p)", funcname, session);
     }
 
-    g_hash_table_destroy(addr_table);
     return session;
 }
 
@@ -1286,6 +1220,8 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
         return NULL;
     }
 
+    // TODO(JB) Instead, can we just reset the ones that we might have changed?
+    // Will this allow us to not reset SSL, and will that help out memory use in libnss?
     curl_easy_reset(session);
 
     // Whether we created a new resolve_slist or not, we still need to
@@ -1319,7 +1255,6 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: Initialized request to URL: %s", funcname, full_url);
     free(full_url);
 
-    //curl_easy_setopt(session, CURLOPT_USERAGENT, "FuseDAV/" PACKAGE_VERSION);
     if (ca_certificate != NULL)
         curl_easy_setopt(session, CURLOPT_CAINFO, ca_certificate);
     if (client_certificate != NULL) {
@@ -1330,21 +1265,12 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
     curl_easy_setopt(session, CURLOPT_SSL_VERIFYPEER, 1);
     curl_easy_setopt(session, CURLOPT_FOLLOWLOCATION, 1);
     curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 500);
+    // TODO(JB). One suggestion to make this work, move it closer to easy_perform
     curl_easy_setopt(session, CURLOPT_TIMEOUT, 60);
     //curl_easy_setopt(session, CURLOPT_LOW_SPEED_LIMIT, 1024);
     //curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 60);
     curl_easy_setopt(session, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
     curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
-
-    // For curl configured for nss rather than openssl
-    // curl-config --configure ... '--without-ssl' '--with-nss'
-    // cipher list for nss at:
-    // https://git.fedorahosted.org/cgit/mod_nss.git/plain/docs/mod_nss.html
-    // Restrict to TLSv1.2
-    // Prefer gcm, but allow lesser cipher
-    // Don't set client ciphering; rely on server
-    // curl_easy_setopt(session, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-    // curl_easy_setopt(session, CURLOPT_SSL_CIPHER_LIST, "ecdhe_rsa_aes_128_gcm_sha_256");
 
     return session;
 }

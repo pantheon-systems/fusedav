@@ -14,17 +14,19 @@ OPTIONS:
    -i      Number of iterations
    -d      Directory name (default is fusedav)
    -p      pid of fusedav instance
+   -b      bid of fusedav instance (7 chars only)
    -v      Verbose
 EOF
 }
 
 # do 64 rounds by default
 pid=0
+bid=0
 iters=64
 verbose=0
 # assuming we are using base fusedav; but allow for override
 fusedavdir="fusedav"
-while getopts "hi:d:p:v" OPTION
+while getopts "hi:d:p:b:v" OPTION
 do
      case $OPTION in
          h)
@@ -39,6 +41,9 @@ do
              ;;
          p)
              pid=$OPTARG
+             ;;
+         b)
+             bid=${OPTARG:0:6}
              ;;
          v)
              verbose=1
@@ -64,15 +69,26 @@ if [ $pid -eq 0 ]; then
     exit 1
 fi
     
+if [ $bid -eq 0 ]; then
+	echo "Requires bid (7 chars only)"
+    exit 1
+fi
+    
 pprof_out=$bindingdir/pprof.out
 rm -f $pprof_out
 iter=0
 while [ $iter -le $iters ]
 do
     # get the current memory use
-    res=$(ps aux | grep mount.$fusedavdir | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
-    echo "$iter: before make: $res"
-    echo "$iter: before make: $res" >> $pprof_out
+    fusedavres=$(ps aux | grep mount.$fusedavdir | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
+    nginxres=$(ps aux | grep nginx | grep -v grep | grep $bid | awk '{printf "%5d %d\n", $2, $6}')
+    phpfmpres=$(ps aux | grep php-fpm | grep -v grep | grep $bid | awk '{printf "%5d %d\n", $2, $6}')
+    echo "$iter: fusedav before make: $fusedavres"
+    echo "$iter: fusedav before make: $fusedavres" >> $pprof_out
+    echo "$iter: nginx before make: $nginxres"
+    echo "$iter: nginx before make: $nginxres" >> $pprof_out
+    echo "$iter: php-fpm before make: $phpfpmres"
+    echo "$iter: php-fpm  before make: $phpfpmres" >> $pprof_out
     
     echo "$iter: make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests"
     echo "$iter: make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests" >> $pprof_out
