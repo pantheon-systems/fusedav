@@ -299,17 +299,33 @@ static unsigned int health_status_all_nodes(void) {
     return score;
 }
 
+static void update_health_status_all_nodes(void) {
+    static const char *funcname = "update_health_status_all_nodes";
+    GHashTableIter iter;
+    gpointer key, value;
+
+    g_hash_table_iter_init (&iter, node_status.node_hash_table);
+    while (g_hash_table_iter_next (&iter, &key, &value)) {
+        struct health_status_s *healthstatus = (struct health_status_s *)value;
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: hash_table [%p], iter [%p], score [%d]",
+            funcname, node_status.node_hash_table, iter, healthstatus->score);
+        if (healthstatus->score != HEALTHY) {
+            --healthstatus->score;
+        }
+    }
+}
+
 static void increment_node_success(char *addr) {
-    struct health_status_s *health_status = get_health_status(addr);
-    if (!health_status) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "increment_node_success: health_status null for %s", addr);
+    struct health_status_s *healthstatus = get_health_status(addr);
+    if (!healthstatus) {
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "increment_node_success: healthstatus null for %s", addr);
         return;
     }
-    if (health_status->score > HEALTHY) {
-        --health_status->score;
-        health_status->timestamp = time(NULL); // Reset since we just used it
+    if (healthstatus->score > HEALTHY) {
+        --healthstatus->score;
+        healthstatus->timestamp = time(NULL); // Reset since we just used it
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "increment_node_success: %s addr score set to %u",
-            addr, health_status->score);
+            addr, healthstatus->score);
     }
 }
 
@@ -687,30 +703,30 @@ static int compare_node_score(const void *x, const void *y) {
 static bool set_health_status(char *addr, char *curladdr) {
     static const char *funcname = "set_health_status";
     bool added_entry = false;
-    struct health_status_s *health_status = NULL;
-    health_status = g_hash_table_lookup(node_status.node_hash_table, addr);
-    if (health_status) {
-        if (curladdr && health_status->curladdr[0] == '\0') {
-            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
+    struct health_status_s *healthstatus = NULL;
+    healthstatus = g_hash_table_lookup(node_status.node_hash_table, addr);
+    if (healthstatus) {
+        if (curladdr && healthstatus->curladdr[0] == '\0') {
+            strncpy(healthstatus->curladdr, curladdr, LOGSTRSZ);
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
                     "%s: existing entry didn't have curladdr %s", funcname, addr);
         }
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: reusing entry for %s", funcname, addr);
-        health_status->current = true;
+        healthstatus->current = true;
     }
     else {
-        health_status = g_new(struct health_status_s, 1);
-        health_status->score = HEALTHY;
-        health_status->timestamp = 0;
-        health_status->current = true;
+        healthstatus = g_new(struct health_status_s, 1);
+        healthstatus->score = HEALTHY;
+        healthstatus->timestamp = 0;
+        healthstatus->current = true;
         if (curladdr) {
-            strncpy(health_status->curladdr, curladdr, LOGSTRSZ);
+            strncpy(healthstatus->curladdr, curladdr, LOGSTRSZ);
         }
         else {
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
                     "%s: new entry doesn't have curladdr %s", funcname, addr);
         }
-        g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), health_status);
+        g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), healthstatus);
         log_print(LOG_INFO, SECTION_SESSION_DEFAULT, 
                 "%s: creating new entry for %s // %s", funcname, addr, curladdr);
         added_entry = true;
@@ -1004,28 +1020,28 @@ static void delete_session(CURL *session, bool tmp_session) {
 
 static void increment_node_failure(char *addr, const CURLcode res, const long response_code, const long elapsed_time) {
     const char * funcname = "increment_node_failure";
-    struct health_status_s *health_status = get_health_status(addr);
-    if (!health_status) {
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "%s: health_status null for %s", funcname, addr);
+    struct health_status_s *healthstatus = get_health_status(addr);
+    if (!healthstatus) {
+        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "%s: healthstatus null for %s", funcname, addr);
         return;
     }
     // Currently treat !CURLE_OK and response_code > 500 the same, but leave in structure if we want to treat them differently.
     if (res != CURLE_OK) {
-        health_status->score = UNHEALTHY;
+        healthstatus->score = UNHEALTHY;
         log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "%s: !CURLE_OK: %s addr score set to %d",
-            funcname, addr, health_status->score);
+            funcname, addr, healthstatus->score);
     }
     else if (response_code >= 500) {
-        health_status->score = UNHEALTHY;
+        healthstatus->score = UNHEALTHY;
         log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "%s: response_code %lu: %s addr score set to %d",
-            funcname, response_code, addr, health_status->score);
+            funcname, response_code, addr, healthstatus->score);
     }
     else if (elapsed_time > time_limit) {
-        health_status->score = UNHEALTHY;
+        healthstatus->score = UNHEALTHY;
         log_print(LOG_ERR, SECTION_SESSION_DEFAULT, "%s: slow_request %lu: %s addr score set to %d",
-            funcname, elapsed_time, addr, health_status->score);
+            funcname, elapsed_time, addr, healthstatus->score);
     }
-    health_status->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
+    healthstatus->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
 }
 
 void process_status(const char *fcn_name, CURL *session, const CURLcode res, 
@@ -1072,22 +1088,33 @@ static bool slist_timed_out(void) {
     // If this interval has passed, we recreate the list. Within this interval,
     // we reuse the current list.
     static const time_t resolve_slist_timeout = 600;
+    static const time_t health_update_timeout = 120;
     // Keep a timer; at periodic intervals we reset the resolve_slist.
     // static so it persists between calls
-    static __thread time_t prevtime = 0;
+    static __thread time_t prev_slist_time = 0;
+    static __thread time_t prev_health_time = 0;
     time_t curtime;
 
     // If the list is still young, just return. The current list is still valid
     curtime = time(NULL);
 
-    if (curtime - prevtime < resolve_slist_timeout) {
+    // We want to update the health status on all nodes currently unhealthy. We
+    // do this on a different interval than the slist_timeout
+    if (curtime - prev_health_time > health_update_timeout) {
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT,
+            "slist_timed_out: updating health status all nodes");
+        update_health_status_all_nodes();
+        // Ready for the next invocation.
+        prev_health_time = curtime;
+    }
+    if (curtime - prev_slist_time < resolve_slist_timeout) {
         log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT,
             "slist_timed_out: timeout has not elapsed; return with current slist (%p)", node_status.resolve_slist);
         return false;
     }
 
     // Ready for the next invocation.
-    prevtime = curtime;
+    prev_slist_time = curtime;
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "slist_timed_out: timeout has elapsed on %s", nodeaddr);
     return true;
 }
