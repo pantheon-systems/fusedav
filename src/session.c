@@ -307,10 +307,12 @@ static void update_health_status_all_nodes(void) {
     g_hash_table_iter_init (&iter, node_status.node_hash_table);
     while (g_hash_table_iter_next (&iter, &key, &value)) {
         struct health_status_s *healthstatus = (struct health_status_s *)value;
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: hash_table [%p], iter [%p], score [%d]",
-            funcname, node_status.node_hash_table, iter, healthstatus->score);
+        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: hash_table [%p], score [%d]",
+            funcname, node_status.node_hash_table, healthstatus->score);
         if (healthstatus->score != HEALTHY) {
             --healthstatus->score;
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: addr [%s], score [%d]",
+                funcname, healthstatus->curladdr, healthstatus->score);
         }
     }
 }
@@ -711,7 +713,7 @@ static bool set_health_status(char *addr, char *curladdr) {
             log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
                     "%s: existing entry didn't have curladdr %s", funcname, addr);
         }
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: reusing entry for %s", funcname, addr);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: reusing entry for %s", funcname, addr);
         healthstatus->current = true;
     }
     else {
@@ -723,11 +725,11 @@ static bool set_health_status(char *addr, char *curladdr) {
             strncpy(healthstatus->curladdr, curladdr, LOGSTRSZ);
         }
         else {
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+            log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, 
                     "%s: new entry doesn't have curladdr %s", funcname, addr);
         }
         g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), healthstatus);
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, 
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
                 "%s: creating new entry for %s // %s", funcname, addr, curladdr);
         added_entry = true;
     }
@@ -756,7 +758,7 @@ static void construct_resolve_slist(GHashTable *addr_table) {
         if (!exists) {
             // delete the node
             g_hash_table_iter_remove(&iter);
-            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: removed from hash table: %s", 
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: removed from hash table: %s", 
                     funcname, key);
         }
     }
@@ -769,8 +771,8 @@ static void construct_resolve_slist(GHashTable *addr_table) {
         exists = g_hash_table_lookup(node_status.node_hash_table, key);
         if (!exists) {
             // Add to node_hash_table
-            set_health_status(logstr(key), value);
-            log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: added to hash table: %s :: %s", 
+            set_health_status(key, value);
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: added to hash table %s :: %s",
                     funcname, key, value);
         }
     }
@@ -1101,7 +1103,7 @@ static bool slist_timed_out(void) {
     // We want to update the health status on all nodes currently unhealthy. We
     // do this on a different interval than the slist_timeout
     if (curtime - prev_health_time > health_update_timeout) {
-        log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT,
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT,
             "slist_timed_out: updating health status all nodes");
         update_health_status_all_nodes();
         // Ready for the next invocation.
@@ -1115,7 +1117,7 @@ static bool slist_timed_out(void) {
 
     // Ready for the next invocation.
     prev_slist_time = curtime;
-    log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "slist_timed_out: timeout has elapsed on %s", nodeaddr);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "slist_timed_out: timeout has elapsed on %s", nodeaddr);
     return true;
 }
 
@@ -1135,22 +1137,21 @@ static bool needs_new_session(bool tmp_session) {
 
     session = pthread_getspecific(session_tsd_key);
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s?: session (%p)", funcname, session);
-    // We only need one of these to trigger, but order them so that the
-    // most serious (BOTH) precede the less serious (SESSION, then SLIST)
+
     if (!session) {
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: !session", funcname);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: !session", funcname);
         new_session = true;
     }
 
     // no slist
     else if (!valid_slist()) {
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: !valid_slist", funcname);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: !valid_slist", funcname);
         new_session = true;
     }
 
     // timeout
     else if (slist_timed_out()) {
-        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: slist_timed_out", funcname);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: slist_timed_out", funcname);
         new_session = true;
     }
 

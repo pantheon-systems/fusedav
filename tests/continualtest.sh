@@ -21,7 +21,7 @@ EOF
 
 # do 64 rounds by default
 pid=0
-bid=0
+bid=""
 iters=64
 verbose=0
 # assuming we are using base fusedav; but allow for override
@@ -69,7 +69,7 @@ if [ $pid -eq 0 ]; then
     exit 1
 fi
     
-if [ $bid -eq 0 ]; then
+if [ $bid == "" ]; then
 	echo "Requires bid (7 chars only)"
     exit 1
 fi
@@ -83,6 +83,7 @@ do
     fusedavres=$(ps aux | grep mount.$fusedavdir | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
     nginxres=$(ps aux | grep nginx | grep -v grep | grep $bid | awk '{printf "%5d %d\n", $2, $6}')
     phpfmpres=$(ps aux | grep php-fpm | grep -v grep | grep $bid | awk '{printf "%5d %d\n", $2, $6}')
+    echo "$(date)"
     echo "$iter: fusedav before make: $fusedavres"
     echo "$iter: fusedav before make: $fusedavres" >> $pprof_out
     echo "$iter: nginx before make: $nginxres"
