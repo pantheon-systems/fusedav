@@ -135,14 +135,16 @@ do
 	do 
 		# echo $file
 		res=$(curl -s -H "Cache-Control: no-cache" -H "X-Bypass-Cache: 1" -I http://$uri/sites/default/$file | grep HTTP)
-		if [ $verbose -gt 0 ]; then
-			printf "SUCCEED: %s: %s : %s :: %s\n" "$0" "$uri" "$file" "$res"
-		fi
 
 		if [[ ! $res =~ '200' && ! $res =~ '301' && ! $res =~ '403' ]]; then
+			echo "curl -s -H 'Cache-Control: no-cache' -H 'X-Bypass-Cache: 1' -I http://$uri/sites/default/$file"
 			printf "ERROR: %s: %s :: %s\n" "$0" "$file" "$res"
 			fail=$((fail + 1))
 		else
+			if [ $verbose -gt 0 ]; then
+				echo "curl -s -H 'Cache-Control: no-cache' -H 'X-Bypass-Cache: 1' -I http://$uri/sites/default/$file"
+				printf "SUCCEED: %s: %s : %s :: %s\n" "$0" "$uri" "$file" "$res"
+			fi
 			pass=$((pass + 1))
 		fi
 		if [ $verbose -gt 0 ]; then
