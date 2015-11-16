@@ -93,7 +93,8 @@ static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
     while (cur != NULL) {
         segment_len = cur->text.afterLast - cur->text.first;
         segment = malloc(segment_len + 1);
-        g_strlcpy(segment, cur->text.first, segment_len);
+        strncpy(segment, cur->text.first, segment_len);
+        segment[segment_len] = '\0';
 
         if (path == NULL) {
             path = segment;
@@ -181,7 +182,7 @@ static void characterDataHandler(void *userData, const XML_Char *s, int len) {
     state->estate.current_data = realloc(state->estate.current_data, state->estate.current_data_len + len);
 
     // Copy in the new data, starting by overwriting the NUL terminator.
-    g_strlcpy(state->estate.current_data + state->estate.current_data_len - 1, s, len);
+    strncpy(state->estate.current_data + state->estate.current_data_len - 1, s, len);
 
     // Update the string length.
     state->estate.current_data_len += len;
@@ -205,7 +206,8 @@ static void endElement(void *userData, const XML_Char *name) {
         unescaped_path = curl_easy_unescape(state->session, path, 0, NULL);
         free(path);
         log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "DAV:href: %s", state->estate.current_data);
-        g_strlcpy(state->rstate.path, unescaped_path, PATH_MAX);
+        strncpy(state->rstate.path, unescaped_path, PATH_MAX);
+        state->rstate.path[PATH_MAX - 1] = '\0';
         free(unescaped_path);
     }
     else if (strcmp(name, "DAV:collection") == 0) {
@@ -293,7 +295,8 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
             char failure_str[PARSE_FAILURE_STR_SIZE + 1];
             failure_str[0] = '\0';
             if (contents) {
-                g_strlcpy(failure_str, contents, PARSE_FAILURE_STR_SIZE + 1);
+                strncpy(failure_str, contents, PARSE_FAILURE_STR_SIZE);
+                failure_str[PARSE_FAILURE_STR_SIZE] = '\0';
             }
             log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "write_parsing_callback: Parsing response buffer of length %u failed with error: %s -- return string: %s", real_size, XML_ErrorString(error_code), failure_str);
             state->failure = true;

@@ -247,10 +247,9 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
                 process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
-
-                delete_tmp_session(session);
-                session = NULL;
             }
+
+            delete_tmp_session(session);
 
             if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
                 trigger_saint_event(CLUSTER_FAILURE);
