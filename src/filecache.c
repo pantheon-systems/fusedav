@@ -330,8 +330,7 @@ static size_t capture_etag(void *ptr, size_t size, size_t nmemb, void *userdata)
         if (value_len > ETAG_MAX)
             goto finish;
 
-        strncpy(etag, value, value_len);
-        etag[value_len - 1] = '\0';
+        g_strlcpy(etag, value, value_len);
     }
 
 finish:
@@ -593,18 +592,17 @@ static void get_fresh_fd(filecache_t *cache,
             }
         }
         else {
-            strncpy(old_filename, pdata->filename, PATH_MAX);
+            g_strlcpy(old_filename, pdata->filename, PATH_MAX);
             unlink_old = true;
         }
 
         // Fill in ETag.
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "Saving ETag: %s", etag);
-        strncpy(pdata->etag, etag, ETAG_MAX);
-        pdata->etag[ETAG_MAX] = '\0'; // length of etag is ETAG_MAX + 1 to accomodate this null terminator
+        g_strlcpy(pdata->etag, etag, ETAG_MAX + 1);
 
         // Point the persistent cache to the new file content.
         pdata->last_server_update = time(NULL);
-        strncpy(pdata->filename, response_filename, PATH_MAX);
+        g_strlcpy(pdata->filename, response_filename, PATH_MAX);
 
         sdata->fd = response_fd;
 
@@ -1335,7 +1333,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
         }
         else {
             // If we don't PUT the file, we don't have an etag, so zero it out
-            strncpy(pdata->etag, "", 1);
+            g_strlcpy(pdata->etag, "", 1);
 
             // The local copy currently trumps the server one, no matter how old.
             pdata->last_server_update = 0;
@@ -1713,7 +1711,7 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
             ++cached_files;
             // We delete the entry, making pdata invalid, before we might need the filename to unlink,
             // so store it in fname
-            strncpy(fname, pdata->filename, PATH_MAX);
+            g_strlcpy(fname, pdata->filename, PATH_MAX);
 
             // If the cache file doesn't exist, delete the entry from the level_db cache
             ret = access(fname, F_OK);
