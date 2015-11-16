@@ -150,8 +150,6 @@ void dump_stats(bool log, const char *cache_path) {
     }
 
     mallctl("prof.dump", NULL, NULL, NULL, 0);
-    mallctl("prof_leak", NULL, NULL, NULL, 0);
-    mallctl("prof.gdump", NULL, NULL, NULL, 0);
 
     snprintf(str, MAX_LINE_LEN, "Caught SIGUSR2. Printing status.");
     print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
