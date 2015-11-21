@@ -1844,6 +1844,23 @@ static int config_privileges(struct fusedav_config *config) {
     return 0;
 }
 
+static int write_package_version_file(char *cache_path) {
+    int fd;
+    int bytes_written;
+    int pvlen;
+    char pkg_ver_path[PATH_MAX];
+
+    snprintf(pkg_ver_path, PATH_MAX, "%s/package_version", cache_path);
+    // write the package_version file
+    fd = creat(pkg_ver_path, 0600);
+    if (fd < 0) return -1;
+
+    pvlen = strlen(PACKAGE_VERSION);
+    bytes_written = write(fd, PACKAGE_VERSION, pvlen);
+    if (bytes_written != pvlen) return -1;
+    return 0;
+}
+
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
     GError *gerr = NULL;
@@ -1976,6 +1993,10 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "Opened stat cache.");
+
+    if (write_package_version_file(config.cache_path)) {
+        log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to create package version file. Not fatal.");
+    }
 
     if (pthread_create(&cache_cleanup_thread, NULL, cache_cleanup, &config)) {
         log_print(LOG_CRIT, SECTION_FUSEDAV_MAIN, "Failed to create cache cleanup thread.");
