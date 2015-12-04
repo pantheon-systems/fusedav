@@ -1,3 +1,7 @@
+VERSION
+CHANNEL
+pkg
+*.rpm
 *.o
 .deps
 Makefile.in

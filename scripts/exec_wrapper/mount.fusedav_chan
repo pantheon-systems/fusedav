@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# This wrapper should be linked by a 'mount.fusedav-channel' link. Or named as
+# such. it will use the exution name to determine the channel and shutdown
+# binding mounts for the given binding before starting again
+#
+
+# detect the channel
+channel=$(echo $0 |sed 's/.*mount\.\(.*\)/\1/')
+if [ -z "$channel" ]; then
+  echo '$0 is not a fusedav channel'
+  exit 1
+fi
+
+
+# we don't want to grep a channel here, because we want to delete processes
+# that might be part of a transition from one channel to another
+res=$(ps aux | grep $2 | grep mount.fusedav | grep -v grep)
+if [ "$res" != "" ];  then
+
+        IFS=' ' read -a resarr <<< ${res}
+        pid=${resarr[1]}
+        kill $pid
+fi
+
+# run fusedav with given options
+/opt/pantheon/$channel/$channel "$@"
