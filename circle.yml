@@ -15,7 +15,7 @@ dependencies:
 
 test:
   override:
-    - cpplint --filter=-whitespace/line_length src/* || true
+    - cpplint --filter=-whitespace/line_length src/* ; true
     - bash scripts/docker-outer.sh
 
 deployment:
