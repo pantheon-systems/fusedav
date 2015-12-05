@@ -32,4 +32,4 @@ deployment:
     commands:
       - gem install package_cloud
       - git push --tags
-      - bash scripts/pkgcloud_push.sh internal
+      - bash scripts/push_packagecloud.sh internal
