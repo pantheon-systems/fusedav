@@ -12,16 +12,8 @@ if [ -z "$channel" ]; then
   exit 1
 fi
 
-
-# we don't want to grep a channel here, because we want to delete processes
-# that might be part of a transition from one channel to another
-res=$(ps aux | grep $2 | grep mount.fusedav | grep -v grep)
-if [ "$res" != "" ];  then
-
-        IFS=' ' read -a resarr <<< ${res}
-        pid=${resarr[1]}
-        kill $pid
-fi
+# If there is a current process still running, pkill it
+pkill -f "/opt/pantheon/fusedav.*$2"
 
 # run fusedav with given options
 /opt/pantheon/$channel/$channel "$@"
