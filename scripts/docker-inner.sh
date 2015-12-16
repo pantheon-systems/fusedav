@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 #
-set -e
+set -ex
 bin="$(cd -P -- "$(dirname -- "$0")" && pwd -P)"
 
 if [ "$#" -ne 4 ]; then
@@ -36,13 +36,13 @@ if [ ! -d "$curl_libdir"  ]; then
 fi
 cp -R /curl-7.46.0/lib/.libs/* $curl_libdir
 
+# use our custom curl, and compile fusedav
 export CFLAGS="-Wl,-rpath,$curl_libdir,-rpath-link,$curl_libdir -L$curl_libdir -lcurl"
 
-# use our custom curl
+./autogen.sh
 CURL_LIBS="-lcurl" ./configure
 
-# build fusedav
-./autogen.sh
+
 make
 make install
 
