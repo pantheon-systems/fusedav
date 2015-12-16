@@ -4,7 +4,6 @@
 # such. it will use the exution name to determine the channel and shutdown
 # binding mounts for the given binding before starting again
 #
-
 # detect the channel
 channel=$(echo $0 |sed 's/.*mount\.\(.*\)/\1/')
 if [ -z "$channel" ]; then
@@ -14,6 +13,9 @@ fi
 
 # If there is a current process still running, pkill it
 pkill -f "/opt/pantheon/fusedav.*$2"
+
+# override ldconfigs location of our lib for libcurl
+export LD_LIBRARY_PATH="/opt/pantheon/$channel/libs/"
 
 # run fusedav with given options
 /opt/pantheon/$channel/$channel "$@"
