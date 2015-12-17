@@ -65,6 +65,7 @@ fpm -s dir -t rpm \
   --description "${description}" \
   --log=debug \
   $install_prefix/$name \
+  $install_prefix/libs \
   /usr/sbin/mount.$name
 
 if [ ! -d "$rpm_dir/$fedora_release/fusedav" ]  ; then
