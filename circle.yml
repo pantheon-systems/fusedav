@@ -1,10 +1,35 @@
+general:
+  artifacts:
+    - "pkg"
+
 machine:
+  services:
+    - docker
   python:
     version: 2.7.5
 
 dependencies:
-  pre:
+  override:
     - pip install cpplint
+    - bash scripts/version.sh
+
 test:
-    override:
-        - cpplint --filter=-whitespace/line_length src/* ; true
+  override:
+    - cpplint --filter=-whitespace/line_length src/* ; true
+    - bash scripts/docker-outer.sh
+
+deployment:
+  dev:
+    branch:
+      - stage
+      - yolo
+      - dev
+    commands:
+      - gem install package_cloud
+      - bash scripts/push_packagecloud.sh internal
+  prod:
+    branch: master
+    commands:
+      - gem install package_cloud
+      - git push --tags
+      - bash scripts/push_packagecloud.sh internal
