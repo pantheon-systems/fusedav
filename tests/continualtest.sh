@@ -70,7 +70,7 @@ iter=0
 while [ $iter -le $iters ]
 do
     # get the current memory use
-    res=$(ps aux | grep mount.$fusedavdir | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
+    res=$(ps aux | grep valhalla | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
     echo "$iter: before make: $res"
     echo "$iter: before make: $res" >> $pprof_out
     
@@ -98,7 +98,7 @@ do
         pprof --text --lines --inuse_space --base=$prevheap /opt/$fusedavdir/src/fusedav $newheap >> $pprof_out 2>&1
     fi
     
-    res=$(ps aux | grep mount.$fusedavdir | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
+    res=$(ps aux | grep valhalla | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
     echo "$iter: after make: $res"
     
     # leave some time for things to settle out before next round

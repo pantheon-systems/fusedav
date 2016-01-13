@@ -498,6 +498,7 @@ static void get_fresh_fd(filecache_t *cache,
             g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
             // @TODO: Should we delete path from cache and/or null-out pdata?
             // @TODO: Punt. Revisit when we add curl retry to open
+            if (slist) curl_slist_free_all(slist);
             goto finish;
         }
 
@@ -506,6 +507,8 @@ static void get_fresh_fd(filecache_t *cache,
         curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_response_to_fd);
 
         timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
+
+        if (slist) curl_slist_free_all(slist);
 
         process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
     }

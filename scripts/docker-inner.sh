@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 #
-set -e
+set -ex
 bin="$(cd -P -- "$(dirname -- "$0")" && pwd -P)"
 
 if [ "$#" -ne 4 ]; then
@@ -27,30 +27,48 @@ description='Fusedav: Pantheon fuse-based DAV client'
 fusedav_name="fusedav-$fusedav_channel"
 install_prefix="/opt/pantheon/$name"
 
+# copy pre-compiled vanilla libcurl into $install_prefix/$name/libs
+# the curl lib is part of the upstream container
+curl_libdir=$install_prefix/libs
+
+if [ ! -d "$curl_libdir"  ]; then
+  mkdir -p $curl_libdir
+fi
+cp -R /curl-7.46.0/lib/.libs/* $curl_libdir
+
+# use our custom curl, and compile fusedav
+export CFLAGS="-Wl,-rpath,$curl_libdir,-rpath-link,$curl_libdir -L$curl_libdir -lcurl"
+
 ./autogen.sh
-./configure
+CURL_LIBS="-lcurl" ./configure
+
 
 make
 make install
 
 # this could be in the make-install, but for now lets keep the rpm sepparate from the build
-mkdir -p $install_prefix
+if [ ! -d "$install_prefix" ] ; then
+  mkdir -p $install_prefix
+fi
+
 mv /usr/local/bin/fusedav $install_prefix/$name
 cp $bin/exec_wrapper/mount.fusedav_chan /usr/sbin/mount.$name
 chmod 755 /usr/sbin/mount.$name
 
 fpm -s dir -t rpm \
-    --name "${name}" \
-    --version "${version}" \
-    --iteration "${iteration}" \
-    --architecture "${arch}" \
-    --url "${url}" \
-    --vendor "${vendor}" \
-    --description "${description}" \
-    --log=debug \
-    $install_prefix/$name \
-    /usr/sbin/mount.$name
+  --name "${name}" \
+  --version "${version}" \
+  --iteration "${iteration}" \
+  --architecture "${arch}" \
+  --url "${url}" \
+  --vendor "${vendor}" \
+  --description "${description}" \
+  --log=debug \
+  $install_prefix/$name \
+  $install_prefix/libs \
+  /usr/sbin/mount.$name
 
-
-mkdir -p $rpm_dir/$fedora_release/fusedav
+if [ ! -d "$rpm_dir/$fedora_release/fusedav" ]  ; then
+  mkdir -p $rpm_dir/$fedora_release/fusedav
+fi
 mv *.rpm $rpm_dir/$fedora_release/fusedav/
