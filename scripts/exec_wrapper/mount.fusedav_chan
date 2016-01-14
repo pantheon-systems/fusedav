@@ -4,7 +4,6 @@
 # such. it will use the exution name to determine the channel and shutdown
 # binding mounts for the given binding before starting again
 #
-
 # detect the channel
 channel=$(echo $0 |sed 's/.*mount\.\(.*\)/\1/')
 if [ -z "$channel" ]; then
