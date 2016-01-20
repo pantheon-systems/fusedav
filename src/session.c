@@ -1329,7 +1329,7 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
     curl_easy_setopt(session, CURLOPT_SSL_VERIFYHOST, 0);
     curl_easy_setopt(session, CURLOPT_SSL_VERIFYPEER, 1);
     curl_easy_setopt(session, CURLOPT_FOLLOWLOCATION, 1);
-    curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 500);
+    curl_easy_setopt(session, CURLOPT_CONNECTTIMEOUT_MS, 1200);
     curl_easy_setopt(session, CURLOPT_TIMEOUT, 60);
     //curl_easy_setopt(session, CURLOPT_LOW_SPEED_LIMIT, 1024);
     //curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 60);
