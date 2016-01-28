@@ -31,7 +31,7 @@ using FUSE kernel interface version 7.19
 
 Debug/Develop
 -----
-Running this doccker script in debug mode will build a fedora-22 container with the local source mounted inside it suitible to build fusedav.
+Running this docker script in debug mode will build a fedora-22 container with the local source mounted inside it suitible to build fusedav.
 ```
 BUILD_VERSIONS=22 BUILD_DEBUG=1  ./scripts/docker-outer.sh
 ```
