@@ -63,6 +63,9 @@ fpm -s dir -t rpm \
   --url "${url}" \
   --vendor "${vendor}" \
   --description "${description}" \
+  --depends  uriparser \
+  --depends fuse-libs \
+  --depends leveldb \
   --log=debug \
   $install_prefix/$name \
   $install_prefix/libs \
