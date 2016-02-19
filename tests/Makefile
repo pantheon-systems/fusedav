@@ -105,13 +105,17 @@ perfanalysis-read = $(testdir)/perfanalysis-read
 # -t start_time 'perfanalysis-read-flags=-t <unix epoch>'
 perfanalysis-read-flags =
 
-all: run-stress-tests
+all: run-simple-stress-tests
 
 # restrict unit tests to low-resource tests
 run-unit-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-iozone-unit
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx
+
+# simple stress test; don't run the 'error' tests since they assume a onebox for creating error conditions which don't occur on yolo endpoint
+run-simple-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-iozone-stress
+
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
 # run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
