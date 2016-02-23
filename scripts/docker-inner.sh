@@ -42,6 +42,7 @@ export CFLAGS="-Wl,-rpath,$curl_libdir,-rpath-link,$curl_libdir -L$curl_libdir -
 ./autogen.sh
 CURL_LIBS="-lcurl" ./configure
 
+
 make
 make install
 
@@ -49,15 +50,6 @@ make install
 if [ ! -d "$install_prefix" ] ; then
   mkdir -p $install_prefix
 fi
-
-# test that fusedav at least runs
-set +e
-/usr/local/bin/fusedav --help
-if [ "1" != "$?" ] ; then
-  echo "fusedav binary seems broken, failing to continue"
-  exit 1
-fi
-set -e
 
 mv /usr/local/bin/fusedav $install_prefix/$name
 cp $bin/exec_wrapper/mount.fusedav_chan /usr/sbin/mount.$name
@@ -71,9 +63,6 @@ fpm -s dir -t rpm \
   --url "${url}" \
   --vendor "${vendor}" \
   --description "${description}" \
-  --depends  uriparser \
-  --depends fuse-libs \
-  --depends leveldb \
   --log=debug \
   $install_prefix/$name \
   $install_prefix/libs \
@@ -82,5 +71,4 @@ fpm -s dir -t rpm \
 if [ ! -d "$rpm_dir/$fedora_release/fusedav" ]  ; then
   mkdir -p $rpm_dir/$fedora_release/fusedav
 fi
-
 mv *.rpm $rpm_dir/$fedora_release/fusedav/

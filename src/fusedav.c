@@ -120,8 +120,6 @@ static int simple_propfind_with_redirect(
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
-    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", &time, "propfind-count", &count, 1,
-        "propfind-latency", &latency, elapsed_time);
     clock_gettime(CLOCK_MONOTONIC, &now);
     elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
     /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
@@ -139,6 +137,8 @@ static int simple_propfind_with_redirect(
         return ret;
     }
 
+    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", &time, "propfind-count", &count, 1,
+        "propfind-latency", &latency, elapsed_time);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Done with (%s) PROPFIND.", last_updated > 0 ? "progressive" : "complete");
 
     return ret;
