@@ -724,8 +724,8 @@ static void get_fresh_fd(filecache_t *cache,
             unsigned long exceeded_count = 0;
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_fresh_fd: small (%lu) GET for %s exceeded time allotment %lu with %lu",
                 st.st_size, path, small_time_allotment, elapsed_time);
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_fresh_fd", NULL, "exceeded-time-short-GET-count",
-                &exceeded_count, 1, "exceeded-time-short-GET-latency", &elapsed_time, 0);
+            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_fresh_fd", NULL, "exceeded-time-small-GET-count",
+                &exceeded_count, 1, "exceeded-time-small-GET-latency", &elapsed_time, 0);
         }
     }
     else if (response_code == 404) {
