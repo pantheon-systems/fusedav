@@ -215,7 +215,7 @@ static void update_session_count(bool add) {
 
     if (add) __sync_fetch_and_add(&current_session_count, 1);
     else __sync_fetch_and_sub(&current_session_count, 1);
-    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "update_session_count: %d", current_session_count);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "update_session_count: %d", current_session_count);
 }
 
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
@@ -811,7 +811,7 @@ static void construct_resolve_slist(GHashTable *addr_table) {
 
     // addr_score_idx is the number of addresses we processed above
     for (int idx = 0; idx < addr_score_idx; idx++) {
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+        log_print(LOG_DYNAMIC, SECTION_SESSION_DEFAULT, 
                 "%s: inserting into resolve_slist (%p): %s, score %d",
                 funcname, node_status.resolve_slist, addr_score[idx]->addr, addr_score[idx]->score);
         node_status.resolve_slist = curl_slist_append(node_status.resolve_slist, addr_score[idx]->addr);
@@ -1151,7 +1151,7 @@ static bool needs_new_session(bool tmp_session) {
 
     // timeout
     else if (slist_timed_out()) {
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: slist_timed_out", funcname);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: slist_timed_out", funcname);
         new_session = true;
     }
 

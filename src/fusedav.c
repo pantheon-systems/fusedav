@@ -201,7 +201,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     if (status_code == 410) {
         struct stat_cache_value *existing;
 
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: DELETE %s (%lu)", funcname, path, status_code);
+        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: DELETE %s (%lu)", funcname, path, status_code);
         existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
         if (subgerr1) {
             g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
@@ -281,7 +281,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             }
         }
 
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "Removing path: %s", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "Removing path: %s", path);
         stat_cache_delete(config->cache, path, &subgerr1);
         filecache_delete(config->cache, path, true, &subgerr2);
         // If we need to combine 2 errors, use one of the error messages in the propagated prefix
