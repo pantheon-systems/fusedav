@@ -142,6 +142,14 @@ const char *get_base_url(void) {
     return base_url;
 }
 
+const char *get_filesystem_cluster(void) {
+    return filesystem_cluster;
+}
+
+const char *get_nodeaddr(void) {
+    return nodeaddr;
+}
+
 int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace) {
     size_t base_len;
     UriParserStateA state;
@@ -752,9 +760,8 @@ static void construct_resolve_slist(GHashTable *addr_table) {
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: hash_table [%p], iter [%p]",
         funcname, node_status.node_hash_table, iter);
     while (g_hash_table_iter_next (&iter, &key, &value)) {
-        bool exists = false;
         // Is this address in addr_table?
-        exists = g_hash_table_lookup(addr_table, key);
+        bool exists = g_hash_table_lookup(addr_table, key);
         if (!exists) {
             // delete the node
             g_hash_table_iter_remove(&iter);
@@ -766,9 +773,8 @@ static void construct_resolve_slist(GHashTable *addr_table) {
     // e.g. an added addr
     g_hash_table_iter_init (&iter, addr_table);
     while (g_hash_table_iter_next (&iter, &key, &value)) {
-        bool exists = false;
         // Is this address in addr_table?
-        exists = g_hash_table_lookup(node_status.node_hash_table, key);
+        bool exists = g_hash_table_lookup(node_status.node_hash_table, key);
         if (!exists) {
             // Add to node_hash_table
             set_health_status(key, value);
@@ -1006,7 +1012,6 @@ void delete_tmp_session(CURL *session) {
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
     if (session) {
         curl_easy_cleanup(session);
-        session = NULL;
     }
 }
 

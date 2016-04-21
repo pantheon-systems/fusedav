@@ -36,6 +36,7 @@
 #include "util.h"
 #include "filecache.h"
 #include "fusedav_config.h"
+#include "fusedav-statsd.h"
 
 // GError mechanisms
 static G_DEFINE_QUARK(PROP, props)
@@ -312,8 +313,6 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
         void *userdata, GError **gerr) {
     static const char *funcname = "simple_propfind";
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
     char *description = NULL;
     // Local variables for cURL.
     long response_code = 500; // seed it as bad so we can enter the loop
@@ -453,7 +452,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
 
 finish:
     asprintf(&description, "%s-propfinds", last_updated > 0 ? "progressive" : "complete");
-    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &previous_time, description, &count, 1, NULL, NULL, 0);
+    stats_counter(description, 1);
     free(description);
     XML_ParserFree(parser);
     return ret;
