@@ -142,6 +142,14 @@ const char *get_base_url(void) {
     return base_url;
 }
 
+const char *get_filesystem_cluster(void) {
+    return filesystem_cluster;
+}
+
+const char *get_nodeaddr(void) {
+    return nodeaddr;
+}
+
 int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace) {
     size_t base_len;
     UriParserStateA state;

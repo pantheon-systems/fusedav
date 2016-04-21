@@ -1,4 +1,4 @@
-testdir = /opt/fusedav/tests
+testdir = /root/pantheon/fusedav/tests
 
 cltest = $(testdir)/cltest.sh
 # usage on Makefile line: 'cltest-flags=-i64'
