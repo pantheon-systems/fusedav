@@ -23,7 +23,13 @@
 int stats_init(const char *domain, const char *port);
 int stats_close(void);
 int stats_counter(const char *statname, const int value);
+int stats_counter_cluster(const char *statname, const int value);
+int stats_counter_local(const char *statname, const int value);
 int stats_gauge(const char *statname, const int value);
+int stats_gauge_cluster(const char *statname, const int value);
+int stats_gauge_local(const char *statname, const int value);
 int stats_timer(const char *statname, const int value);
+int stats_timer_cluster(const char *statname, const int value);
+int stats_timer_local(const char *statname, const int value);
 
 #endif

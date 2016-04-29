@@ -711,7 +711,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         GError *subgerr = NULL;
 
-        stats_counter("propfind-nonnegative-cache", 1);
+        stats_counter_local("propfind-nonnegative-cache", 1);
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: Calling update_directory: %s; attempt_progressive_update will be %d",
             parent_path, (parent_children_update_ts > 0));
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
@@ -722,7 +722,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             goto fail;
         }
     } else {
-        stats_counter("propfind-negative-cache", 1);
+        stats_counter_local("propfind-negative-cache", 1);
         BUMP(propfind_negative_cache);
     }
 
