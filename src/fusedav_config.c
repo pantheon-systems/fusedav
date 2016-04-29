@@ -21,6 +21,7 @@
 #endif
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <stdbool.h>
 
@@ -270,15 +271,11 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
 
     g_key_file_free(keyfile);
 
-    print_config(config);
-
     return;
 }
 
 void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, char **mountpoint, GError **gerr) {
     // Defaults for statsd
-    char sh[] = "metrics.getpantheon.com";
-    char sp[] = "8125";
     GError *tmpgerr = NULL;
 
     // Set defaults for key items in case some don't otherwise get set
@@ -292,8 +289,8 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     config->nodaemon = false;
     config->max_file_size = 256; // 256M
     config->log_level = 5; // default log_level: LOG_NOTICE
-    config->statsd_host = sh;
-    config->statsd_port = sp;
+    asprintf(&config->statsd_host, "%s", "metrics.getpantheon.com");
+    asprintf(&config->statsd_port, "%s", "8125");
 
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
@@ -320,6 +317,9 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     if (stats_init(config->statsd_host, config->statsd_port) < 0) {
         log_print(LOG_CRIT, SECTION_CONFIG_DEFAULT, "ERROR: Failed to initialize stats. Continuing...");
     }
+
+    // call it here after log_init, so that setting the log levels effects what prints
+    print_config(config);
 
     if (fuse_parse_cmdline(args, mountpoint, NULL, NULL) < 0 || inject_error(config_error_cmdline)) {
         g_set_error(gerr, fusedav_config_quark(), EINVAL, "FUSE could not parse the command line.");
