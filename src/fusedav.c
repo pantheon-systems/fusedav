@@ -42,6 +42,7 @@
 #include "props.h"
 #include "util.h"
 #include "fusedav_config.h"
+#include "fusedav-statsd.h"
 #include "signal_handling.h"
 #include "stats.h"
 
@@ -122,6 +123,7 @@ static int simple_propfind_with_redirect(
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
     aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", &time, "propfind-count", &count, 1,
         "propfind-latency", &latency, elapsed_time);
+    stats_counter("propfind-count", 1);
     clock_gettime(CLOCK_MONOTONIC, &now);
     elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
     /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
@@ -2055,6 +2057,10 @@ finish:
 
     // We don't capture any errors from stat_cache_close
     stat_cache_close(config.cache, config.cache_supplemental);
+
+    if (stats_close()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Error closing stats.");
+    }
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Shutdown was successful. Exiting.");
 
