@@ -35,8 +35,8 @@
 
 // e.g. fusedav.valhallayolo1b.server-104_130_221_144.exceeded-time-small-GET-latency (82 characters)
 #define STATS_MSG_LEN 128
-// Needs to hold the prefix for a stat, e.g. fusedav.valhalla2.server-
-#define STATS_PREFIX_LEN 64
+// Needs to hold the prefix for a stat, e.g. fusedav
+#define STATS_PREFIX_LEN 32
 
 /* Socket and server for function sendto */
 /* server is a sockaddr_storage so it can hold either IPV4 or IPV6 */
@@ -188,8 +188,7 @@ int stats_init(const char *domain, const char *port) {
 
     memset(&server, 0, sizeof(server));
     // stats_prefix is, after being set here, an unchanging global string
-    // fusedav keeps many stats by filesystem cluster, so include it
-    snprintf(server.stats_prefix, STATS_PREFIX_LEN, "fusedav.%s.server-", get_filesystem_cluster());
+    snprintf(server.stats_prefix, STATS_PREFIX_LEN, "fusedav");
 
     if (set_addr(domain, port, &server)) {
         // FAILURE; pass it on
@@ -238,16 +237,51 @@ static int stats_send(const char *statmsg) {
     return 0;
 }
 
-static int compose_message(const char *statname, const signed int value, char *type, char *msg) {
-    return snprintf(msg, STATS_MSG_LEN, "%s%s.%s:%d|%s\n", server.stats_prefix, get_nodeaddr(), statname, value, type);
+static int compose_message(const char *statname, const signed int value, char *type, char *msg, const char *cluster, const char *node) {
+    if (node) {
+        return snprintf(msg, STATS_MSG_LEN, "%s.%s.server-%s.%s:%d|%s\n", 
+                server.stats_prefix, cluster, node, statname, value, type);
+    } else if (cluster) {
+        return snprintf(msg, STATS_MSG_LEN, "%s.%s.%s:%d|%s\n", 
+                server.stats_prefix, cluster, statname, value, type);
+    } else {
+        return snprintf(msg, STATS_MSG_LEN, "%s.%s:%d|%s\n", 
+                server.stats_prefix, statname, value, type);
+    }
+
 }
 
-int stats_counter(const char *statname, const int value) {
+static int stats_counter_common(const char *statname, const int value, const char *cluster, const char *node) {
     int error;
     int res;
     char msg[STATS_MSG_LEN];
     char type[] = "c";
-    res = compose_message(statname, value, type, msg);
+    res = compose_message(statname, value, type, msg, cluster, node);
+    if (res < 0) {
+        return res;
+    }
+    error = stats_send(msg);
+    return error;
+}
+
+int stats_counter(const char *statname, const int value) {
+    return stats_counter_common(statname, value, get_filesystem_cluster(), get_nodeaddr());
+}
+
+int stats_counter_cluster(const char *statname, const int value) {
+    return stats_counter_common(statname, value, get_filesystem_cluster(), NULL);
+}
+
+int stats_counter_local(const char *statname, const int value) {
+    return stats_counter_common(statname, value, NULL, NULL);
+}
+
+static int stats_gauge_common(const char *statname, const int value, const char *cluster, const char *node) {
+    int error;
+    int res;
+    char msg[STATS_MSG_LEN];
+    char type[] = "g";
+    res = compose_message(statname, value, type, msg, cluster, node);
     if (res < 0) {
         return res;
     }
@@ -256,11 +290,23 @@ int stats_counter(const char *statname, const int value) {
 }
 
 int stats_gauge(const char *statname, const int value) {
+    return stats_gauge_common(statname, value, get_filesystem_cluster(), get_nodeaddr());
+}
+
+int stats_gauge_cluster(const char *statname, const int value) {
+    return stats_gauge_common(statname, value, get_filesystem_cluster(), NULL);
+}
+
+int stats_gauge_local(const char *statname, const int value) {
+    return stats_gauge_common(statname, value, NULL, NULL);
+}
+
+static int stats_timer_common(const char *statname, const int value, const char *cluster, const char *node) {
     int error;
     int res;
     char msg[STATS_MSG_LEN];
-    char type[] = "g";
-    res = compose_message(statname, value, type, msg);
+    char type[] = "ms";
+    res = compose_message(statname, value, type, msg, cluster, node);
     if (res < 0) {
         return res;
     }
@@ -269,18 +315,16 @@ int stats_gauge(const char *statname, const int value) {
 }
 
 int stats_timer(const char *statname, const int value) {
-    int error;
-    int res;
-    char msg[STATS_MSG_LEN];
-    char type[] = "ms";
-    res = compose_message(statname, value, type, msg);
-    if (res < 0) {
-        return res;
-    }
-    error = stats_send(msg);
-    return error;
+    return stats_timer_common(statname, value, get_filesystem_cluster(), get_nodeaddr());
 }
 
+int stats_timer_cluster(const char *statname, const int value) {
+    return stats_timer_common(statname, value, get_filesystem_cluster(), NULL);
+}
+
+int stats_timer_local(const char *statname, const int value) {
+    return stats_timer_common(statname, value, NULL, NULL);
+}
 
 /* For reference: 
  * 
