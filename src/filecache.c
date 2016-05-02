@@ -38,6 +38,7 @@
 #include "stats.h"
 #include "session.h"
 #include "fusedav_config.h"
+#include "fusedav-statsd.h"
 
 #define REFRESH_INTERVAL 3
 #define CACHE_FILE_ENTROPY 20
@@ -141,7 +142,6 @@ static char *path2key(const char *path) {
  * to enhanced logging to LOG_NOTICE.
  */
 struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...) {
-    va_list ap;
 
     // If we are injecting errors, we can trigger enhanced logging by decrementing
     // the log level (LOG_INFO -> LOG_NOTICE)
@@ -149,6 +149,7 @@ struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int
         log_level -= 1;
     }
     if (logging(log_level, section)) {
+        va_list ap;
         char *user_agent = NULL;
         char msg[81] = {0};
         slist = curl_slist_append(slist, "Log-To-Journal: true");
@@ -363,13 +364,8 @@ static void get_fresh_fd(filecache_t *cache,
     struct timespec start_time;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
-    static __thread unsigned long lgcount = 0;
-    static __thread long lglatency = 0;
-    static __thread time_t lgtime = 0;
-    static __thread unsigned long sgcount = 0;
-    static __thread long sglatency = 0;
-    static __thread time_t sgtime = 0;
     // Not to exceed time for operation, else it's an error. Allow large files a longer time
+    // Somewhat arbitrary
     static const unsigned small_time_allotment = 2000; // 2 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
 
@@ -652,9 +648,8 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xlg_timing);
             count = FETCH(filecache_get_xlg_count);
             sz = "XLG";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &lgtime,
-                "large-gets", &lgcount, 1,
-                "large-get-latency", &lglatency, elapsed_time);
+            stats_counter("large-gets", 1);
+            stats_timer("large-get-latency", elapsed_time);
         }
         else if (st.st_size > LG) {
             TIMING(filecache_get_lg_timing, elapsed_time);
@@ -662,9 +657,8 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_lg_timing);
             count = FETCH(filecache_get_lg_count);
             sz = "LG";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &lgtime,
-                "large-gets", &lgcount, 1,
-                "large-get-latency", &lglatency, elapsed_time);
+            stats_counter("large-gets", 1);
+            stats_timer("large-get-latency", elapsed_time);
          }
         else if (st.st_size > MED) {
             TIMING(filecache_get_med_timing, elapsed_time);
@@ -672,9 +666,8 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_med_timing);
             count = FETCH(filecache_get_med_count);
             sz = "MED";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &lgtime,
-                "large-gets", &lgcount, 1,
-                "large-get-latency", &lglatency, elapsed_time);
+            stats_counter("large-gets", 1);
+            stats_timer("large-get-latency", elapsed_time);
         }
         else if (st.st_size > SM) {
             TIMING(filecache_get_sm_timing, elapsed_time);
@@ -682,9 +675,8 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_sm_timing);
             count = FETCH(filecache_get_sm_count);
             sz = "SM";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &sgtime,
-                "small-gets", &sgcount, 1,
-                "small-get-latency", &sglatency, elapsed_time);
+            stats_counter("small-gets", 1);
+            stats_timer("small-get-latency", elapsed_time);
         }
         else if (st.st_size > XSM) {
             TIMING(filecache_get_xsm_timing, elapsed_time);
@@ -692,9 +684,8 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xsm_timing);
             count = FETCH(filecache_get_xsm_count);
             sz = "XSM";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &sgtime,
-                "small-gets", &sgcount, 1,
-                "small-get-latency", &sglatency, elapsed_time);
+            stats_counter("small-gets", 1);
+            stats_timer("small-get-latency", elapsed_time);
         }
         else {
             TIMING(filecache_get_xxsm_timing, elapsed_time);
@@ -702,30 +693,23 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xxsm_timing);
             count = FETCH(filecache_get_xxsm_count);
             sz = "XXSM";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &sgtime,
-                "small-gets", &sgcount, 1,
-                "small-get-latency", &sglatency, elapsed_time);
+            stats_counter("small-gets", 1);
+            stats_timer("small-get-latency", elapsed_time);
         }
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
             sz, st.st_size, path, elapsed_time, (latency / count));
 
-        /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
-         * passing NULL for time, we ensure that aggregate prints this message and resets to 0, so
-         * there's no need to keep a static variable for count and latency.
-         */
         if (st.st_size >= LG && elapsed_time > large_time_allotment) {
-            unsigned long exceeded_count = 0;
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_fresh_fd: large (%lu) GET for %s exceeded time allotment %lu with %lu",
                 st.st_size, path, large_time_allotment, elapsed_time);
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_fresh_fd", NULL, "exceeded-time-large-GET-count",
-                &exceeded_count, 1, "exceeded-time-large-GET-latency", &elapsed_time, 0);
+            stats_counter("exceeded-time-large-GET-count", 1);
+            stats_timer("exceeded-time-large-GET-latency", elapsed_time);
         }
         else if (st.st_size < LG && elapsed_time > small_time_allotment) {
-            unsigned long exceeded_count = 0;
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_fresh_fd: small (%lu) GET for %s exceeded time allotment %lu with %lu",
                 st.st_size, path, small_time_allotment, elapsed_time);
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "put_fresh_fd", NULL, "exceeded-time-small-GET-count",
-                &exceeded_count, 1, "exceeded-time-small-GET-latency", &elapsed_time, 0);
+            stats_counter("exceeded-time-small-GET-count", 1);
+            stats_timer("exceeded-time-small-GET-latency", elapsed_time);
         }
     }
     else if (response_code == 404) {
@@ -1006,13 +990,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     struct timespec start_time;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
-    static __thread unsigned long lpcount = 0;
-    static __thread long lplatency = 0;
-    static __thread time_t lptime = 0;
-    static __thread unsigned long spcount = 0;
-    static __thread long splatency = 0;
-    static __thread time_t sptime = 0;
     // Not to exceed time for operation, else it's an error. Allow large files a longer time
+    // Somewhat arbitrary
     static const unsigned small_time_allotment = 2000; // 2 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
 
@@ -1135,9 +1114,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xlg_timing);
             count = FETCH(filecache_put_xlg_count);
             sz = "XLG";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &lptime,
-                "large-puts", &lpcount, 1,
-                "large-put-latency", &lplatency, elapsed_time);
+            stats_counter("large-puts", 1);
+            stats_timer("large-put-latency", elapsed_time);
         }
         else if (st.st_size > LG) {
             TIMING(filecache_put_lg_timing, elapsed_time);
@@ -1145,9 +1123,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_lg_timing);
             count = FETCH(filecache_put_lg_count);
             sz = "LG";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &lptime,
-                "large-puts", &lpcount, 1,
-                "large-put-latency", &lplatency, elapsed_time);
+            stats_counter("large-puts", 1);
+            stats_timer("large-put-latency", elapsed_time);
          }
         else if (st.st_size > MED) {
             TIMING(filecache_put_med_timing, elapsed_time);
@@ -1155,9 +1132,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_med_timing);
             count = FETCH(filecache_put_med_count);
             sz = "MED";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &lptime,
-                "large-puts", &lpcount, 1,
-                "large-put-latency", &lplatency, elapsed_time);
+            stats_counter("large-puts", 1);
+            stats_timer("large-put-latency", elapsed_time);
         }
         else if (st.st_size > SM) {
             TIMING(filecache_put_sm_timing, elapsed_time);
@@ -1165,9 +1141,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_sm_timing);
             count = FETCH(filecache_put_sm_count);
             sz = "SM";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &sptime,
-                "small-puts", &spcount, 1,
-                "small-put-latency", &splatency, elapsed_time);
+            stats_counter("small-puts", 1);
+            stats_timer("small-put-latency", elapsed_time);
         }
         else if (st.st_size > XSM) {
             TIMING(filecache_put_xsm_timing, elapsed_time);
@@ -1175,9 +1150,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xsm_timing);
             count = FETCH(filecache_put_xsm_count);
             sz = "XSM";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &sptime,
-                "small-puts", &spcount, 1,
-                "small-put-latency", &splatency, elapsed_time);
+            stats_counter("small-puts", 1);
+            stats_timer("small-put-latency", elapsed_time);
         }
         else {
             TIMING(filecache_put_xxsm_timing, elapsed_time);
@@ -1185,30 +1159,23 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xxsm_timing);
             count = FETCH(filecache_put_xxsm_count);
             sz = "XXSM";
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, &sptime,
-                "small-puts", &spcount, 1,
-                "small-put-latency", &splatency, elapsed_time);
+            stats_counter("small-puts", 1);
+            stats_timer("small-put-latency", elapsed_time);
         }
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
             funcname, sz, st.st_size, path, elapsed_time, (latency / count));
 
-        /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
-         * passing NULL for time, we ensure that aggregate prints this message and resets to 0, so
-         * there's no need to keep a static variable for count and latency.
-         */
         if (st.st_size >= LG && elapsed_time > large_time_allotment) {
-            unsigned long exceeded_count = 0;
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: large (%lu) PUT for %s exceeded time allotment %lu with %lu",
                 funcname, st.st_size, path, large_time_allotment, elapsed_time);
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, NULL, "exceeded-time-large-PUT-count",
-                &exceeded_count, 1, "exceeded-time-large-PUT-latency", &elapsed_time, 0);
+            stats_counter("exceeded-time-large-PUT-count", 1);
+            stats_timer("exceeded-time-large-PUT-latency", elapsed_time);
         }
         else if (st.st_size < LG && elapsed_time > small_time_allotment) {
-            unsigned long exceeded_count = 0;
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: small (%lu) PUT for %s exceeded time allotment %lu with %lu",
                 funcname, st.st_size, path, small_time_allotment, elapsed_time);
-            aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, funcname, NULL, "exceeded-time-small-PUT-count",
-                &exceeded_count, 1, "exceeded-time-small-PUT-latency", &elapsed_time, 0);
+            stats_counter("exceeded-time-small-PUT-count", 1);
+            stats_timer("exceeded-time-small-PUT-latency", elapsed_time);
         }
     }
 
