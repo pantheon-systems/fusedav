@@ -337,7 +337,7 @@ static void session_cleanup(void *s) {
 
     if (!session) return;
 
-    stats_counter_cluster("sessions", 1);
+    stats_counter_cluster("sessions", -1);
     stats_timer_cluster("session-duration", time(NULL) - session_start_time);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
 
@@ -496,8 +496,7 @@ void trigger_saint_mode_expired_if_needed(void) {
         state_table[saint_state][SAINT_MODE_DURATION_EXPIRED]();
         // If we've been in saintmode for longer than saint_mode_warning_threshold, emit a stat saying so.
         if (now.tv_sec >= unhealthy_since_timestamp + saint_mode_warning_threshold) {
-            // TODO JB 'local'
-            stats_counter("long_running_saint_mode", 1);
+            stats_counter_cluster("long_running_saint_mode", 1);
             log_print(LOG_INFO, SECTION_ENHANCED, "saint_mode active for %d seconds", now.tv_sec-unhealthy_since_timestamp);
         }
     }
@@ -1132,8 +1131,7 @@ static CURL *update_session(bool tmp_session) {
     // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
     // since the hashtable keeps track of the health status of connections causing the reinitialization
 
-    // TODO JB 'local'
-    stats_counter("sessions", 1);
+    stats_counter_cluster("sessions", 1);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
 
     // if tmp_session, we need to get a new session for this request; otherwise see if we already have a session
