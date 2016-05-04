@@ -42,6 +42,7 @@
 #include "props.h"
 #include "util.h"
 #include "fusedav_config.h"
+#include "fusedav-statsd.h"
 #include "signal_handling.h"
 #include "stats.h"
 
@@ -72,24 +73,22 @@ static G_DEFINE_QUARK("FUSEDAV", fusedav)
 
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
     GError *gerr = *pgerr;
 
     log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s",
         prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
     ret = -gerr->code;
     if (gerr->code == ENOENT) {
-        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-ENOENT", &count, 1, NULL, NULL, 0);
+        stats_counter("error-ENOENT", 1);
     }
     else if (gerr->code == ENETDOWN) {
-        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-ENETDOWN", &count, 1, NULL, NULL, 0);
+        stats_counter("error-ENETDOWN", 1);
     }
     else if (gerr->code == EIO) {
-        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-EIO", &count, 1, NULL, NULL, 0);
+        stats_counter("error-EIO", 1);
     }
     else {
-        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "processed_gerror", &previous_time, "error-OTHER", &count, 1, NULL, NULL, 0);
+        stats_counter("error-OTHER", 1);
     }
     g_clear_error(pgerr);
 
@@ -108,31 +107,24 @@ static int simple_propfind_with_redirect(
     struct timespec start_time;
     struct timespec now;
     long elapsed_time;
-    static __thread unsigned long count = 0;
-    static __thread long latency = 0;
-    static __thread time_t time = 0;
-    unsigned long exceeded_count = 0;
-    // Alert on propfind taking longer than 10 seconds
+    // Alert on propfind taking longer than 4 seconds. This is rather arbitrary.
     static const unsigned propfind_time_allotment = 4000; // 4 seconds
     int ret;
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", last_updated > 0 ? "progressive" : "complete", depth, path);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", 
+            last_updated > 0 ? "progressive" : "complete", depth, path);
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
-    aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", &time, "propfind-count", &count, 1,
-        "propfind-latency", &latency, elapsed_time);
     clock_gettime(CLOCK_MONOTONIC, &now);
     elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
-    /* The aggregate_log_print_server routine is expecting a cumulative count and latency, but by
-     * passing NULL for time, we ensure that aggregate prints this message and resets to 0, so
-     * there's no need to keep a static variable for count and latency.
-     */
+    stats_counter("propfind-count", 1);
+    stats_timer("propfind-latency", elapsed_time);
     if (elapsed_time > propfind_time_allotment) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded allotment of %u ms; took %u ms.",
             last_updated > 0 ? "progressive" : "complete", propfind_time_allotment, elapsed_time);
-        aggregate_log_print_server(LOG_INFO, SECTION_ENHANCED, "simple_propfind_with_redirect", NULL, "exceeded-time-propfind-count",
-            &exceeded_count, 1, "exceeded-time-propfind-latency", &elapsed_time, 0);
+        stats_counter("exceeded-time-propfind-count", 1);
+        stats_timer("exceeded-time-propfind-latency", elapsed_time);
     }
     if (subgerr) {
         g_propagate_prefixed_error(gerr, subgerr, "simple_propfind_with_redirect: ");
@@ -320,12 +312,12 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
     bool needs_update = true;
-    time_t last_updated;
     time_t timestamp;
     int propfind_result;
 
     // Attempt to freshen the cache.
     if (attempt_progressive_update && config->progressive_propfind) {
+        time_t last_updated;
         timestamp = time(NULL);
         last_updated = stat_cache_read_updated_children(config->cache, path, &tmpgerr);
         if (tmpgerr) {
@@ -407,7 +399,6 @@ static int dav_readdir(
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct fill_info f;
     GError *gerr = NULL;
-    int ret;
     int iters = 2;
     bool ignore_freshness = false;
 
@@ -443,6 +434,7 @@ static int dav_readdir(
      * way, the first access after network failure acts like a subsequent access in saint mode.
      */
     for (int idx = 0; idx < iters; idx++) {
+        int ret;
         // First, attempt to hit the cache.
         ret = stat_cache_enumerate(config->cache, path, getdir_cache_callback, &f, ignore_freshness);
         if (ret < 0) {
@@ -594,9 +586,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     time_t parent_children_update_ts;
     bool is_base_directory;
     int ret = -ENOENT;
-    // We are sharing these variables between negative and nonnegative cache counting. Should be fine.
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
     enum ignore_freshness skip_freshness_check = OFF;
 
     memset(stbuf, 0, sizeof(struct stat));
@@ -722,7 +711,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
         GError *subgerr = NULL;
 
-        aggregate_log_print_local(LOG_INFO, SECTION_ENHANCED, "get_stat", &previous_time, "propfind-nonnegative-cache", &count, 1, NULL, NULL, 0);
+        stats_counter_local("propfind-nonnegative-cache", 1);
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: Calling update_directory: %s; attempt_progressive_update will be %d",
             parent_path, (parent_children_update_ts > 0));
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
@@ -733,7 +722,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             goto fail;
         }
     } else {
-        aggregate_log_print_local(LOG_INFO, SECTION_ENHANCED, "get_stat", &previous_time, "propfind-negative-cache", &count, 1, NULL, NULL, 0);
+        stats_counter_local("propfind-negative-cache", 1);
         BUMP(propfind_negative_cache);
     }
 
@@ -2055,6 +2044,10 @@ finish:
 
     // We don't capture any errors from stat_cache_close
     stat_cache_close(config.cache, config.cache_supplemental);
+
+    if (stats_close()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Error closing stats.");
+    }
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Shutdown was successful. Exiting.");
 

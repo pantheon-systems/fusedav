@@ -149,7 +149,7 @@ void set_dynamic_logging(void) {
     else {
         dynamic_logging_start = now.tv_sec;
         log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
-            "Setting dynamic_logging for %lu seconds. fusedav.dynamic_logging:1|c", dynamic_logging_duration);
+            "Setting dynamic_logging for %lu seconds.", dynamic_logging_duration);
         LOG_DYNAMIC = LOG_INFO - 1;
     }
 }

@@ -44,7 +44,7 @@ static void print_line(bool log, int fd, unsigned int log_level, unsigned int se
         log_print(log_level, section, output);
     }
     if (fd >= 0) {
-        strncat(output, "\n", MAX_LINE_LEN);
+        strcat(output, "\n");
         write(fd, output, strlen(output));
     }
 }
