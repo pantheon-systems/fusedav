@@ -228,7 +228,7 @@ static void update_session_count(bool add) {
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "update_session_count: %d", current_session_count);
     // We atomically update current_session_count, but don't atomically get its value for the stat.
     // That should be ok, it will always at least be a valid value for some point in recent time.
-    stats_gauge_cluster("sessions", current_session_count);
+    stats_timer_cluster("sessions", current_session_count);
 }
 
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
