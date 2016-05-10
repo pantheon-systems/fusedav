@@ -219,12 +219,16 @@ void session_config_free(void) {
     free(client_certificate);
 }
 
+// Keep a session count for stats gauge
 static void update_session_count(bool add) {
     static int current_session_count = 0;
 
     if (add) __sync_fetch_and_add(&current_session_count, 1);
     else __sync_fetch_and_sub(&current_session_count, 1);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "update_session_count: %d", current_session_count);
+    // We atomically update current_session_count, but don't atomically get its value for the stat.
+    // That should be ok, it will always at least be a valid value for some point in recent time.
+    stats_timer_cluster("sessions", current_session_count);
 }
 
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
@@ -337,7 +341,6 @@ static void session_cleanup(void *s) {
 
     if (!session) return;
 
-    stats_counter_cluster("sessions", -1);
     stats_timer_cluster("session-duration", time(NULL) - session_start_time);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
 
@@ -1131,7 +1134,6 @@ static CURL *update_session(bool tmp_session) {
     // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
     // since the hashtable keeps track of the health status of connections causing the reinitialization
 
-    stats_counter_cluster("sessions", 1);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
 
     // if tmp_session, we need to get a new session for this request; otherwise see if we already have a session
