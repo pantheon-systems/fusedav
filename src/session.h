@@ -59,5 +59,7 @@ void trigger_saint_event(event_t);
 state_t get_saint_state(void);
 bool use_saint_mode(void);
 void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code, long *elapsed_time);
+const char *get_filesystem_cluster(void);
+const char *get_nodeaddr(void);
 
 #endif

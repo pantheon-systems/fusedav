@@ -42,6 +42,7 @@
 #include "log_sections.h"
 #include "util.h"
 #include "session.h"
+#include "fusedav-statsd.h"
 
 static pthread_once_t session_once = PTHREAD_ONCE_INIT;
 static pthread_key_t session_tsd_key;
@@ -142,6 +143,14 @@ const char *get_base_url(void) {
     return base_url;
 }
 
+const char *get_filesystem_cluster(void) {
+    return filesystem_cluster;
+}
+
+const char *get_nodeaddr(void) {
+    return nodeaddr;
+}
+
 int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace) {
     size_t base_len;
     UriParserStateA state;
@@ -210,12 +219,16 @@ void session_config_free(void) {
     free(client_certificate);
 }
 
+// Keep a session count for stats gauge
 static void update_session_count(bool add) {
     static int current_session_count = 0;
 
     if (add) __sync_fetch_and_add(&current_session_count, 1);
     else __sync_fetch_and_sub(&current_session_count, 1);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "update_session_count: %d", current_session_count);
+    // We atomically update current_session_count, but don't atomically get its value for the stat.
+    // That should be ok, it will always at least be a valid value for some point in recent time.
+    stats_timer_cluster("sessions", current_session_count);
 }
 
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
@@ -234,10 +247,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
 
     // Stats log for all errors
     // Distinguish curl from 500-status failures from slow requests
-    log_print(LOG_INFO, SECTION_ENHANCED,
-        "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s:1|c",
-        fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
-
+    stats_counter(error_str, 1);
     log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
         "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s",
         fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
@@ -247,19 +257,13 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
         char *failure_str = NULL;
         asprintf(&failure_str, "%d_failures", iter + 1);
 
-        // Stats log
         // Is this the first, second, or third failure for this request?
-        log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s:1|c",
-            fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, failure_str);
+        stats_counter(failure_str, 1);
 
         free(failure_str);
 
-        // Stats log
         // Total failures
-        log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.failures:1|c",
-            fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr);
+        stats_counter("failures", 1);
     }
 
     free(error_str);
@@ -331,70 +335,15 @@ static void increment_node_success(char *addr) {
     }
 }
 
-static void log_filesystem_nodes(const char *fcn_name, const int iter, const char *path) {
-    static __thread unsigned long count = 0;
-    static __thread time_t previous_time = 0;
-    static __thread char previous_nodeaddr[LOGSTRSZ];
-    // Print every 100th access
-    const unsigned long count_trigger = 1000;
-    // Print every 60th second
-    const time_t time_trigger = 60;
-    time_t current_time;
-    bool print_it;
-    int nodeaddr_changed;
-
-    ++count;
-    // Track curl accesses to this filesystem node
-    // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
-    // print, but at INFO will be easier to filter out
-    // We're overloading the journal, so only log every print_count_trigger count or every print_interval time
-    current_time = time(NULL);
-    // Always print the first one. Then print if our interval has expired
-    print_it = (previous_time == 0) || (current_time - previous_time >= time_trigger);
-    // If this is the very first call, initialize previous to current
-    if (previous_nodeaddr[0] == '\0') strncpy(previous_nodeaddr, nodeaddr, LOGSTRSZ);
-    nodeaddr_changed = strncmp(nodeaddr, previous_nodeaddr, LOGSTRSZ);
-    // Also print if we have exceeded count
-    if (print_it || count >= count_trigger || nodeaddr_changed) {
-        if (nodeaddr_changed) --count; // Print for previous node, which doesn't include this call, then for this call
-        log_print(LOG_INFO, SECTION_ENHANCED,
-            "curl iter %d on path %s -- fusedav.%s.server-%s.attempts:%lu|c", iter, path, filesystem_cluster, previous_nodeaddr, count);
-        count = 0;
-        previous_time = current_time;
-        if (nodeaddr_changed) {
-            log_print(LOG_INFO, SECTION_ENHANCED,
-                "curl iter %d changed to path %s -- fusedav.%s.server-%s.attempts:%lu|c",
-                iter, path, filesystem_cluster, nodeaddr, 1);
-            strncpy(previous_nodeaddr, nodeaddr, LOGSTRSZ);
-        }
-    }
-
-    if (iter > 0) {
-        log_print(LOG_INFO, SECTION_ENHANCED,
-            "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries:1|c", fcn_name, iter, path, filesystem_cluster, nodeaddr);
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
-            "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
-        increment_node_success(nodeaddr);
-    }
-    else if (iter != -1) { // -1 is like a sentinel for when we call this during switch to new handle
-        increment_node_success(nodeaddr);
-    }
-}
-
 // Call session_cleanup when reinitializing a handle, or called from session_destroy when thread exits
 static void session_cleanup(void *s) {
     CURL *session = s;
 
     if (!session) return;
 
-    // The first log statement will get stripped from logstash because it has the stats designator |c, so log a second one
-    log_print(LOG_INFO, SECTION_ENHANCED,
-        "Destroying cURL handle -- fusedav.%s.sessions:-1|c fusedav.%s.session-duration:%lu|c",
-        filesystem_cluster, filesystem_cluster, time(NULL) - session_start_time);
+    stats_timer_cluster("session-duration", time(NULL) - session_start_time);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying cURL handle");
 
-    // Before we go, make sure we've printed the number of curl accesses we accumulated
-    log_filesystem_nodes("session_cleanup", -1, "no path");
     curl_easy_cleanup(session);
     session = NULL;
     pthread_setspecific(session_tsd_key, session);
@@ -532,7 +481,8 @@ void action_s3_e1 (void) {
     failure_timestamp = now.tv_sec;
     try_release_request_outstanding();
     saint_state = STATE_SAINT_MODE;
-    log_print(LOG_INFO, SECTION_ENHANCED, "Setting cluster saint mode for %lu seconds. fusedav.saint_mode:1|c", saint_mode_duration);
+    stats_counter_cluster("saint_mode", 1);
+    log_print(LOG_NOTICE, SECTION_ENHANCED, "Setting cluster saint mode for %lu seconds.", saint_mode_duration);
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
 }
 void action_s3_e2 (void) {}
@@ -549,8 +499,8 @@ void trigger_saint_mode_expired_if_needed(void) {
         state_table[saint_state][SAINT_MODE_DURATION_EXPIRED]();
         // If we've been in saintmode for longer than saint_mode_warning_threshold, emit a stat saying so.
         if (now.tv_sec >= unhealthy_since_timestamp + saint_mode_warning_threshold) {
-            log_print(LOG_INFO, SECTION_ENHANCED,
-                "saint_mode active for %d seconds -- fusedav.%s.server-%s.long_running_saint_mode:1|c", now.tv_sec-unhealthy_since_timestamp, filesystem_cluster, nodeaddr);
+            stats_counter_cluster("long_running_saint_mode", 1);
+            log_print(LOG_INFO, SECTION_ENHANCED, "saint_mode active for %d seconds", now.tv_sec-unhealthy_since_timestamp);
         }
     }
 }
@@ -752,9 +702,8 @@ static void construct_resolve_slist(GHashTable *addr_table) {
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s: hash_table [%p], iter [%p]",
         funcname, node_status.node_hash_table, iter);
     while (g_hash_table_iter_next (&iter, &key, &value)) {
-        bool exists = false;
         // Is this address in addr_table?
-        exists = g_hash_table_lookup(addr_table, key);
+        bool exists = g_hash_table_lookup(addr_table, key);
         if (!exists) {
             // delete the node
             g_hash_table_iter_remove(&iter);
@@ -766,9 +715,8 @@ static void construct_resolve_slist(GHashTable *addr_table) {
     // e.g. an added addr
     g_hash_table_iter_init (&iter, addr_table);
     while (g_hash_table_iter_next (&iter, &key, &value)) {
-        bool exists = false;
         // Is this address in addr_table?
-        exists = g_hash_table_lookup(node_status.node_hash_table, key);
+        bool exists = g_hash_table_lookup(node_status.node_hash_table, key);
         if (!exists) {
             // Add to node_hash_table
             set_health_status(key, value);
@@ -1006,7 +954,6 @@ void delete_tmp_session(CURL *session) {
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Destroying temporary cURL session.");
     if (session) {
         curl_easy_cleanup(session);
-        session = NULL;
     }
 }
 
@@ -1050,7 +997,8 @@ void process_status(const char *fcn_name, CURL *session, const CURLcode res,
         const long response_code, const long elapsed_time, const int iter, 
         const char *path, bool tmp_session) {
 
-    log_filesystem_nodes(fcn_name, iter, path);
+    stats_counter("attempts", 1);
+
     if (res != CURLE_OK) {
         print_errors(iter, "curl_failures", fcn_name, res, response_code, elapsed_time, path);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
@@ -1074,6 +1022,14 @@ void process_status(const char *fcn_name, CURL *session, const CURLcode res,
         }
         delete_session(session, tmp_session);
         return;
+    }
+
+    // If it wasn't an error, and it isn't the 0'th iter, then we must have failed previously and now recovered
+    if (iter > 0) {
+        stats_counter("recoveries", 1);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
+            "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
+        increment_node_success(nodeaddr);
     }
 }
 
@@ -1178,8 +1134,6 @@ static CURL *update_session(bool tmp_session) {
     // We do this when the thread is initialized. We want the hashtable to survive reinitialization of the handle,
     // since the hashtable keeps track of the health status of connections causing the reinitialization
 
-    // The first log print will be stripped by log stash because it has the stats designator 1|c, so log one without it
-    log_print(LOG_INFO, SECTION_ENHANCED, "Opening cURL session -- fusedav.%s.sessions:1|c", filesystem_cluster);
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Opening cURL session");
 
     // if tmp_session, we need to get a new session for this request; otherwise see if we already have a session
@@ -1296,88 +1250,4 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
     curl_easy_setopt(session, CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
 
     return session;
-}
-
-static void common_aggregate_log_print(unsigned int log_level, unsigned int section, const char *cluster, const char *server,
-        const char *name, time_t *previous_time, const char *description1, unsigned long *count1, unsigned long value1,
-        const char *description2, long *count2, long value2) {
-
-    /* Print aggregate stats. It is in this file for ready access to server names and the ability
-     * to call it on thread destroy.
-     */
-    // Print every 100th access
-    const unsigned long count_trigger = 1000;
-    // Print every 60th second
-    const time_t time_trigger = 60;
-    time_t current_time;
-    bool print_it = false;
-
-    *count1 += value1;
-    if (count2) *count2 += value2;
-    // Track curl accesses to this filesystem node
-    // fusedav.conf will always set SECTION_ENHANCED to 6 in LOG_SECTIONS. These log entries will always
-    // print, but at INFO will be easier to filter out
-    // We're overloading the journal, so only log every print_count_trigger count or every print_interval time
-    current_time = time(NULL);
-
-    // if previous_time is NULL then this is a pair to an earlier call, and we always print it
-    if (previous_time != NULL) {
-        // Always print the first one. Then print if our interval has expired
-        print_it = (*previous_time == 0) || (current_time - *previous_time >= time_trigger);
-    }
-    else {
-        print_it = true;
-    }
-    // Also print if we have exceeded count
-    if (print_it || *count1 >= count_trigger) {
-        if (cluster && server) {
-            log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%lu|c", name, filesystem_cluster, nodeaddr, description1, *count1);
-        }
-        else if(cluster) {
-            log_print(log_level, section, "%s: fusedav.%s.%s:%lu|c", name, filesystem_cluster, description1, *count1);
-        }
-        else {
-            log_print(log_level, section, "%s: fusedav.%s:%lu|c", name, description1, *count1);
-        }
-        if (description2 && count2) {
-            long result;
-            // Cheating. We just know that the second value is a latency total which needs to
-            // be passed through as an average latency.
-            if (*count1 == 0) result = 0;
-            else result = (*count2 / *count1);
-            if (cluster && server) {
-                log_print(log_level, section, "%s: fusedav.%s.server-%s.%s:%ld|c", name, filesystem_cluster, nodeaddr, description2, result);
-            }
-            else if (cluster) {
-                log_print(log_level, section, "%s: fusedav.%s.%s:%ld|c", name, filesystem_cluster, description2, result);
-            }
-            else {
-                log_print(log_level, section, "%s: fusedav.%s:%ld|c", name, description2, result);
-            }
-            *count2 = 0;
-        }
-        *count1 = 0;
-        if (previous_time) *previous_time = current_time;
-    }
-    return;
-}
-
-void aggregate_log_print_server(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
-        const char *description1, unsigned long *count1, unsigned long value1,
-        const char *description2, long *count2, long value2) {
-
-    // pass in filesystem_cluster and nodeaddr
-    common_aggregate_log_print(log_level, section, filesystem_cluster, nodeaddr, name, previous_time,
-        description1, count1, value1, description2, count2, value2);
-
-}
-
-void aggregate_log_print_local(unsigned int log_level, unsigned int section, const char *name, time_t *previous_time,
-        const char *description1, unsigned long *count1, unsigned long value1,
-        const char *description2, long *count2, long value2) {
-
-    // don't pass in filesystem_cluster and nodeaddr
-    common_aggregate_log_print(log_level, section, NULL, NULL, name, previous_time,
-        description1, count1, value1, description2, count2, value2);
-
 }

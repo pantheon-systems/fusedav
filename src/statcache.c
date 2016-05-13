@@ -211,7 +211,6 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     leveldb_readoptions_t *options;
     size_t vallen;
     char *errptr = NULL;
-    time_t current_time;
 
     BUMP(statcache_value_get);
 
@@ -247,7 +246,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     if (!skip_freshness_check) {
-        current_time = time(NULL);
+        time_t current_time = time(NULL);
 
         // First, check against the stat item itself.
         //log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Current time: %lu", current_time);
@@ -579,8 +578,6 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     struct stat_cache_iterator *iter;
     struct stat_cache_entry *entry;
     unsigned found_entries = 0;
-    time_t timestamp;
-    time_t current_time;
 
     BUMP(statcache_enumerate);
 
@@ -588,6 +585,8 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 
     //stat_cache_list_all(cache, path_prefix);
     if (!force) {
+        time_t timestamp;
+        time_t current_time;
         // Pass NULL for gerr; not tracking error, just zero return
         timestamp = stat_cache_read_updated_children(cache, path_prefix, NULL);
 
