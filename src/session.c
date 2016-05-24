@@ -247,7 +247,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
 
     // Stats log for all errors
     // Distinguish curl from 500-status failures from slow requests
-    stats_counter(error_str, 1);
+    stats_counter(type_str, 1);
     log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
         "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s",
         fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
