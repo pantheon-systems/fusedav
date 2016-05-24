@@ -4,7 +4,7 @@ Fusedav
 Fusedav Client
 --------------
 
-This is a fuse-based DAV client with extended for performance.
+This is a fuse-based DAV client with extensions for performance.
 This will run against any standard DAV implementation, i.e.
 `pywebdav` (see tests).
 
@@ -31,7 +31,7 @@ using FUSE kernel interface version 7.19
 
 Debug/Develop
 -----
-Running this docker script in debug mode will build a fedora-22 container with the local source mounted inside it suitible to build fusedav.
+Running this docker script in debug mode will build a fedora-22 container with the local source mounted inside it suitable to build fusedav.
 ```
 BUILD_VERSIONS=22 BUILD_DEBUG=1  ./scripts/docker-outer.sh
 ```
