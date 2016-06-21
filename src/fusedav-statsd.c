@@ -217,7 +217,7 @@ static int stats_send(const char *statmsg) {
     if (bytes == -1) {
         // Since the is UDP, sendto can't know if the message was never delivered. Error means local error that
         // it can detect.
-        log_print(LOG_CRIT, SECTION_STATS_DEFAULT, "stats_send: Error, errno: %d, %s. Couldn't send stat \"%s\"", 
+        log_print(LOG_NOTICE, SECTION_STATS_DEFAULT, "stats_send: Error, errno: %d, %s. Couldn't send stat \"%s\"", 
                 errno, strerror(errno), statmsg);
     } else if (bytes < statmsglen) {
         log_print(LOG_CRIT, SECTION_STATS_DEFAULT, "stats_send: sendto error: expected %d bytes; got %d", statmsglen, bytes);
