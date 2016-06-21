@@ -37,11 +37,11 @@ __thread unsigned int LOG_DYNAMIC = LOG_INFO;
 // Store values for loggging in the log_key_value array, which is set in fusedav_config.
 #define USER_AGENT_ABBREV 0
 #define BASEURL_FIRST 1
-#define BASEURL_SECOND 2
+#define HOST_ADDRESS 2
 #define BASEURL_THIRD 3
-#define BASEURL_FOURTH 4
+#define SITE 4
 #define BASEURL_FIFTH 5
-#define BASEURL_SIXTH 6
+#define ENVIRONMENT 6
 #define BASEURL_SEVENTH 7
 #define BASEURL_EIGHTH 8
 // last item plus one
@@ -173,9 +173,9 @@ static int print_it(const char const *formatwithtid, const char const *msg, int 
     ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
                           "PRIORITY=%d", log_level,
                           "USER_AGENT=%s", get_user_agent(),
-                          "SITE=%s", log_key_value[BASEURL_FOURTH],
-                          "ENVIRONMENT=%s", log_key_value[BASEURL_SIXTH],
-                          "HOST_ADDRESS=%s", log_key_value[BASEURL_SECOND],
+                          "SITE=%s", log_key_value[SITE],
+                          "ENVIRONMENT=%s", log_key_value[ENVIRONMENT],
+                          "HOST_ADDRESS=%s", log_key_value[HOST_ADDRESS],
                           "TID=%lu", syscall(SYS_gettid),
                           "PACKAGE_VERSION=%s", PACKAGE_VERSION,
                           NULL);
@@ -187,24 +187,24 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
     int ret = 0;
     if (logging(log_level, section)) {
         va_list ap;
-        char *formatwithtid;
+        char *formatwithlevel;
         char msg[max_msg_sz + 1];
 
         va_start(ap, format);
         vsnprintf(msg, max_msg_sz, format, ap);
-        asprintf(&formatwithtid, "[tid=%lu] [bid=%s] %s", syscall(SYS_gettid), log_key_value[USER_AGENT_ABBREV], errlevel[log_level]);
-        assert(formatwithtid);
+        asprintf(&formatwithlevel, "%s", errlevel[log_level]);
+        assert(formatwithlevel);
 
         // print the intended message
-        ret = print_it(formatwithtid, msg, log_level);
+        ret = print_it(formatwithlevel, msg, log_level);
 
         // Check and see if we're no longer doing dynamic logging. If so, it will take effect after this call. Then print a message
         if (turning_off_dynamic_logging()) {
             strcpy(msg, "revert_dynamic_logging");
-            print_it(formatwithtid, msg, log_level);
+            print_it(formatwithlevel, msg, log_level);
         }
 
-        free(formatwithtid);
+        free(formatwithlevel);
         va_end(ap);
     }
 
