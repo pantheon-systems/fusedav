@@ -37,11 +37,11 @@ __thread unsigned int LOG_DYNAMIC = LOG_INFO;
 // Store values for loggging in the log_key_value array, which is set in fusedav_config.
 #define USER_AGENT_ABBREV 0
 #define BASEURL_FIRST 1
-#define BASEURL_SECOND 2
+#define HOST_ADDRESS 2
 #define BASEURL_THIRD 3
-#define BASEURL_FOURTH 4
+#define SITE 4
 #define BASEURL_FIFTH 5
-#define BASEURL_SIXTH 6
+#define ENVIRONMENT 6
 #define BASEURL_SEVENTH 7
 #define BASEURL_EIGHTH 8
 // last item plus one
@@ -173,9 +173,9 @@ static int print_it(const char const *formatwithtid, const char const *msg, int 
     ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
                           "PRIORITY=%d", log_level,
                           "USER_AGENT=%s", get_user_agent(),
-                          "SITE=%s", log_key_value[BASEURL_FOURTH],
-                          "ENVIRONMENT=%s", log_key_value[BASEURL_SIXTH],
-                          "HOST_ADDRESS=%s", log_key_value[BASEURL_SECOND],
+                          "SITE=%s", log_key_value[SITE],
+                          "ENVIRONMENT=%s", log_key_value[ENVIRONMENT],
+                          "HOST_ADDRESS=%s", log_key_value[HOST_ADDRESS],
                           "TID=%lu", syscall(SYS_gettid),
                           "PACKAGE_VERSION=%s", PACKAGE_VERSION,
                           NULL);
