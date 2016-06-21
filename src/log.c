@@ -187,24 +187,24 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
     int ret = 0;
     if (logging(log_level, section)) {
         va_list ap;
-        char *formatwithtid;
+        char *formatwithlevel;
         char msg[max_msg_sz + 1];
 
         va_start(ap, format);
         vsnprintf(msg, max_msg_sz, format, ap);
-        asprintf(&formatwithtid, "[tid=%lu] [bid=%s] %s", syscall(SYS_gettid), log_key_value[USER_AGENT_ABBREV], errlevel[log_level]);
-        assert(formatwithtid);
+        asprintf(&formatwithlevel, "%s", errlevel[log_level]);
+        assert(formatwithlevel);
 
         // print the intended message
-        ret = print_it(formatwithtid, msg, log_level);
+        ret = print_it(formatwithlevel, msg, log_level);
 
         // Check and see if we're no longer doing dynamic logging. If so, it will take effect after this call. Then print a message
         if (turning_off_dynamic_logging()) {
             strcpy(msg, "revert_dynamic_logging");
-            print_it(formatwithtid, msg, log_level);
+            print_it(formatwithlevel, msg, log_level);
         }
 
-        free(formatwithtid);
+        free(formatwithlevel);
         va_end(ap);
     }
 
