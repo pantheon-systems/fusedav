@@ -157,8 +157,8 @@ log_level=5
 log_level_by_section=0
 log_prefix=6f7a106722f74cc7bd96d4d06785ed78
 max_file_size=256
-statsd_host=metrics.getpantheon.com
-statsd_port=8125
+statsd_host=127.0.0.1
+statsd_port=8126
 */
 
 // Note for future generations; as currently set up, inject error won't start until
@@ -289,8 +289,8 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     config->nodaemon = false;
     config->max_file_size = 256; // 256M
     config->log_level = 5; // default log_level: LOG_NOTICE
-    asprintf(&config->statsd_host, "%s", "metrics.getpantheon.com");
-    asprintf(&config->statsd_port, "%s", "8125");
+    asprintf(&config->statsd_host, "%s", "127.0.0.1");
+    asprintf(&config->statsd_port, "%s", "8126");
 
     // Parse options.
     if (fuse_opt_parse(args, config, fusedav_opts, fusedav_opt_proc) < 0 || inject_error(config_error_parse)) {
