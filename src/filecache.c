@@ -24,6 +24,7 @@
 #include <dirent.h>
 #include <assert.h>
 #include <errno.h>
+#include <libgen.h>
 #include <stdbool.h>
 #include <sys/file.h>
 #include <stdlib.h>
@@ -1442,31 +1443,104 @@ void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefil
     return;
 }
 
+static int clear_files(const char *filecache_path, time_t stamped_time, GError **gerr) {
+    const char *fname = "clear_files";
+    struct dirent *diriter;
+    DIR *dir;
+    char cachefile_path[PATH_MAX + 1]; // path to file in the cache
+    int ret = 0;
+    int visited = 0;
+    int unlinked = 0;
+
+    BUMP(filecache_orphans);
+
+    cachefile_path[PATH_MAX] = '\0';
+
+    dir = opendir(filecache_path);
+    if (dir == NULL || inject_error(filecache_error_orphanopendir)) {
+        g_set_error(gerr, system_quark(), errno, "%s: Can't open filecache directory %s", fname, filecache_path);
+        return -1;
+    }
+
+    while ((diriter = readdir(dir)) != NULL) {
+        struct stat stbuf;
+        snprintf(cachefile_path, PATH_MAX , "%s/%s", filecache_path, diriter->d_name) ;
+        if (stat(cachefile_path, &stbuf) == -1)
+        {
+            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: Unable to stat file: %s: %d %s", 
+                    fname, cachefile_path, errno, strerror(errno));
+            --ret;
+            continue;
+        }
+
+        if ((stbuf.st_mode & S_IFMT ) == S_IFDIR) {
+            // We don't expect directories, but skip them
+            if ((strcmp(diriter->d_name, ".") == 0) || (strcmp(diriter->d_name, "..") == 0)) {
+                log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "%s: found . or .. directory: %s", fname, cachefile_path);
+            }
+            else {
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: unexpected directory in filecache: %s", fname, cachefile_path);
+                --ret;
+            }
+        }
+        else if ((stbuf.st_mode & S_IFMT ) != S_IFREG) {
+            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: found and ignoring non-regular file: %s", fname, cachefile_path);
+            --ret;
+        }
+        else {
+            ++visited;
+            if (stbuf.st_mtime < stamped_time) {
+                if (unlink(cachefile_path)) {
+                    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: failed to unlink %s: %d %s", 
+                            fname, cachefile_path, errno, strerror(errno));
+                    --ret;
+                }
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: unlinked %s", fname, cachefile_path);
+                ++unlinked;
+            }
+            else {
+                log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "%s: didn't unlink %s: %d %d", 
+                        fname, cachefile_path, stamped_time, stbuf.st_mtime);
+            }
+        }
+    }
+    closedir(dir);
+    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: visited %d files, unlinked %d, and had %d issues", 
+            fname, visited, unlinked, ret);
+
+    // return the number of files still left
+    return visited - unlinked;
+}
+
 void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const char *path, off_t fsize, GError **gerr) {
+    const char *fname = "filecache_forensic_haven";
     struct filecache_pdata *pdata = NULL;
     char *bpath = NULL;
     char *bname;
     char *newpath = NULL;
     GError *subgerr = NULL;
     int fd = -1;
+    int files_left = 8;
+    const int files_kept = 8;
+    int hours = 64;
     char *buf = NULL;
     ssize_t bytes_written;
     bool failed_rename = false;
 
     BUMP(filecache_forensic_haven);
-    log_print(LOG_DYNAMIC, SECTION_FILECACHE_FILE, "filecache_forensic_haven: cp %s p %s", cache_path, path);
+    log_print(LOG_DYNAMIC, SECTION_FILECACHE_FILE, "%s: cp %s p %s", fname, cache_path, path);
 
     // Get info from pdata and write to file in forensic haven
     pdata = filecache_pdata_get(cache, path, &subgerr);
     // If there's no pdata, there's no filecache cache file to move to the forensic haven
     if (subgerr) {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on filecache_pdata_get %s", path);
-        g_propagate_prefixed_error(gerr, subgerr, "filecache_forensic_haven: ");
+        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "%s: error on filecache_pdata_get %s", fname, path);
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", fname);
         goto finish;
     }
     if (pdata == NULL) {
-        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: pdata is NULL %s", path);
-        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "filecache_forensic_haven: pdata is NULL on %s", path);
+        log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "%s: pdata is NULL %s", fname, path);
+        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "%s: pdata is NULL on %s", fname, path);
         goto finish;
     }
 
@@ -1477,13 +1551,12 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     // Make a path name for the cache file but in the directory forensic-haven rather than files
     asprintf(&newpath, "%s/%s/%s", cache_path, forensic_haven_dir, bname);
     // Move the file to forensic-haven
-    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: doing rename(%s, %s)", pdata->filename, newpath);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "%s: doing rename(%s, %s)", fname, pdata->filename, newpath);
     if (rename(pdata->filename, newpath) == -1) {
-        log_print(LOG_WARNING, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on rename(%s, %s)", pdata->filename, newpath);
+        log_print(LOG_WARNING, SECTION_FILECACHE_CACHE, "%s: error on rename(%s, %s)", fname, pdata->filename, newpath);
         // If rename fails, put this in the .txt file
         failed_rename = true;
     }
-    free(bpath);
     // do not pass bname to free; basename() does not return a free'able address
     free(newpath);
     newpath = NULL; // reusing below
@@ -1491,10 +1564,11 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     // Create the .txt file with information about the cache file we moved
     // It will have the same name as the cache file, with .txt appended
     asprintf(&newpath, "%s/%s/%s.txt", cache_path, forensic_haven_dir, bname);
+    free(bpath);
     fd = creat(newpath, 0600);
-    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: creat(%s) fd %d", newpath, fd);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "%s: creat(%s) fd %d", fname, newpath, fd);
     if (fd < 0) {
-        log_print(LOG_WARNING, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on creat(%s) fd %d", newpath, fd);
+        log_print(LOG_WARNING, SECTION_FILECACHE_CACHE, "%s: error on creat(%s) fd %d", fname, newpath, fd);
         // Exit; no point in writing a file we couldn't create
         goto finish;
     }
@@ -1504,10 +1578,10 @@ void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const 
     asprintf(&buf, "path: %s\ncache filename: %s\nlast_server_update: %lu\nfilesize: %lu\nfailed_rename %d\n",
         path, pdata->filename, pdata->last_server_update, fsize, failed_rename);
     bytes_written = write(fd, buf, strlen(buf));
-    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: write (%s) of fd %d returns %d", newpath, fd, bytes_written);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "%s: write (%s) of fd %d returns %d", fname, newpath, fd, bytes_written);
     if (bytes_written < 0) {
-        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: error on write (%s) of fd %d returns %d", newpath, fd, bytes_written);
-        g_set_error(gerr, filecache_quark(), errno, "filecache_forensic_haven: Failed on write to %s", newpath);
+        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "%s: error on write (%s) of fd %d returns %d", fname, newpath, fd, bytes_written);
+        g_set_error(gerr, filecache_quark(), errno, "%s: Failed on write to %s", fname, newpath);
         goto finish;
     }
 
@@ -1515,8 +1589,27 @@ finish:
     if (fd >= 0) close(fd);
     free(buf);
     free(newpath);
+    newpath = NULL;
     free(pdata);
-    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "filecache_forensic_haven: exiting for %s", path);
+    // Cleanup older entries in the forensic haven
+    asprintf(&newpath, "%s/%s/", cache_path, forensic_haven_dir);
+    // Clear out all files older than a day
+    while (files_left >= files_kept && hours > 0) {
+        files_left = clear_files(newpath, time(NULL) - (hours * 60 * 60), &subgerr);
+        if (subgerr) {
+            log_print(LOG_ERR, SECTION_FILECACHE_FILE, 
+                    "%s: error on clear_files: %s -- %d: %s", 
+                    fname, subgerr->message, subgerr->code, g_strerror(subgerr->code));
+            break;
+        }
+        hours /= 4;
+        log_print(LOG_NOTICE, SECTION_FILECACHE_FILE, 
+                "%s: files_left: %d; files_kept: %d; hours: %d", 
+                fname, files_left, files_kept, hours);
+    }
+    free(newpath);
+    newpath = NULL;
+    log_print(LOG_DEBUG, SECTION_FILECACHE_CACHE, "%s: exiting for %s", fname, path);
 }
 
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr) {
@@ -1574,78 +1667,12 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
-static int cleanup_orphans(const char *cache_path, time_t stamped_time, GError **gerr) {
-    struct dirent *diriter;
-    DIR *dir;
-    char cachefile_path[PATH_MAX + 1]; // path to file in the cache
-    char filecache_path[PATH_MAX + 1]; // path to the file cache itself
-    int ret = 0;
-    int visited = 0;
-    int unlinked = 0;
-
-    BUMP(filecache_orphans);
-
-    cachefile_path[PATH_MAX] = '\0';
-    filecache_path[PATH_MAX] = '\0';
-
-    snprintf(filecache_path, PATH_MAX, "%s/files", cache_path);
-    dir = opendir(filecache_path);
-    if (dir == NULL || inject_error(filecache_error_orphanopendir)) {
-        g_set_error(gerr, system_quark(), errno, "cleanup_orphans: Can't open filecache directory %s", filecache_path);
-        return -1;
-    }
-
-    while ((diriter = readdir(dir)) != NULL) {
-        struct stat stbuf;
-        snprintf(cachefile_path, PATH_MAX , "%s/%s", filecache_path, diriter->d_name) ;
-        if (stat(cachefile_path, &stbuf) == -1)
-        {
-            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "cleanup_orphans: Unable to stat file: %s", cachefile_path);
-            --ret;
-            continue;
-        }
-
-        if ((stbuf.st_mode & S_IFMT ) == S_IFDIR) {
-            // We don't expect directories, but skip them
-            if ((strcmp(diriter->d_name, ".") == 0) || (strcmp(diriter->d_name, "..") == 0)) {
-                log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "cleanup_orphans: found . or .. directory: %s", cachefile_path);
-            }
-            else {
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "cleanup_orphans: unexpected directory in filecache: %s", cachefile_path);
-                --ret;
-            }
-        }
-        else if ((stbuf.st_mode & S_IFMT ) != S_IFREG) {
-            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "cleanup_orphans: found and ignoring non-regular file: %s", cachefile_path);
-            --ret;
-        }
-        else {
-            ++visited;
-            if (stbuf.st_mtime < stamped_time) {
-                if (unlink(cachefile_path)) {
-                    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "cleanup_orphans: failed to unlink %s: %d %s", cachefile_path, errno, strerror(errno));
-                    --ret;
-                }
-                log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "cleanup_orphans: unlinked %s", cachefile_path);
-                ++unlinked;
-            }
-            else {
-                log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "cleanup_orphans: didn't unlink %s: %d %d", cachefile_path, stamped_time, stbuf.st_mtime);
-            }
-        }
-    }
-    closedir(dir);
-    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "cleanup_orphans: visited %d files, unlinked %d, and had %d issues", visited, unlinked, ret);
-
-    // ret is effectively the number of unexpected issues we encountered
-    return ret;
-}
-
 void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr) {
     leveldb_iterator_t *iter = NULL;
     leveldb_readoptions_t *options;
     GError *tmpgerr = NULL;
 
+    char *newpath = NULL;
     size_t klen;
     char fname[PATH_MAX];
     time_t starttime;
@@ -1732,12 +1759,15 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
     // check filestamps on each file in directory. Set back a second to avoid unlikely but
     // possible race where we are updating a file inside the window where we are starting the cache cleanup
-    ret = cleanup_orphans(cache_path, (starttime - 1), &tmpgerr);
+    // Ignore return value, which is files still left in the directory
+    asprintf(&newpath, "%s/files", cache_path);
+    clear_files(newpath, (starttime - 1), &tmpgerr);
+    free(newpath);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup: ");
     }
 
 finish:
-    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues; cleanup_orphans had %d issues",
-        cached_files, unlinked_files, pruned_files, issues, ret);
+    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues",
+        cached_files, unlinked_files, pruned_files, issues);
 }
