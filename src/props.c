@@ -65,6 +65,13 @@ struct propfind_state {
     bool failure;
 };
 
+struct memory_buff {
+  char *memory;
+  size_t size;
+  size_t cap;
+  struct timespec firstAccess;
+};
+
 static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
     char *path = NULL;
     char *segment;
@@ -286,8 +293,6 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     size_t real_size = length * nmemb;
     struct propfind_state *state;
 
-    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "Got chunk of %u bytes.", real_size);
-
     state = (struct propfind_state *) XML_GetUserData(parser);
 
     // Skip further parsing if we're already in a failure state.
@@ -311,6 +316,32 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     return real_size;
 }
 
+static size_t write_memory_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+  size_t realsize = size * nmemb;
+  struct memory_buff *mem = (struct memory_buff *)userp;
+  log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "Got chunk of %u bytes.", realsize);
+  if (!mem->firstAccess.tv_sec) {
+	clock_gettime(CLOCK_MONOTONIC, &mem->firstAccess);
+  }
+
+  // Do we need to realloc?
+  if(mem->size + realsize >= mem->cap) {
+      mem->memory = realloc(mem->memory, mem->cap * 2);
+      if(mem->memory == NULL) {
+          /* out of memory! */
+          printf("not enough memory (realloc returned NULL)\n");
+          return 0;
+      }
+      mem->cap = mem->cap * 2;
+  }
+
+  memcpy(&(mem->memory[mem->size]), contents, realsize);
+  mem->size += realsize;
+  mem->memory[mem->size] = 0;
+
+  return realsize;
+}
+
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
         void *userdata, GError **gerr) {
     static const char *funcname = "simple_propfind";
@@ -327,10 +358,13 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
 
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
+        struct memory_buff buff;
+        struct timespec start;
         struct curl_slist *slist = NULL;
         char *header = NULL;
         char *query_string = NULL;
         long elapsed_time = 0;
+        int multiplier = 1;
 
         // Set up the request handle.
         if (last_updated > 0) {
@@ -354,13 +388,25 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         state.failure = false;
         state.session = session;
 
+        // Configure memeory copy
+        if (last_updated == 0) {
+                curl_easy_setopt(session, CURLOPT_TIMEOUT, 600); // We need complete prop finds to eventually complete
+                multiplier *= 8;
+        }
+        buff.size = 0;
+        buff.memory = malloc(1024*1024*multiplier);
+        if (buff.memory){
+                buff.cap = 1024*1024*multiplier;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) &buff);
+        curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_memory_callback);
+
         // Configure the parser.
         parser = XML_ParserCreateNS(NULL, '\0');
         XML_SetUserData(parser, &state);
         XML_SetElementHandler(parser, startElement, endElement);
         XML_SetCharacterDataHandler(parser, characterDataHandler);
-        curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) parser);
-        curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_parsing_callback);
 
         // Add the Depth header and PROPFIND verb.
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PROPFIND");
@@ -384,6 +430,13 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             funcname, last_updated > 0 ? "progressive" : "complete", last_updated);
 
         timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
+        write_parsing_callback(buff.memory, buff.size, 1, (void *) parser);
+        free(buff.memory);
+        buff.size = 0;
+        buff.cap = 0;
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT,
+            "First chunk received from valhalla after %lu seconds.", ((buff.firstAccess.tv_sec - start.tv_sec) * 1000));
+
 
         if (slist) curl_slist_free_all(slist);
 
