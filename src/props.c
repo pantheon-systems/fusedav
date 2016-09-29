@@ -361,6 +361,9 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         XML_SetCharacterDataHandler(parser, characterDataHandler);
         curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) parser);
         curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_parsing_callback);
+        curl_easy_setopt(session, CURLOPT_TIMEOUT, 0);
+        curl_easy_setopt(session, CURLOPT_LOW_SPEED_LIMIT, 1024);
+        curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 240);
 
         // Add the Depth header and PROPFIND verb.
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PROPFIND");
