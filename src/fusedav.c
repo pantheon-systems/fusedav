@@ -188,25 +188,61 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", funcname, path, status_code);
+    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", 
+            funcname, path, status_code);
 
     if (status_code == 410) {
         struct stat_cache_value *existing;
 
-        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: DELETE %s (%lu)", funcname, path, status_code);
+        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: DELETE %s (%lu)", 
+                funcname, path, status_code);
         existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
         if (subgerr1) {
             g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
             return;
         }
 
+        /* Binding A does a propfind.
+         * Binding B does a propfind on a path with multiple directories.
+         * Say, /abcdir. Binding B starts the propfind at /, and abcdir
+         * still exists. Then Binding A deletes the directory abcdir.
+         * Then Binding B's propfind moves to abcdir where it does the
+         * next stage in its propfind. But abcdir no longer exists. 
+         * The fileserver returns 404, which gets processed in 
+         * props.c:simple_propfind() and turned into a 410 (why? see below), 
+         * and this function gets called, with ctime set to 0. In this case, 
+         * we need to delete the directory entry.
+         *
+         * Note that this is completely different from the normal case:
+         * Binding A removes the directory /abcdir.
+         * When that is done, Binding B does a propfind. When the propfind
+         * processes /, the fileserver will note that the directory /abcdir 
+         * has been deleted, and Binding B will call this function via a 
+         * different path in props.c, with an existing st.st_ctime, processed 
+         * in one of the else clauses below.
+         *
+         * (When the fileserver detects that a file or directory has
+         * been deleted outside of a race condition like this, it uses code 
+         * 410 to indicate this. If the fileserver goes to do a propfind
+         * on a directory which no longer exists as in this race condition,
+         * it returns a 404. For consistency's sake, simple_propfind() turns
+         * that 404 into a 410 to be detected here.)
+         */
+        if (st.st_ctime == 0) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                    "%s: Path removed on different binding while in the middle of this propfind: %s", 
+                    funcname, path);
+            // Fall through to delete
+        }
         /* If existing indicates that the file existed at a later timestamp than this delete, keep it. */
         /* By returning early, here and other places below, we are not updating the updated field on the file,
          * which stat_cache_value_set below would do; we leave that value as it was. We are not seeing a
          * creation for this file in the propfind, so it would not be correct to update the updated value as if we had.
          */
-        if (existing && existing->updated > st.st_ctime) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "Ignoring outdated removal of path: %s (%lu %lu)", path, existing->updated, st.st_ctime);
+        else if (existing && existing->updated > st.st_ctime) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                    "%s: Ignoring outdated removal of path: %s (%lu %lu)", 
+                    funcname, path, existing->updated, st.st_ctime);
             free(existing);
             return;
         }
@@ -235,7 +271,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 // This makes a "HEAD" call
                 curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: saw 410; calling HEAD on %s", funcname, path);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                        "%s: saw 410; calling HEAD on %s", funcname, path);
                 timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
                 process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
@@ -255,13 +292,17 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
 
             if (response_code >= 400 && response_code < 500) {
                 // fall through to delete
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: saw 410; executed HEAD; file doesn't exist: %s", funcname, path);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                        "%s: saw 410; executed HEAD; file doesn't exist: %s", 
+                        funcname, path);
             }
             else {
                 // REVIEW: if the file exists, do we want to call stat_cache_value_set and update its ->updated value?
                 if (response_code >= 200 && response_code < 300) {
                     // We're not deleting since it exists; jump out!
-                    log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: saw 410; executed HEAD; file exists: %s", funcname, path);
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                            "%s: saw 410; executed HEAD; file exists: %s", 
+                            funcname, path);
                 }
                 else {
                     // On error, prefer retaining a file which should be deleted over deleting a file which should be retained
@@ -273,7 +314,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             }
         }
 
-        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "Removing path: %s", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: Removing path: %s", 
+                funcname, path);
         stat_cache_delete(config->cache, path, &subgerr1);
         filecache_delete(config->cache, path, true, &subgerr2);
         // If we need to combine 2 errors, use one of the error messages in the propagated prefix
@@ -288,7 +330,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         }
     }
     else {
-        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: CREATE %s (%lu)", funcname, path, status_code);
+        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: CREATE %s (%lu)", 
+                funcname, path, status_code);
         stat_cache_value_set(config->cache, path, &value, &subgerr1);
         if (subgerr1) {
             g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
