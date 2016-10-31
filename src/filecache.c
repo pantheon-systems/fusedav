@@ -130,13 +130,13 @@ static char *path2key(const char *path) {
 /* By default, fusedav logs LOG_NOTICE (5) and lower messages.
  * If we change fusedav.conf to up the logging to LOG_INFO or LOG_DEBUG
  * and restart fusedav, this enhanced_logging will be triggered.
- * This will tell valhalla to log its messages to the journal.
- * We don't otherwise want valhalla to do this, because it generates too
+ * This will tell the fileserver to log its messages to the journal.
+ * We don't otherwise want the fileserver to do this, because it generates too
  * many log messages.
  * We trigger this mechanism by adding "Log-To-Journal" to the header;
  * we also add the "Instance-Identifier", aka binding id, to the header
- * so we can coordinate fusedav/valhalla messages by binding id. When
- * valhalla detects Log-To-Journal in the header, it will log its message
+ * so we can coordinate fusedav/fileserver messages by binding id. When
+ * the fileserver detects Log-To-Journal in the header, it will log its message
  * to the journal.
  * We also have the ability to use the inject_error mechanism to test this.
  * We do this by turning the default LOG_INFO level which is passed in
@@ -714,6 +714,13 @@ static void get_fresh_fd(filecache_t *cache,
         }
     }
     else if (response_code == 404) {
+        /*  If two bindings are in a race condition on the same file, this 
+         *  can occur. Binding A does a propfind; Binding B does a propfind
+         *  and the file is shown to exist. Binding A deletes the file
+         *  then Binding B tries to access it and the server returns 404.
+         *  Not sure how to remediate without doing way more work and
+         *  introducing way more problems than the fix will fix.
+         */
         struct stat_cache_value *value;
         g_set_error(gerr, filecache_quark(), ENOENT, "%s: File expected to exist returns 404.", funcname);
         /* we get a 404 because the stat_cache returned that the file existed, but it
@@ -730,6 +737,8 @@ static void get_fresh_fd(filecache_t *cache,
             off_t sz = value->st.st_size;
             unsigned long lg = value->local_generation;
 
+            // If we have a pdata, it is out of date, since the server doesn't have the file,
+            // meaning it must have been deleted.
             if (pdata) lsu = pdata->last_server_update;
 
             log_print(LOG_ERR, SECTION_FILECACHE_OPEN, "%s: 404 on file in cache %s, (lg sz tm lsu %lu %lu %lu %lu); deleting...",
@@ -739,6 +748,8 @@ static void get_fresh_fd(filecache_t *cache,
 
             free(value);
         }
+        // Delete it from the filecache too
+        filecache_delete(cache, path, true, NULL);
         goto finish;
     }
     else {
@@ -804,6 +815,10 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         if ((flags & O_CREAT) || ((flags & O_TRUNC) && (pdata == NULL))) {
             if ((flags & O_CREAT) && (pdata != NULL)) {
                 // This will orphan the previous filecache file
+                // If on 'file expected to exist returns 404' we don't delete
+                // the entry from the filecache, when we create a new file
+                // of the same name, this outdated entry will still be in the
+                // filecache. Since it's out of date, it's ok to overwrite it.
                 log_print(LOG_INFO, SECTION_FILECACHE_OPEN,
                     "filecache_open: creating a file that already has a cache entry: %s", path);
             }

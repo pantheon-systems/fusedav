@@ -428,6 +428,28 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
             log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "%s: Finished final parsing on the PROPFIND response.", funcname);
         }
     }
+    /*  If a propfind is happening on a directory and an entry in that
+     *  directory has been deleted, the return value will be 207, and 
+     *  the removal of that item will happen elsewhere and the code
+     *  in this conditional will not execute.
+     *  The code in the following else conditional will only be
+     *  executed if while this propfind is happening on this binding,
+     *  a different binding deletes the directory that this binding
+     *  is about to do a propfind on. If this conditional is executed,
+     *  it means the directory was deleted on a different binding
+     *  after the propfind on this directory's parent completed.  
+     *  Scenario:
+     *  Binding B does a propfind on /abcdir. The first propfind is for /.
+     *  The fileserver sees that /abcdir exists.
+     *  Binding A removed /abcdir.
+     *  Binding B's propfind moves on to /abcdir, and the fileserver returns
+     *  404 since it no longer exists. Then this else clause is called.
+     *
+     *  In a non-race case, Binding A deletes the directory, then Binding B
+     *  does the propfind, and the fileserver reports the deleted entry in the
+     *  parent directory, returns a 207, processed above, and fusedav updates 
+     *  its caches and does not visit the code in this else clause.
+     */
     else if (response_code == 404 && !inject_error(props_error_spropfindunkcode)) {
         GError *subgerr = NULL;
         // Tell the callback that the item is gone.
