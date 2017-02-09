@@ -25,7 +25,7 @@ dutest = $(testdir)/dutest.sh
 dutest-flags=
 
 # NB: no PASS/FAIL notification yet from iozone, still requires eyeballs
-iozone = /opt/iozone/src/current/iozone
+iozone = /root/pantheon/iozone/src/current/iozone
 # -g: start with files of this size (by default 64K)
 # -n: stop with files of this size (default: don't know, we never succeed past 128M)
 # For unit testing, just do the 4M size; it's generally small enough to finish quickly
