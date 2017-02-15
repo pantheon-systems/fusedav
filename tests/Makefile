@@ -112,21 +112,21 @@ forensic-haven-cleanup-flags =
 all: run-simple-stress-tests
 
 # restrict unit tests to low-resource tests
-run-unit-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-unit
+run-unit-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-unit echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx
+run-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx echo-finish
 
 # simple stress test; don't run the 'error' tests since they assume a onebox for creating error conditions which don't occur on yolo endpoint
-run-simple-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-stress
+run-simple-stress-tests: echo-finish run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-stress echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
 # run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
-run-continual-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-forensic-haven-cleanup run-iozone-continual
+run-continual-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-forensic-haven-cleanup run-iozone-continual echo-finish
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-short-stress-tests: run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc 
+run-short-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc echo-finish
 
 # run this to test the system under error. To do this:
 # use the fusedav client inject error mechanism. Use the writewrite_test 
@@ -145,6 +145,12 @@ run-write-errors: run-continualwrites-unit
 # started several times before it actually takes. If the errors file
 # cannot be created, the program exits.
 run-forensic-haven-test: run-forensic-haven-unit
+
+echo-start:
+	@ echo "Start: "; date
+
+echo-finish:
+	@ echo "Finish: "; date
 
 run-cltest:
 	$(cltest) $(cltest-flags)
