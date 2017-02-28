@@ -80,8 +80,3 @@ func getServerPath() string {
 	filepath := "https://" + valhallapath + ":" + valhallaport + "/sites/" + siteid + "/environments/" + env + "/files/"
 	return filepath
 }
-
-func collectResults(res string) {
-	// TODO figure out how to collect results
-	fmt.Printf("%v\n", res)
-}
