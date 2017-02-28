@@ -15,7 +15,7 @@ func newrequest(file string, method string, body io.Reader) (*http.Request, erro
 	req, err := http.NewRequest(method, file, body)
 	if err != nil {
 		// handle err
-		fmt.Errorf("Error on NewRequest; exiting...")
+		err = fmt.Errorf("Error on NewRequest; exiting...")
 		return nil, err
 	}
 	req.Header.Add("Log-To-Journal", "true")
@@ -27,7 +27,7 @@ func newcopyrequest(file1, file2 string, method string, body io.Reader) (*http.R
 	req, err := http.NewRequest(method, file1, body)
 	if err != nil {
 		// handle err
-		fmt.Errorf("Error on NewRequest; exiting...")
+		err = fmt.Errorf("Error on NewRequest; exiting...")
 		return nil, err
 	}
 	req.Header.Add("Log-To-Journal", "true")
@@ -36,6 +36,7 @@ func newcopyrequest(file1, file2 string, method string, body io.Reader) (*http.R
 	return req, nil
 }
 
+// randstring returns a hex string twice the given length
 func randstring(len int) string {
 	randBytes := make([]byte, len)
 	rand.Read(randBytes)
@@ -47,17 +48,17 @@ func testMKCOL(t *testing.T, client *http.Client, dirname string) (string, error
 	req, err := newrequest(dirname, "MKCOL", nil)
 	if err != nil {
 		// handle error
-		t.Errorf("testMKCOL: Error: %v", t)
+		t.Errorf("testMKCOL: Error: %v", err)
 	}
 
 	resp, err := client.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		// handle err
 		fmt.Printf("Error on client.Do; err: %v, exiting ...\n", err)
 		t.Errorf("Error on client.Do; exiting...\n")
 		return "", err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 201 {
 		t.Errorf("testMKCOL: Error, expected Status 201, got %v", resp.Status)
 	}
@@ -76,13 +77,13 @@ func testPROPFIND(t *testing.T, client *http.Client, filename string) (string, e
 	req.Header.Add("depth", "1")
 
 	resp, err := client.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		// handle err
 		fmt.Printf("Error on client.Do; err: %v, exiting ...\n", err)
 		t.Errorf("Error on client.Do; exiting...\n")
 		return "", err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 207 {
 		t.Errorf("testPROPFIND: Error, expected Status 207, got %v", resp.Status)
 	}
@@ -108,13 +109,13 @@ func testPUT(t *testing.T, client *http.Client, filename string, content string)
 		t.Errorf("testPUT: Error: %v", t)
 	}
 
-	defer resp.Body.Close()
 	if err != nil {
 		// handle err
 		fmt.Printf("Error on client.Do; err: %v, exiting ...\n", err)
 		t.Errorf("Error on client.Do; exiting...\n")
 		return "", err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != 201 {
 		t.Errorf("testPUT: Error, expected Status 201, got %v", resp.Status)
 	}
@@ -134,13 +135,13 @@ func testMOVE(t *testing.T, client *http.Client, fromfile string, tofile string)
 	req.Header.Add("Destination", tofile)
 
 	resp, err := client.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		// handle err
 		fmt.Printf("Error on client.Do; err: %v, exiting ...\n", err)
 		t.Errorf("Error on client.Do; exiting...\n")
 		return "", err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != 204 {
 		t.Errorf("testMOVE: Error, expected Status 204, got %v", resp.Status)
@@ -159,13 +160,13 @@ func testGET(t *testing.T, client *http.Client, filename string, content string)
 	}
 
 	resp, err := client.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		// handle err
 		fmt.Printf("Error on client.Do; err: %v, exiting ...\n", err)
 		t.Errorf("Error on client.Do; exiting...\n")
 		return "", err
 	}
+	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -193,13 +194,13 @@ func testDELETE(t *testing.T, client *http.Client, filename string) (string, err
 	}
 
 	resp, err := client.Do(req)
-	defer resp.Body.Close()
 	if err != nil {
 		// handle err
 		fmt.Printf("Error on client.Do; err: %v, exiting ...\n", err)
 		t.Errorf("Error on client.Do; exiting...\n")
 		return "", err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != 204 {
 		t.Errorf("testDELETE: Error, expected Status 200, got %v", resp.Status)
