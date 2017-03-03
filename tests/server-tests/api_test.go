@@ -56,34 +56,6 @@ func collectResults(testOutput TestOutput) {
 	fmt.Printf("%v\n", testOutput.result)
 }
 
-func testPROPFIND(t *testing.T, client *http.Client, filename string) (string, error) {
-	fmt.Printf("testPROPFIND: %s\n", filename)
-	req, err := newrequest(filename, "PROPFIND", nil)
-	if err != nil {
-		// handle error
-		t.Errorf("testMKCOL: Error: %v", t)
-	}
-	req.Header.Add("depth", "1")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		// handle err
-		fmt.Printf("Error on client.Do; err: %v, exiting ...\n", err)
-		t.Errorf("Error on client.Do; exiting...\n")
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 207 {
-		t.Errorf("testPROPFIND: Error, expected Status 207, got %v", resp.Status)
-	}
-
-	// TODO: Would like to get xml contents and parse
-	fmt.Printf("testPROPFIND: response: %v\n", resp)
-
-	res := "testPROPFIND: " + resp.Status
-	return res, nil
-}
-
 /* TODO GET check content returned
 if len(content) > 0 && string(body) != content {
 	t.Errorf("testGET: Error, expected content %v, got %v", content, resp.Body)
