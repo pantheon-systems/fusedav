@@ -520,6 +520,23 @@ state_t get_saint_state(void) {
     return saint_state;
 }
 
+bool blessed_mode = false;
+void clear_blessed_mode(void) {
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "clear_blessed_mode");
+    blessed_mode = false;
+}
+
+void set_blessed_mode(void) {
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_blessed_mode");
+    blessed_mode = true;
+}
+
+// On the metaphor of saint mode, blessed mode is read-only, allow reads
+// to continue to server, but stopping writes
+bool use_blessed_mode(void) {
+    return blessed_mode;
+}
+
 bool use_saint_mode(void) {
     bool sm = false;
     pthread_mutex_lock(&saint_state_mutex);

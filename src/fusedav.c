@@ -115,6 +115,9 @@ static int simple_propfind_with_redirect(
             last_updated > 0 ? "progressive" : "complete", depth, path);
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
+    // If we are in blessed (read-only) mode, we get a new indication with each propfind. 
+    // So clear it before each call, then test afterwards
+    clear_blessed_mode();
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
     clock_gettime(CLOCK_MONOTONIC, &now);
     elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
@@ -967,6 +970,12 @@ static int dav_unlink(const char *path) {
     GError *gerr = NULL;
     bool do_unlink = true;
 
+    if (use_blessed_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_unlink: %s aborted; in blessed mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in blessed mode");
+        return processed_gerror("dav_unlink: ", path, &gerr);
+    }
+
     BUMP(dav_unlink);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_unlink(%s)", path);
@@ -989,6 +998,12 @@ static int dav_rmdir(const char *path) {
     struct stat st;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
+
+    if (use_blessed_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rmdir: %s aborted; in blessed mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in blessed mode");
+        return processed_gerror("dav_rmdir: ", path, &gerr);
+    }
 
     BUMP(dav_rmdir);
 
@@ -1075,6 +1090,12 @@ static int dav_mkdir(const char *path, mode_t mode) {
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
 
+    if (use_blessed_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_mkdir: %s aborted; in blessed mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in blessed mode");
+        return processed_gerror("dav_mkdir: ", path, &gerr);
+    }
+
     BUMP(dav_mkdir);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: %s(%s, %04o)", funcname, path, mode);
@@ -1143,6 +1164,12 @@ static int dav_rename(const char *from, const char *to) {
     struct stat_cache_value *entry = NULL;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
+
+    if (use_blessed_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: %s aborted; in blessed mode", from);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in blessed mode");
+        return processed_gerror("dav_rename: ", from, &gerr);
+    }
 
     BUMP(dav_rename);
 
@@ -1382,6 +1409,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             "dav_release: error on file \'%s\'; removing from %sfile and stat caches", path, do_unlink ? "server and " : "");
         // This will delete from filecache and statcache; depending on do_unlink might also remove from server
         // Currently, do_unlink is always false; we have taken the decision to never remove from server
+        // If we make do_unlink true here, we need to check blessed mode before making the call
         common_unlink(path, do_unlink, &subgerr);
         if (subgerr) {
             // display the error, but don't return it ...
@@ -1617,6 +1645,12 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     ssize_t bytes_written;
     struct stat_cache_value value;
 
+    if (use_blessed_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_write: %s aborted; in blessed mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in blessed mode");
+        return processed_gerror("dav_write: ", path, &gerr);
+    }
+
     BUMP(dav_write);
 
     // We might get a null path if we are writing to a bare file descriptor
@@ -1673,6 +1707,12 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     struct stat_cache_value value;
     GError *gerr = NULL;
     int fd;
+
+    if (use_blessed_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_ftruncate: %s aborted; in blessed mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in blessed mode");
+        return processed_gerror("dav_ftruncate: ", path, &gerr);
+    }
 
     BUMP(dav_ftruncate);
 
@@ -1759,6 +1799,12 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     struct stat_cache_value value;
     GError *gerr = NULL;
     int fd;
+
+    if (use_blessed_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_create: %s aborted; in blessed mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in blessed mode");
+        return processed_gerror("dav_create: ", path, &gerr);
+    }
 
     BUMP(dav_create);
 

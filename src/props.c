@@ -300,7 +300,9 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
                 strncpy(failure_str, contents, PARSE_FAILURE_STR_SIZE);
                 failure_str[PARSE_FAILURE_STR_SIZE] = '\0';
             }
-            log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, "write_parsing_callback: Parsing response buffer of length %u failed with error: %s -- return string: %s", real_size, XML_ErrorString(error_code), failure_str);
+            log_print(LOG_NOTICE, SECTION_PROPS_DEFAULT, 
+                    "write_parsing_callback: Parsing response buffer of length %u failed with error: %s -- return string: %s", 
+                    real_size, XML_ErrorString(error_code), failure_str);
             state->failure = true;
         }
         else {
@@ -309,6 +311,31 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     }
 
     return real_size;
+}
+
+static size_t header_callback(void *contents, size_t length, size_t nmemb, __unused void *userp) {
+    char *header;
+    header = malloc(length * nmemb + 1);
+    strncpy(header, contents, length * nmemb);
+
+    if (strcasestr(header, "Read-Write-Status")) {
+        if (strcasestr(header, "readonly") != NULL) {
+            set_blessed_mode();
+            log_print(LOG_INFO, SECTION_PROPS_DEFAULT, 
+                    "header_callback: got readonly:'%s'", header);
+        } else if (strcasestr(header, "readwrite") != NULL) {
+            clear_blessed_mode();
+            log_print(LOG_INFO, SECTION_PROPS_DEFAULT, 
+                    "header_callback: got readwrite:'%s'", header);
+        } else {
+            clear_blessed_mode();
+            log_print(LOG_WARN, SECTION_PROPS_DEFAULT, 
+                    "header_callback: Error: expected readonly or readwrite:'%s'", header);
+        }
+    }
+
+    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "header_callback: '%s' :: %d, %d", header, length, nmemb);
+    return length * nmemb;
 }
 
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results,
@@ -361,6 +388,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         XML_SetCharacterDataHandler(parser, characterDataHandler);
         curl_easy_setopt(session, CURLOPT_WRITEDATA, (void *) parser);
         curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_parsing_callback);
+        curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, header_callback);
         curl_easy_setopt(session, CURLOPT_TIMEOUT, 0);
         curl_easy_setopt(session, CURLOPT_LOW_SPEED_LIMIT, 1024);
         curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 240);
