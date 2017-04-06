@@ -329,7 +329,7 @@ static size_t header_callback(void *contents, size_t length, size_t nmemb, __unu
                     "header_callback: got readwrite:'%s'", header);
         } else {
             clear_blessed_mode();
-            log_print(LOG_WARN, SECTION_PROPS_DEFAULT, 
+            log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, 
                     "header_callback: Error: expected readonly or readwrite:'%s'", header);
         }
     }
@@ -500,6 +500,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
 
+    // If propfind return indicates read-only, set it
+    g_set_error(gerr, props_quark(), EROFS, "%s(%s): failed, EROFS", funcname, path);
     log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "%s: (%s) PROPFIND completed on path %s", 
             funcname, last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
