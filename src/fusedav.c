@@ -130,6 +130,10 @@ static int simple_propfind_with_redirect(
         stats_timer("exceeded-time-propfind-latency", elapsed_time);
     }
     if (subgerr) {
+        if (subgerr->code == EROFS) {
+            set_blessed_mode();
+            return ret;
+        }
         g_propagate_prefixed_error(gerr, subgerr, "simple_propfind_with_redirect: ");
         return ret;
     }

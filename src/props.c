@@ -500,6 +500,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
 
+    // If propfind return indicates read-only, set it
+    g_set_error(gerr, props_quark(), EROFS, "%s(%s): failed, EROFS", funcname, path);
     log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "%s: (%s) PROPFIND completed on path %s", 
             funcname, last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
