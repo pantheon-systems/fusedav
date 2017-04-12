@@ -23,6 +23,7 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdbool.h>
 #include <expat.h>
 #include <curl/curl.h>
@@ -313,6 +314,31 @@ static size_t write_parsing_callback(void *contents, size_t length, size_t nmemb
     return real_size;
 }
 
+// When a process starts, it is in read-write mode.
+// It only goes readonly, if it gets a readonly notice from Valhalla
+// Once it goes readonly, it stays readonly until Valhalla sends a read-write, or the process restarts
+// If Valhalla is not sending read-write-status headers, we stay in read-write mode (readonly is false)
+// We expect Valhalla to send a read-write-status on every propfind
+
+// We want readonly mode to be global. If one thread goes readonly, all threads should
+// be readonly
+static bool readonly_mode = false;
+static void clear_readonly_mode(void) {
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "clear_readonly_mode");
+    readonly_mode = false;
+}
+
+static void set_readonly_mode(void) {
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "set_readonly_mode");
+    readonly_mode = true;
+}
+
+// On the metaphor of saint mode, readonly mode is read-only, allow reads
+// to continue to server, but stopping writes
+bool use_readonly_mode(void) {
+    return readonly_mode;
+}
+
 static size_t header_callback(void *contents, size_t length, size_t nmemb, __unused void *userp) {
     char *header;
     header = malloc(length * nmemb + 1);
@@ -320,15 +346,17 @@ static size_t header_callback(void *contents, size_t length, size_t nmemb, __unu
 
     if (strcasestr(header, "Read-Write-Status")) {
         if (strcasestr(header, "readonly") != NULL) {
-            set_blessed_mode();
+            set_readonly_mode();
             log_print(LOG_INFO, SECTION_PROPS_DEFAULT, 
                     "header_callback: got readonly:'%s'", header);
         } else if (strcasestr(header, "readwrite") != NULL) {
-            clear_blessed_mode();
+            clear_readonly_mode();
             log_print(LOG_INFO, SECTION_PROPS_DEFAULT, 
                     "header_callback: got readwrite:'%s'", header);
         } else {
-            clear_blessed_mode();
+            // If we get something other than readonly or readwrite, punt. Default is read-write
+            // But do print warning message, so we can figure out what's wrong
+            clear_readonly_mode();
             log_print(LOG_WARNING, SECTION_PROPS_DEFAULT, 
                     "header_callback: Error: expected readonly or readwrite:'%s'", header);
         }
@@ -500,8 +528,6 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         goto finish;
     }
 
-    // If propfind return indicates read-only, set it
-    g_set_error(gerr, props_quark(), EROFS, "%s(%s): failed, EROFS", funcname, path);
     log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "%s: (%s) PROPFIND completed on path %s", 
             funcname, last_updated > 0 ? "progressive" : "complete", path);
     ret = 0;
