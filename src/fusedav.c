@@ -967,6 +967,12 @@ static int dav_unlink(const char *path) {
     GError *gerr = NULL;
     bool do_unlink = true;
 
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_unlink: %s aborted; in readonly mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_unlink: ", path, &gerr);
+    }
+
     BUMP(dav_unlink);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_unlink(%s)", path);
@@ -989,6 +995,12 @@ static int dav_rmdir(const char *path) {
     struct stat st;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
+
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rmdir: %s aborted; in readonly mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_rmdir: ", path, &gerr);
+    }
 
     BUMP(dav_rmdir);
 
@@ -1075,6 +1087,12 @@ static int dav_mkdir(const char *path, mode_t mode) {
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
 
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_mkdir: %s aborted; in readonly mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_mkdir: ", path, &gerr);
+    }
+
     BUMP(dav_mkdir);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: %s(%s, %04o)", funcname, path, mode);
@@ -1143,6 +1161,12 @@ static int dav_rename(const char *from, const char *to) {
     struct stat_cache_value *entry = NULL;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
+
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: %s aborted; in readonly mode", from);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_rename: ", from, &gerr);
+    }
 
     BUMP(dav_rename);
 
@@ -1291,6 +1315,12 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     GError *gerr2 = NULL;
     int ret = 0;
 
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_flush: ", path, &gerr);
+    }
+
     BUMP(dav_release);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
@@ -1382,6 +1412,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
             "dav_release: error on file \'%s\'; removing from %sfile and stat caches", path, do_unlink ? "server and " : "");
         // This will delete from filecache and statcache; depending on do_unlink might also remove from server
         // Currently, do_unlink is always false; we have taken the decision to never remove from server
+        // If we make do_unlink true here, we need to check readonly mode before making the call
         common_unlink(path, do_unlink, &subgerr);
         if (subgerr) {
             // display the error, but don't return it ...
@@ -1403,6 +1434,12 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     struct stat_cache_value value;
     GError *gerr = NULL;
     bool wrote_data;
+
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_fsync: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_fsync: ", path, &gerr);
+    }
 
     BUMP(dav_fsync);
 
@@ -1438,6 +1475,12 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
+
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_flush: ", path, &gerr);
+    }
 
     BUMP(dav_flush);
 
@@ -1617,6 +1660,12 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     ssize_t bytes_written;
     struct stat_cache_value value;
 
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_write: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_write: ", path, &gerr);
+    }
+
     BUMP(dav_write);
 
     // We might get a null path if we are writing to a bare file descriptor
@@ -1673,6 +1722,12 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     struct stat_cache_value value;
     GError *gerr = NULL;
     int fd;
+
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_ftruncate: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_ftruncate: ", path, &gerr);
+    }
 
     BUMP(dav_ftruncate);
 
@@ -1759,6 +1814,12 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     struct stat_cache_value value;
     GError *gerr = NULL;
     int fd;
+
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_create: %s aborted; in readonly mode", path);
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_create: ", path, &gerr);
+    }
 
     BUMP(dav_create);
 

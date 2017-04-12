@@ -27,5 +27,6 @@
 
 typedef void (*props_result_callback)(void *userdata, const char *href, struct stat st, unsigned long status_code, GError **gerr);
 int simple_propfind(const char *path, size_t depth, time_t last_updated, props_result_callback results, void *userdata, GError **gerr);
+bool use_readonly_mode(void);
 
 #endif
