@@ -1315,6 +1315,12 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     GError *gerr2 = NULL;
     int ret = 0;
 
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_flush: ", path, &gerr);
+    }
+
     BUMP(dav_release);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_release: release(%s)", path ? path : "null path");
@@ -1429,6 +1435,12 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     GError *gerr = NULL;
     bool wrote_data;
 
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_fsync: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_fsync: ", path, &gerr);
+    }
+
     BUMP(dav_fsync);
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1463,6 +1475,12 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
 static int dav_flush(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
+
+    if (use_readonly_mode()) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_flush: ", path, &gerr);
+    }
 
     BUMP(dav_flush);
 
@@ -1643,7 +1661,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     struct stat_cache_value value;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_write: %s aborted; in readonly mode", path);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_write: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_write: ", path, &gerr);
     }
@@ -1706,7 +1724,7 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     int fd;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_ftruncate: %s aborted; in readonly mode", path);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_ftruncate: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
