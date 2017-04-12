@@ -1282,7 +1282,7 @@ bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info 
                 goto finish;
             }
 
-            log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "About to PUT file (%s, fd=%d).", path, sdata->fd);
+            log_print(LOG_INFO, SECTION_FILECACHE_COMM, "About to PUT file (%s, fd=%d).", path, sdata->fd);
 
             put_return_etag(path, sdata->fd, pdata->etag, &tmpgerr);
 
