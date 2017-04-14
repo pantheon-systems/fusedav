@@ -968,7 +968,7 @@ static int dav_unlink(const char *path) {
     bool do_unlink = true;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_unlink: %s aborted; in readonly mode", path);
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_unlink: %s aborted; in readonly mode", path);
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_unlink: ", path, &gerr);
     }
@@ -997,7 +997,7 @@ static int dav_rmdir(const char *path) {
     CURLcode res = CURLE_OK;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rmdir: %s aborted; in readonly mode", path);
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_rmdir: %s aborted; in readonly mode", path);
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_rmdir: ", path, &gerr);
     }
@@ -1088,7 +1088,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     CURLcode res = CURLE_OK;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_mkdir: %s aborted; in readonly mode", path);
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_mkdir: %s aborted; in readonly mode", path);
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_mkdir: ", path, &gerr);
     }
@@ -1163,7 +1163,7 @@ static int dav_rename(const char *from, const char *to) {
     CURLcode res = CURLE_OK;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_rename: %s aborted; in readonly mode", from);
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_rename: %s aborted; in readonly mode", from);
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_rename: ", from, &gerr);
     }
@@ -1316,7 +1316,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
     int ret = 0;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_flush: ", path, &gerr);
     }
@@ -1436,7 +1436,7 @@ static int dav_fsync(const char *path, __unused int isdatasync, struct fuse_file
     bool wrote_data;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_fsync: %s aborted; in readonly mode", path ? path : "null path");
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_fsync: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_fsync: ", path, &gerr);
     }
@@ -1477,7 +1477,7 @@ static int dav_flush(const char *path, struct fuse_file_info *info) {
     GError *gerr = NULL;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_flush: ", path, &gerr);
     }
@@ -1661,7 +1661,7 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
     struct stat_cache_value value;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_write: %s aborted; in readonly mode", path ? path : "null path");
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_write: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_write: ", path, &gerr);
     }
@@ -1724,7 +1724,7 @@ static int dav_ftruncate(const char *path, off_t size, struct fuse_file_info *in
     int fd;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_ftruncate: %s aborted; in readonly mode", path ? path : "null path");
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_ftruncate: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_ftruncate: ", path, &gerr);
     }
@@ -1816,7 +1816,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     int fd;
 
     if (use_readonly_mode()) {
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_create: %s aborted; in readonly mode", path);
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_create: %s aborted; in readonly mode", path);
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
         return processed_gerror("dav_create: ", path, &gerr);
     }
