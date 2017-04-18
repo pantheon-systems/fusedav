@@ -343,6 +343,7 @@ static size_t header_callback(void *contents, size_t length, size_t nmemb, __unu
     char *header;
     header = malloc(length * nmemb + 1);
     strncpy(header, contents, length * nmemb);
+    header[length * nmemb] = '\0';
 
     if (strcasestr(header, "Read-Write-Status") != NULL) {
         if (strcasestr(header, "readonly") != NULL) {
@@ -363,6 +364,7 @@ static size_t header_callback(void *contents, size_t length, size_t nmemb, __unu
     }
 
     log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "header_callback: '%s' :: %d, %d", header, length, nmemb);
+    free(header);
     return length * nmemb;
 }
 
