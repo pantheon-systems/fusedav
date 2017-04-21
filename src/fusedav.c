@@ -1557,9 +1557,27 @@ static void do_open(const char *path, struct fuse_file_info *info, GError **gerr
     return;
 }
 
+static bool write_flag(int flags) {
+    // O_RDWR technically belongs in the list, but since it might be used for files
+    // which are only read, I leave it out. 
+    // O_CREAT on a file which already exists is a noop unless O_EXCL is also included.
+    // So, only respond if both are present.
+    if ((flags & O_WRONLY) || ((flags & O_CREAT) && (flags & O_EXCL)) || (flags & O_TRUNC) || (flags & O_APPEND)) {
+        return true;
+    }
+    return false;
+}
+
 static int dav_open(const char *path, struct fuse_file_info *info) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *gerr = NULL;
+
+    // If we are in readonly mode, and we are opening a file for writing, exit
+    if (use_readonly_mode() && write_flag(info->flags)) {
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
+        return processed_gerror("dav_flush: ", path, &gerr);
+    }
 
     BUMP(dav_open);
 
@@ -1576,7 +1594,7 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
         info->flags |= O_RDWR;
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_open: open(%s, %x, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
+    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_open: open(%s, %o, trunc=%x)", path, info->flags, info->flags & O_TRUNC);
     do_open(path, info, &gerr);
     if (gerr) {
         int ret = processed_gerror("dav_open: ", path, &gerr);
