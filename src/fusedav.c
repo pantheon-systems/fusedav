@@ -1574,9 +1574,9 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
 
     // If we are in readonly mode, and we are opening a file for writing, exit
     if (use_readonly_mode() && write_flag(info->flags)) {
-        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_flush: %s aborted; in readonly mode", path ? path : "null path");
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_open: %s aborted; in readonly mode", path ? path : "null path");
         g_set_error(&gerr, fusedav_quark(), EROFS, "aborted; in readonly mode");
-        return processed_gerror("dav_flush: ", path, &gerr);
+        return processed_gerror("dav_open: ", path, &gerr);
     }
 
     BUMP(dav_open);
