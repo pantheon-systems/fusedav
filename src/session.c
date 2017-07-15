@@ -412,8 +412,13 @@ static void print_ipaddr_pair(char *msg) {
 }
 
 // Return the contents of the error buffer
-const char * curl_errorbuffer() {
-    return curl_errbuf;
+const char * curl_errorbuffer(CURLcode res) {
+    size_t len = strlen(curl_errbuf);
+    if(len) {
+        return curl_errbuf;
+    } else {
+        return curl_easy_strerror(res);
+    }
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
