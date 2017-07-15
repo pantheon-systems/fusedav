@@ -206,6 +206,30 @@ static void propfind_test(void) {
     }
 }
 
+/* test what happens on a GET 400 error  */
+static void curl_error_capture_test(void) {
+    static int fdx = no_error;
+    static int tdx = no_error;
+    const int iters = 4096; // @TODO I just made this number up; figure out a better one!
+
+    for (int iter = 0; iter < iters; iter++) {
+        // Sleep 11 seconds between injections
+        sleep(11);
+
+        // flop between filecache_error_fresh404 and no_error
+
+        if (tdx == no_error) tdx = filecache_error_fresh404;
+        else tdx = no_error;
+
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
+
+        // Make the new location true but turn off the locations for the old location.
+        inject_error_list[tdx] = true;
+        inject_error_list[fdx] = false;
+        fdx = tdx;
+    }
+}
+
 /* test conditions which might or might not land a file in the forensic haven
  * This is a pretty extensive test of the filecache errors, but not a complete one.
  */
@@ -316,6 +340,9 @@ void *inject_error_mechanism(__unused void *ptr) {
 
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting raise SIGINT on leveldb error");
         leveldb_error_test();
+
+        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting curl error capture test");
+        curl_error_capture_test();
     }
 
     free(inject_error_list);
