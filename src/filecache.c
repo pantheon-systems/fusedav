@@ -754,7 +754,7 @@ static void get_fresh_fd(filecache_t *cache,
     }
     else {
         // Not sure what to do here; goto finish, or try the loop another time?
-        log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: returns %d; expected 304 or 200", funcname, response_code);
+        log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: returns %d; expected 304 or 200; err: %s", funcname, response_code, curl_errorbuffer());
     }
 
     // No check for O_TRUNC here because we skip server access and just
