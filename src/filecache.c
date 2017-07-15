@@ -531,7 +531,7 @@ static void get_fresh_fd(filecache_t *cache,
     // but on the close (dav_flush/release), the PUT fails and the file never makes it to the server.
     // On opening again, the server will deliver this unexpected 404. Changes for forensic-haven
     // should prevent these errors in the future (2013-08-29)
-    if (inject_error(filecache_error_fresh404)) response_code = 404;
+    if (inject_error(filecache_error_fresh404)) response_code = 400;
     if (response_code == 304) {
         // This should never happen with a well-behaved server.
         if (pdata == NULL || inject_error(filecache_error_freshcurl2)) {
@@ -754,7 +754,7 @@ static void get_fresh_fd(filecache_t *cache,
     }
     else {
         // Not sure what to do here; goto finish, or try the loop another time?
-        log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: returns %d; expected 304 or 200", funcname, response_code);
+        log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: returns %d; expected 304 or 200; err: %s", funcname, response_code, curl_errorbuffer(response_code));
     }
 
     // No check for O_TRUNC here because we skip server access and just

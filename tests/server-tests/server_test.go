@@ -70,13 +70,31 @@ func getClient() *http.Client {
 	return client
 }
 
-func getServerPath() string {
-	valhallapath := testcfg.ServerPath
-	valhallaport := testcfg.ServerPort
+func getFilesPath() string {
+	serverpath := getServerPath()
 	siteid := testcfg.SiteId
 	// bindingid := testcfg.BindingId
 	env := testcfg.Env
 
-	filepath := "https://" + valhallapath + ":" + valhallaport + "/sites/" + siteid + "/environments/" + env + "/files/"
-	return filepath
+	filespath := serverpath + "sites/" + siteid + "/environments/" + env + "/files/"
+	return filespath
+}
+
+func getServerPath() string {
+	valhallapath := testcfg.ServerPath
+	valhallaport := testcfg.ServerPort
+	serverpath := "https://" + valhallapath + ":" + valhallaport + "/"
+	return serverpath
+}
+
+func getBindingId() string {
+	return testcfg.BindingId
+}
+
+func getSiteId() string {
+	return testcfg.SiteId
+}
+
+func getEnv() string {
+	return testcfg.Env
 }

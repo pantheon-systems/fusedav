@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
@@ -56,12 +57,6 @@ func collectResults(testOutput TestOutput) {
 	fmt.Printf("%v\n", testOutput.result)
 }
 
-/* TODO GET check content returned
-if len(content) > 0 && string(body) != content {
-	t.Errorf("testGET: Error, expected content %v, got %v", content, resp.Body)
-}
-*/
-
 func testMethod(t *testing.T, testInput TestInput) error {
 	var (
 		err        error
@@ -82,7 +77,7 @@ func testMethod(t *testing.T, testInput TestInput) error {
 
 	for _, pair := range testInput.headers {
 		req.Header.Add(pair.key, pair.value)
-		fmt.Printf("testMethod: method: %s; path: %s; header: %v\n", testInput.method, testInput.path, req.Header)
+		fmt.Printf("testMethod: Headers: method: %s; path: %s; header: %v\n", testInput.method, testInput.path, req.Header)
 	}
 
 	defer collectResults(testOutput)
@@ -101,10 +96,70 @@ func testMethod(t *testing.T, testInput TestInput) error {
 			testInput.method, testInput.path, testInput.expectedStatusCode, resp.Status)
 	}
 
+	if testInput.method == "GET" { // Are there other methods which get content. We could genericize
+		body, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			// handle error
+			t.Errorf("testMethod: Error on ioutil.ReadAll: %v", err)
+		}
+
+		if testInput.expectedStatusCode != 404 &&
+			len(testInput.content) > 0 &&
+			string(body) != testInput.content {
+			t.Errorf("testMethod: Error, expected content %v, got %v", testInput.content, resp.Body)
+		}
+	}
+
 	testOutput.status = resp.Status
 	testOutput.statusCode = resp.StatusCode
 
 	return err
+}
+
+func TestPaths(t *testing.T) {
+	type PathResult struct {
+		path       string
+		statusCode int
+	}
+
+	var testInput TestInput
+	var testOutput TestOutput
+	var paths []PathResult
+
+	fmt.Println("TestPaths")
+
+	testInput.client = getClient()
+
+	paths = make([]PathResult, 7)
+	paths[0].path = getServerPath()
+	paths[0].statusCode = 200
+	paths[1].path = paths[0].path + "sites/"
+	paths[1].statusCode = 405
+	paths[2].path = paths[1].path + getSiteId() + "/"
+	paths[2].statusCode = 404
+	paths[3].path = paths[2].path + "/environments/"
+	paths[3].statusCode = 405
+	paths[4].path = paths[3].path + "self/"
+	paths[4].statusCode = 404
+	paths[5].path = paths[3].path + "dev/"
+	paths[5].statusCode = 404
+	paths[6].path = paths[5].path + "files/"
+	paths[6].statusCode = 404
+
+	testInput.content = "" // content is ignored
+	testInput.method = "GET"
+
+	// for _, method := range []string{"HEAL", "TEST", "LOCK", "PROPPATCH", "OPTIONS"} {
+	// Temporarily remove HEAL, it takes a long time
+	for _, entry := range paths {
+		testInput.path = entry.path
+		testInput.expectedStatusCode = entry.statusCode
+		err := testMethod(t, testInput)
+		if err != nil {
+			// handle error
+		}
+		testOutput.result = ""
+	}
 }
 
 func TestAuxiliaryOps(t *testing.T) {
@@ -114,7 +169,7 @@ func TestAuxiliaryOps(t *testing.T) {
 	fmt.Println("TestAuxiliaryFileOps")
 
 	testInput.client = getClient()
-	filepath := getServerPath()
+	filepath := getFilesPath()
 
 	dirname := filepath + randstring(8) + "/"
 	testInput.content = randstring(32)
@@ -130,7 +185,6 @@ func TestAuxiliaryOps(t *testing.T) {
 		if err != nil {
 			// handle error
 		}
-		// First assignment to res
 		testOutput.result = ""
 	}
 }
@@ -144,7 +198,7 @@ func TestBasicFileOps(t *testing.T) {
 	fmt.Println("TestBasicFileOps")
 
 	testInput.client = getClient()
-	filepath := getServerPath()
+	filepath := getFilesPath()
 
 	dirname := filepath + randstring(8) + "/"
 	testInput.content = randstring(32)
@@ -203,15 +257,15 @@ func TestBasicFileOps(t *testing.T) {
 		// handle error
 	}
 
+	// Clear the headers
+	testInput.headers = nil
+
 	testInput.method = "GET"
 	testInput.expectedStatusCode = 200
 	err = testMethod(t, testInput)
 	if err != nil {
 		// handle error
 	}
-
-	// Clear the headers
-	testInput.headers = nil
 
 	// COPY
 	// We don't COPY, the OS makes effectively a get/put
