@@ -240,7 +240,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
     bool slow_request = false;
 
     if (res != CURLE_OK) {
-        asprintf(&error_str, "%s :: %s", curl_easy_strerror(res), "no rc");
+        asprintf(&error_str, "%s :: %s", curl_errorbuffer(res), "no rc");
     } else if (response_code >= 500) {
         asprintf(&error_str, "%s :: %lu", "no curl error", response_code);
     } else if (elapsed_time >= 0) {
