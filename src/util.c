@@ -216,15 +216,9 @@ static void curl_error_capture_test(void) {
         // Sleep 11 seconds between injections
         sleep(11);
 
-<<<<<<< 4eb3dcd6a0909793abc25a5ad0df08c20751d330
         // flop between filecache_error_fresh400 and no_error
 
         if (tdx == no_error) tdx = filecache_error_fresh400;
-=======
-        // flop between filecache_error_fresh404 and no_error
-
-        if (tdx == no_error) tdx = filecache_error_fresh404;
->>>>>>> Update tests for curl capture error
         else tdx = no_error;
 
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
