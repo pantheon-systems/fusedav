@@ -216,9 +216,9 @@ static void curl_error_capture_test(void) {
         // Sleep 11 seconds between injections
         sleep(11);
 
-        // flop between filecache_error_fresh404 and no_error
+        // flop between filecache_error_fresh400 and no_error
 
-        if (tdx == no_error) tdx = filecache_error_fresh404;
+        if (tdx == no_error) tdx = filecache_error_fresh400;
         else tdx = no_error;
 
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
@@ -253,7 +253,7 @@ static void filecache_forensic_haven_test(void) {
         {filecache_error_freshflock2, "filecache_error_freshflock2"},
         {filecache_error_freshsession, "filecache_error_freshsession"},
         {filecache_error_freshcurl1, "filecache_error_freshcurl1"},
-        {filecache_error_fresh404, "filecache_error_fresh404"},
+        {filecache_error_fresh400, "filecache_error_fresh400"},
         {filecache_error_freshcurl2, "filecache_error_freshcurl2"},
         {filecache_error_freshopen2, "filecache_error_freshopen2"},
         {filecache_error_freshpdata, "filecache_error_freshpdata"},

@@ -1,0 +1,8 @@
+{
+	"BindingId": "<bid>",
+	"SiteId": "<sid>",
+	"ServerPath": "<path>",
+	"ServerPort": "<port>",
+	"Env": "<env>"
+}
+
