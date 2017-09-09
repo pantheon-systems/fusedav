@@ -78,7 +78,7 @@ void *inject_error_mechanism(void *ptr);
 #define filecache_error_freshcurl2 35
 #define filecache_error_freshopen2 36
 #define filecache_error_freshpdata 37
-#define filecache_error_fresh404 38
+#define filecache_error_fresh400 38
 #define filecache_error_opencalloc 39
 #define filecache_error_readsdata 40
 #define filecache_error_readread 41
