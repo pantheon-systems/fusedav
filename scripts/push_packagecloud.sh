@@ -13,7 +13,7 @@ if [ -z "$1" ] ; then
   exit 1
 fi
 
-BUILD_VERSIONS=${BUILD_VERSIONS:-20 22}
+BUILD_VERSIONS=${BUILD_VERSIONS:-22}
 for i in $BUILD_VERSIONS ; do
   package_cloud push "pantheon/$1/fedora/$i" $bin/../pkg/$i/fusedav/*.rpm
 done
