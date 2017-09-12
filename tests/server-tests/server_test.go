@@ -3,9 +3,9 @@ package testserver
 import (
 	"crypto/tls"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
+	"testing"
 )
 
 type TestConfiguration struct {
@@ -30,53 +30,69 @@ var tlsClientConfig = &tls.Config{
 	InsecureSkipVerify: true,
 }
 
-func getBindingCert(testcfg TestConfiguration) []tls.Certificate {
+func getBindingCert(testcfg TestConfiguration, t *testing.T) []tls.Certificate {
 	crtpath := "/srv/bindings/" + testcfg.BindingId + "/certs/binding.crt"
 	keypath := "/srv/bindings/" + testcfg.BindingId + "/certs/binding.key"
-	fmt.Printf("getBindingCert: %s : %s\n", crtpath, keypath)
+	t.Logf("getBindingCert: %s : %s", crtpath, keypath)
 	cert, err := tls.LoadX509KeyPair(crtpath, keypath)
 	if err != nil {
-		// handle error
+		t.Errorf("getBindingCert: Failed: %v", err)
 	}
 	certs := []tls.Certificate{cert}
 	return certs
 }
 
-func readConfig() {
+func readConfig(t *testing.T) {
 	// Read config file and set variables
 	file, err := os.Open("test-server-config.json")
 	if err != nil {
-		// handle error
-		fmt.Errorf("readConfig: Error in Open\n")
+		t.Error("readConfig: Error in Open :: Make sure base-test-server-config.json is copied to test-server-config.json and populated")
 		panic(err)
 	}
 	decoder := json.NewDecoder(file)
 	testcfg = TestConfiguration{}
 	err = decoder.Decode(&testcfg)
 	if err != nil {
-		// handle error
-		fmt.Errorf("readConfig: Error in decoder")
+		t.Errorf("readConfig: Error in decoder: %v", err)
 		panic(err)
 	}
-	fmt.Printf("readConfig: cfg: %v\n", testcfg)
+	t.Logf("readConfig: cfg: %v\n", testcfg)
 }
 
-func getClient() *http.Client {
-	readConfig()
-	tlsClientConfig.Certificates = getBindingCert(testcfg)
+func getClient(t *testing.T) *http.Client {
+	readConfig(t)
+	tlsClientConfig.Certificates = getBindingCert(testcfg, t)
 
 	transport := &http.Transport{TLSClientConfig: tlsClientConfig}
 	client := &http.Client{Transport: transport}
 	return client
 }
 
-func getServerPath() string {
-	valhallapath := testcfg.ServerPath
-	valhallaport := testcfg.ServerPort
+func getFilesPath() string {
+	serverpath := getServerPath()
 	siteid := testcfg.SiteId
 	// bindingid := testcfg.BindingId
 	env := testcfg.Env
 
-	filepath := "https://" + valhallapath + ":" + valhallaport + "/sites/" + siteid + "/environments/" + env + "/files/"
-	return filepath
+	filespath := serverpath + "sites/" + siteid + "/environments/" + env + "/files/"
+	return filespath
+}
+
+func getServerPath() string {
+	valhallapath := testcfg.ServerPath
+	valhallaport := testcfg.ServerPort
+	serverpath := "https://" + valhallapath + ":" + valhallaport + "/"
+	return serverpath
+}
+
+func getBindingId() string {
+	return testcfg.BindingId
+}
+
+func getSiteId() string {
+	return testcfg.SiteId
+}
+
+func getEnv() string {
+	return testcfg.Env
 }

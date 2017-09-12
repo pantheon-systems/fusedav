@@ -70,6 +70,9 @@ void (*const state_table [NUM_STATES][NUM_EVENTS]) (void) = {
 #define LOGSTRSZ 80
 static __thread char nodeaddr[LOGSTRSZ];
 
+// Capture errors and make them available
+static __thread char curl_errbuf[CURL_ERROR_SIZE];
+
 // status of a node in a cluster
 static const unsigned int HEALTHY = 0;
 static const unsigned int RECOVERING = 1;
@@ -237,7 +240,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
     bool slow_request = false;
 
     if (res != CURLE_OK) {
-        asprintf(&error_str, "%s :: %s", curl_easy_strerror(res), "no rc");
+        asprintf(&error_str, "%s :: %s", curl_errorbuffer(res), "no rc");
     } else if (response_code >= 500) {
         asprintf(&error_str, "%s :: %lu", "no curl error", response_code);
     } else if (elapsed_time >= 0) {
@@ -406,6 +409,16 @@ static void print_ipaddr_pair(char *msg) {
     logstr(nodeaddr);
     // We print the key=value pair.
     log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "Using filesystem_host=%s", nodeaddr);
+}
+
+// Return the contents of the error buffer
+const char * curl_errorbuffer(CURLcode res) {
+    size_t len = strlen(curl_errbuf);
+    if(len) {
+        return curl_errbuf;
+    } else {
+        return curl_easy_strerror(res);
+    }
 }
 
 static int session_debug(__unused CURL *handle, curl_infotype type, char *data, size_t size, __unused void *userp) {
@@ -1212,6 +1225,9 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
         funcname, node_status.resolve_slist);
     curl_easy_setopt(session, CURLOPT_RESOLVE, node_status.resolve_slist);
     curl_easy_setopt(session, CURLOPT_DEBUGFUNCTION, session_debug);
+    // Empty the error buffer
+    curl_errbuf[0] = '\0';
+    curl_easy_setopt(session, CURLOPT_ERRORBUFFER, curl_errbuf);
     curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
 
     escaped_path = escape_except_slashes(session, path);

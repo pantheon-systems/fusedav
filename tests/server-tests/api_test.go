@@ -3,8 +3,8 @@ package testserver
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"strings"
 	"testing"
@@ -32,11 +32,10 @@ type TestOutput struct {
 	content    string
 }
 
-func newrequest(file string, method string, body io.Reader) (*http.Request, error) {
+func newrequest(file string, method string, body io.Reader, t *testing.T) (*http.Request, error) {
 	req, err := http.NewRequest(method, file, body)
 	if err != nil {
-		// handle err
-		fmt.Errorf("Error on NewRequest; exiting...")
+		t.Errorf("Error on NewRequest; exiting...")
 		return nil, err
 	}
 	req.Header.Add("Log-To-Journal", "true")
@@ -51,16 +50,10 @@ func randstring(len int) string {
 	return hex.EncodeToString(randBytes)
 }
 
-func collectResults(testOutput TestOutput) {
+func collectResults(testOutput TestOutput, t *testing.T) {
 	// TODO figure out how to collect results
-	fmt.Printf("%v\n", testOutput.result)
+	t.Logf("%v\n", testOutput.result)
 }
-
-/* TODO GET check content returned
-if len(content) > 0 && string(body) != content {
-	t.Errorf("testGET: Error, expected content %v, got %v", content, resp.Body)
-}
-*/
 
 func testMethod(t *testing.T, testInput TestInput) error {
 	var (
@@ -69,36 +62,49 @@ func testMethod(t *testing.T, testInput TestInput) error {
 		testOutput TestOutput
 	)
 
-	fmt.Printf("testMethod: %s %d %s\n", testInput.method, testInput.expectedStatusCode, testInput.path)
+	t.Logf("testMethod: %s %d %s", testInput.method, testInput.expectedStatusCode, testInput.path)
 	if testInput.method == "PUT" { // only PUT sends content?
-		req, err = newrequest(testInput.path, testInput.method, strings.NewReader(testInput.content))
+		req, err = newrequest(testInput.path, testInput.method, strings.NewReader(testInput.content), t)
 	} else {
-		req, err = newrequest(testInput.path, testInput.method, nil)
+		req, err = newrequest(testInput.path, testInput.method, nil, t)
 	}
 	if err != nil {
-		// handle error
 		t.Errorf("testMethod: %s, Error: %v", testInput.method, err)
+		return err
 	}
 
 	for _, pair := range testInput.headers {
 		req.Header.Add(pair.key, pair.value)
-		fmt.Printf("testMethod: method: %s; path: %s; header: %v\n", testInput.method, testInput.path, req.Header)
+		t.Logf("testMethod: Headers: method: %s; path: %s; header: %v", testInput.method, testInput.path, req.Header)
 	}
 
-	defer collectResults(testOutput)
+	defer collectResults(testOutput, t)
 	resp, err := testInput.client.Do(req)
 	if err != nil {
-		// handle err
-		t.Errorf("Error on client.Do; method: %s; path: %s; exiting...\n", testInput.method, testInput.path)
+		t.Errorf("testMethod: Error on client.Do; method: %s; path: %s; exiting...\n", testInput.method, testInput.path)
 		testOutput.err = err
 		testOutput.result = ""
 		return err
 	}
 	defer resp.Body.Close()
 
+	body, err := ioutil.ReadAll(resp.Body)
 	if resp.StatusCode != testInput.expectedStatusCode {
-		t.Errorf("testMethod: %s; path: %s; Error, expected Status %d, got %v",
-			testInput.method, testInput.path, testInput.expectedStatusCode, resp.Status)
+		t.Errorf("testMethod: %s; path: %s; Error, expected Status %d, got %v; body: %v",
+			testInput.method, testInput.path, testInput.expectedStatusCode, resp.Status, string(body))
+	}
+
+	if testInput.method == "GET" { // Are there other methods which get content. We could genericize
+		if err != nil {
+			t.Errorf("testMethod: Error on ioutil.ReadAll: %v", err)
+			return err
+		}
+
+		if testInput.expectedStatusCode != 404 &&
+			len(testInput.content) > 0 &&
+			string(body) != testInput.content {
+			t.Errorf("testMethod: Error, expected content %v, got %v", testInput.content, string(body))
+		}
 	}
 
 	testOutput.status = resp.Status
@@ -107,14 +113,59 @@ func testMethod(t *testing.T, testInput TestInput) error {
 	return err
 }
 
+func TestPaths(t *testing.T) {
+	type PathResult struct {
+		path       string
+		statusCode int
+	}
+
+	var testInput TestInput
+	var testOutput TestOutput
+	var paths []PathResult
+
+	t.Log("TestPaths")
+
+	testInput.client = getClient(t)
+
+	paths = make([]PathResult, 7)
+	paths[0].path = getServerPath()
+	paths[0].statusCode = 200
+	paths[1].path = paths[0].path + "sites/"
+	paths[1].statusCode = 405
+	// Response might be different if there is a trailing slash after site id
+	paths[2].path = paths[1].path + getSiteId()
+	paths[2].statusCode = 405
+	paths[3].path = paths[2].path + "/environments/"
+	paths[3].statusCode = 405
+	paths[4].path = paths[3].path + "self/"
+	paths[4].statusCode = 404
+	paths[5].path = paths[3].path + "dev/"
+	paths[5].statusCode = 404
+	paths[6].path = paths[5].path + "files/"
+	paths[6].statusCode = 404
+
+	testInput.content = "" // content is ignored
+	testInput.method = "GET"
+
+	for _, entry := range paths {
+		testInput.path = entry.path
+		testInput.expectedStatusCode = entry.statusCode
+		err := testMethod(t, testInput)
+		if err != nil {
+			t.Errorf("TestPaths: Error on path %v: %v", testInput.path, err)
+		}
+		testOutput.result = ""
+	}
+}
+
 func TestAuxiliaryOps(t *testing.T) {
 	var testInput TestInput
 	var testOutput TestOutput
 
-	fmt.Println("TestAuxiliaryFileOps")
+	t.Log("TestAuxiliaryFileOps")
 
-	testInput.client = getClient()
-	filepath := getServerPath()
+	testInput.client = getClient(t)
+	filepath := getFilesPath()
 
 	dirname := filepath + randstring(8) + "/"
 	testInput.content = randstring(32)
@@ -128,9 +179,8 @@ func TestAuxiliaryOps(t *testing.T) {
 		testInput.method = method
 		err := testMethod(t, testInput)
 		if err != nil {
-			// handle error
+			t.Errorf("TestAuxiliaryOps: Error on method %s on path %v: %v", method, testInput.path, err)
 		}
-		// First assignment to res
 		testOutput.result = ""
 	}
 }
@@ -141,10 +191,10 @@ func TestBasicFileOps(t *testing.T) {
 		pair      HeaderPair
 	)
 
-	fmt.Println("TestBasicFileOps")
+	t.Log("TestBasicFileOps")
 
-	testInput.client = getClient()
-	filepath := getServerPath()
+	testInput.client = getClient(t)
+	filepath := getFilesPath()
 
 	dirname := filepath + randstring(8) + "/"
 	testInput.content = randstring(32)
@@ -157,7 +207,7 @@ func TestBasicFileOps(t *testing.T) {
 	err := testMethod(t, testInput)
 	testInput.expectedStatusCode = 200 // Reset to default
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	// Add filename to dirname which was used in MKCOL
@@ -167,7 +217,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 201
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	//  Sort of emulating the way propfind works in fusedav-valhalla world
@@ -183,7 +233,7 @@ func TestBasicFileOps(t *testing.T) {
 
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 	// PROPFIND on directory
 	testInput.path = dirname
@@ -191,7 +241,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 207
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	// PROPFIND on file
@@ -200,18 +250,18 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 207
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
+
+	// Clear the headers
+	testInput.headers = nil
 
 	testInput.method = "GET"
 	testInput.expectedStatusCode = 200
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
-
-	// Clear the headers
-	testInput.headers = nil
 
 	// COPY
 	// We don't COPY, the OS makes effectively a get/put
@@ -220,7 +270,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 200
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	// Sort of cheating. We should use the content we get from GET
@@ -232,7 +282,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 201
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	// Get the tofile as part of copy to verify
@@ -240,7 +290,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 200
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 	// e COPY
 
@@ -255,7 +305,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 204
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	// Clear the headers
@@ -267,7 +317,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 200
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	// Get the original file. It should get a 404
@@ -276,7 +326,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 404
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 	// e MOVE
 
@@ -287,7 +337,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 204
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	testInput.path = newfile
@@ -295,7 +345,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 204
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	testInput.path = filename
@@ -304,7 +354,7 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 204
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 
 	testInput.path = dirname
@@ -312,6 +362,6 @@ func TestBasicFileOps(t *testing.T) {
 	testInput.expectedStatusCode = 204
 	err = testMethod(t, testInput)
 	if err != nil {
-		// handle error
+		t.Errorf("TestBasicFileOps: Error on method %s on path %v: %v", testInput.method, testInput.path, err)
 	}
 }
