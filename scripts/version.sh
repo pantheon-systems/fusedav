@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -eou pipefail
 
 # ensure we have autotag
 if [ ! -d "$HOME/bin" ]; then
@@ -12,7 +12,7 @@ if [ ! -f "$HOME/bin/autotag" ]; then
   if [ -z "$AUTOTAG_URL" ] ;  then
     AUTOTAG_URL="https://github.com/pantheon-systems/autotag/releases/download/v0.0.3/autotag.linux.x86_64"
   fi
-  curl -L $AUTOTAG_URL -o ~/bin/autotag
+  curl -sf -L $AUTOTAG_URL -o ~/bin/autotag
   chmod 755 ~/bin/autotag
 fi
 
