@@ -1,6 +1,6 @@
 #!/bin/bash
 set -eou pipefail
-AUTOTAG_URL=$(AUTOTAG_URL:-)
+AUTOTAG_URL=${AUTOTAG_URL:-}
 
 # ensure we have autotag
 if [ ! -d "$HOME/bin" ]; then
