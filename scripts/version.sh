@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+set -eou pipefail
+AUTOTAG_URL=${AUTOTAG_URL:-}
 
 # ensure we have autotag
 if [ ! -d "$HOME/bin" ]; then
@@ -7,12 +8,13 @@ if [ ! -d "$HOME/bin" ]; then
 fi
 
 if [ ! -f "$HOME/bin/autotag" ]; then
-  AUTOTAG_URL=$(curl -silent -o - -L https://api.github.com/repos/pantheon-systems/autotag/releases/latest | grep 'browser_' | cut -d\" -f4)
+  AUTOTAG_URL=$(curl -silent -o - -L https://api.github.com/repos/pantheon-systems/autotag/releases/latest | grep 'browser_' | cut -d\" -f4 | awk '{print $0}')
   # handle the off chance that this wont work with some pre-set version
   if [ -z "$AUTOTAG_URL" ] ;  then
     AUTOTAG_URL="https://github.com/pantheon-systems/autotag/releases/download/v0.0.3/autotag.linux.x86_64"
   fi
-  curl -L $AUTOTAG_URL -o ~/bin/autotag
+  echo "Pulling $AUTOTAG_URL"
+  curl -sf -L $AUTOTAG_URL -o ~/bin/autotag > /dev/null
   chmod 755 ~/bin/autotag
 fi
 
