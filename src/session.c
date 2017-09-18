@@ -1006,27 +1006,44 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
     healthstatus->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
 }
 
-void process_status(const char *fcn_name, CURL *session, const CURLcode res, 
+bool process_status(const char *fcn_name, CURL *session, const CURLcode res, 
         const long response_code, const long elapsed_time, const int iter, 
         const char *path, bool tmp_session) {
+
+    bool non_retriable_error = false; // default to retry
 
     stats_counter("attempts", 1);
 
     if (res != CURLE_OK) {
-        print_errors(iter, "curl_failures", fcn_name, res, response_code, elapsed_time, path);
-        increment_node_failure(nodeaddr, res, response_code, elapsed_time);
-        delete_session(session, tmp_session);
-        return;
+        // Treat some curl failures differently than others
+        if (res == CURLE_PARTIAL_FILE) {
+            non_retriable_error = true;
+            print_errors(iter, "partial-file-transfer", fcn_name, res, response_code, elapsed_time, path);
+            // This error is not likely a reflection of the status of the node,
+            // but rather specific to the file being accessed. (We think it likely
+            // signals that the file was transferred to server but not to permanent storage.)
+            // So, don't retry, it's pretty certain it will have the same result.
+        } else {
+            print_errors(iter, "curl_failures", fcn_name, res, response_code, elapsed_time, path);
+            increment_node_failure(nodeaddr, res, response_code, elapsed_time);
+            delete_session(session, tmp_session);
+        }
+        return non_retriable_error;
     }
 
     if (response_code >= 500) {
+        // We could treat 50x errors differently here
         print_errors(iter, "status500_failures", fcn_name, res, response_code, elapsed_time, path);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
         delete_session(session, tmp_session);
-        return;
+        return non_retriable_error;
     }
 
+    // We mark a node unhealthy if it takes longer than time_limit to respond, but since
+    // it is neither a curl error, nor a response_code >= 500 error, it won't retry
+    // anyway. For clarity, mark it non-retriable explicitly
     if (elapsed_time > time_limit) {
+        non_retriable_error = true;
         print_errors(iter, "slow_requests", fcn_name, res, response_code, elapsed_time, path);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
         if (health_status_all_nodes() == UNHEALTHY) {
@@ -1034,7 +1051,7 @@ void process_status(const char *fcn_name, CURL *session, const CURLcode res,
             set_dynamic_logging();
         }
         delete_session(session, tmp_session);
-        return;
+        return non_retriable_error;
     }
 
     // If it wasn't an error, and it isn't the 0'th iter, then we must have failed previously and now recovered
@@ -1044,6 +1061,8 @@ void process_status(const char *fcn_name, CURL *session, const CURLcode res,
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
         increment_node_success(nodeaddr);
     }
+
+    return non_retriable_error;
 }
 
 static bool valid_slist(void) {

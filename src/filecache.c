@@ -507,7 +507,10 @@ static void get_fresh_fd(filecache_t *cache,
 
         if (slist) curl_slist_free_all(slist);
 
-        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        // Some errors should not be retried. (Non-errors will fail the
+        // for loop test and fall through naturally)
+        if (non_retriable_error) break;
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
@@ -1102,7 +1105,10 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
         if (slist) curl_slist_free_all(slist);
 
-        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        // Some errors should not be retried. (Non-errors will fail the
+        // for loop test and fall through naturally)
+        if (non_retriable_error) break;
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {
