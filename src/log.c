@@ -169,7 +169,7 @@ int logging(unsigned int log_level, unsigned int section) {
 
 static int print_it(const char const *formatwithtid, const char const *msg, int log_level) {
     int ret;
-    // fusedav-valhalla standardizing on names BINDING, SITE, and ENVIRONMENT
+    // fusedav-server standardizing on names BINDING, SITE, and ENVIRONMENT
     ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
                           "PRIORITY=%d", log_level,
                           "USER_AGENT=%s", get_user_agent(),
