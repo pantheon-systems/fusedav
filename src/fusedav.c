@@ -275,7 +275,10 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                         "%s: saw 410; calling HEAD on %s", funcname, path);
                 timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
-                process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
+                bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
+                // Some errors should not be retried. (Non-errors will fail the
+                // for loop test and fall through naturally)
+                if (non_retriable_error) break;
             }
 
             delete_tmp_session(session);
@@ -930,7 +933,10 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
 
             if (slist) curl_slist_free_all(slist);
 
-            process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+            bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+            // Some errors should not be retried. (Non-errors will fail the
+            // for loop test and fall through naturally)
+            if (non_retriable_error) break;
         }
 
         if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
@@ -1050,7 +1056,10 @@ static int dav_rmdir(const char *path) {
 
         if (slist) curl_slist_free_all(slist);
 
-        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        // Some errors should not be retried. (Non-errors will fail the
+        // for loop test and fall through naturally)
+        if (non_retriable_error) break;
     }
 
     if (res != CURLE_OK || response_code >= 500) {
@@ -1120,7 +1129,10 @@ static int dav_mkdir(const char *path, mode_t mode) {
 
         if (slist) curl_slist_free_all(slist);
 
-        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        // Some errors should not be retried. (Non-errors will fail the
+        // for loop test and fall through naturally)
+        if (non_retriable_error) break;
     }
 
     if (res != CURLE_OK || response_code >= 500) {
@@ -1222,7 +1234,10 @@ static int dav_rename(const char *from, const char *to) {
 
         if (slist) curl_slist_free_all(slist);
 
-        process_status(funcname, session, res, response_code, elapsed_time, idx, to, false);
+        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, to, false);
+        // Some errors should not be retried. (Non-errors will fail the
+        // for loop test and fall through naturally)
+        if (non_retriable_error) break;
     }
 
     /* move:

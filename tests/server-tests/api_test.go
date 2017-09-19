@@ -120,19 +120,6 @@ func testMethod(t *testing.T, testInput TestInput) error {
 		}
 	}
 
-	if testInput.method == "GET" { // Are there other methods which get content. We could genericize
-		if err != nil {
-			t.Errorf("testMethod: Error on ioutil.ReadAll: %v", err)
-			return err
-		}
-
-		if testInput.expectedStatusCode != 404 &&
-			len(testInput.content) > 0 &&
-			string(body) != testInput.content {
-			t.Errorf("testMethod: Error, expected content %v, got %v", testInput.content, string(body))
-		}
-	}
-
 	testOutput.status = resp.Status
 	testOutput.statusCode = resp.StatusCode
 
