@@ -633,6 +633,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     bool is_base_directory;
     int ret = -ENOENT;
     enum ignore_freshness skip_freshness_check = OFF;
+    time_t time_since;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -754,7 +755,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
      * if we failed to reset it correctly.
      */
     // If the parent directory is out of date, update it.
-    if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
+    time_since = time(NULL) - STAT_CACHE_NEGATIVE_TTL;
+    // Keep stats for each second 0-6, then bucket everything over 6
+    stats_histo(time_since, 6, "sc_neg_ttl");
+    if (parent_children_update_ts < time_since) {
         GError *subgerr = NULL;
 
         stats_counter_local("propfind-nonnegative-cache", 1);

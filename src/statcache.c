@@ -34,6 +34,7 @@
 #include "bloom-filter.h"
 #include "util.h"
 #include "stats.h"
+#include "fusedav-statsd.h"
 
 #define CACHE_TIMEOUT 3
 
@@ -247,19 +248,26 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
     if (!skip_freshness_check) {
         time_t current_time = time(NULL);
+        time_t time_since;
 
         // First, check against the stat item itself.
         //log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "Current time: %lu", current_time);
-        if (current_time - value->updated > CACHE_TIMEOUT) {
+        // How long has it been since the item was updated
+        time_since = current_time - value->updated;
+
+        // Keep stats for each second 0-6, then bucket everything over 6
+        stats_histo(time_since, 6, "sc_value_get");
+        if (time_since > CACHE_TIMEOUT) {
             char *directory;
             time_t directory_updated;
 
-            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", 
+                    path, time_since);
 
             // If that's too old, check the last update of the directory.
             directory = path_parent(path);
             if (directory == NULL) {
-                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry %s is %lu seconds old.", path, current_time - value->updated);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry for directory %s is NULL.", path);
                 return NULL;
             }
 
@@ -268,10 +276,15 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_value_get: ");
                 return NULL;
             }
-            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Directory contents for %s are %lu seconds old.", directory, (current_time - directory_updated));
+            time_since = current_time - directory_updated;
+            // Keep stats for each second 0-6, then bucket everything over 6
+            stats_histo(time_since, 6, "sc_dir_update");
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Directory contents for %s are %lu seconds old.", 
+                    directory, time_since);
             free(directory);
-            if (current_time - directory_updated > CACHE_TIMEOUT) {
-                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: %s is too old.", path);
+            if (time_since > CACHE_TIMEOUT) {
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: %s is too old (%lu seconds).", 
+                        path, time_since);
                 free(value);
                 return NULL;
             }
