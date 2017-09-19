@@ -234,8 +234,10 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
+    /*  We can miss in the cache... */
     if (value == NULL) {
         log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
+        stats_counter("statcache_miss", 1);
         return NULL;
     }
 
@@ -246,6 +248,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         return NULL;
     }
 
+    /*  If we're doing a freshness check, we can return fresh or stale ... */
     if (!skip_freshness_check) {
         time_t current_time = time(NULL);
         time_t time_since;
@@ -256,7 +259,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         time_since = current_time - value->updated;
 
         // Keep stats for each second 0-6, then bucket everything over 6
-        stats_histo(time_since, 6, "sc_value_get");
+        stats_histo("sc_value_get", time_since, 6);
         if (time_since > CACHE_TIMEOUT) {
             char *directory;
             time_t directory_updated;
@@ -268,17 +271,19 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
             directory = path_parent(path);
             if (directory == NULL) {
                 log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry for directory %s is NULL.", path);
+                stats_counter("statcache_stale", 1);
                 return NULL;
             }
 
             directory_updated = stat_cache_read_updated_children(cache, directory, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_value_get: ");
+                stats_counter("statcache_stale", 1);
                 return NULL;
             }
             time_since = current_time - directory_updated;
             // Keep stats for each second 0-6, then bucket everything over 6
-            stats_histo(time_since, 6, "sc_dir_update");
+            stats_histo("sc_dir_update", time_since, 6);
             log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Directory contents for %s are %lu seconds old.", 
                     directory, time_since);
             free(directory);
@@ -286,8 +291,11 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                 log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: %s is too old (%lu seconds).", 
                         path, time_since);
                 free(value);
+                stats_counter("statcache_stale", 1);
                 return NULL;
             }
+        } else {
+            stats_counter("statcache_fresh", 1);
         }
     }
 
@@ -304,6 +312,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         value->st.st_blocks = (value->st.st_size+511)/512;
     }
 
+    /*  If we neither miss nor return stale, we 'hit'. E.g. 'fresh' is also a 'hit' */
+    stats_counter("statcache_hit", 1);
     return value;
 }
 

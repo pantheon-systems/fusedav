@@ -332,20 +332,20 @@ int stats_timer_local(const char *statname, const int value) {
 }
 
 // Not really a histogram, but keeps separate stats for each value
-int stats_histo(const int value, const int max, const char *descriptor) {
+int stats_histo(const char *statname, const int value, const int max) {
     char *value_str = NULL;
     char *attempts_str = NULL;
     int ret;
 
     if (value <= max) {
-        asprintf(&value_str, "%d_%s", value, descriptor);
+        asprintf(&value_str, "%d_%s", value, statname);
     } else {
-        asprintf(&value_str, "gt_%d_%s", max, descriptor);
+        asprintf(&value_str, "gt_%d_%s", max, statname);
     }
     // Is this the first, second, or third failure for this request?
     stats_counter(value_str, 1);
     free(value_str);
-    asprintf(&attempts_str, "%s_attempts", descriptor);
+    asprintf(&attempts_str, "%s_attempts", statname);
     ret = stats_counter(attempts_str, 1);
     free(attempts_str);
     return ret;

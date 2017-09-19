@@ -757,7 +757,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // If the parent directory is out of date, update it.
     time_since = time(NULL) - STAT_CACHE_NEGATIVE_TTL;
     // Keep stats for each second 0-6, then bucket everything over 6
-    stats_histo(time_since, 6, "sc_neg_ttl");
+    stats_histo("profind_ttl", time_since, 6);
     if (parent_children_update_ts < time_since) {
         GError *subgerr = NULL;
 
