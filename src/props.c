@@ -451,7 +451,10 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         free(query_string);
         query_string = NULL;
 
-        process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        // Some errors should not be retried. (Non-errors will fail the
+        // for loop test and fall through naturally)
+        if (non_retriable_error) break;
     }
 
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
