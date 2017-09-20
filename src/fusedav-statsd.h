@@ -31,5 +31,6 @@ int stats_gauge_local(const char *statname, const int value);
 int stats_timer(const char *statname, const int value);
 int stats_timer_cluster(const char *statname, const int value);
 int stats_timer_local(const char *statname, const int value);
+int stats_histo(const char *statname, const int value, const int max);
 
 #endif
