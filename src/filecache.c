@@ -541,6 +541,7 @@ static void get_fresh_fd(filecache_t *cache,
     // but on the close (dav_flush/release), the PUT fails and the file never makes it to the server.
     // On opening again, the server will deliver this unexpected 404. Changes for forensic-haven
     // should prevent these errors in the future (2013-08-29)
+
     // Update: if the offload of the file to S3 fails for some reason, either a partial file
     // transfer error, which is a curl error so res != CURLE_OK, or a 404 is returned.
 
