@@ -121,7 +121,7 @@ static int simple_propfind_with_redirect(
     stats_counter("propfind-count", 1);
     stats_timer("propfind-latency", elapsed_time);
     if (elapsed_time > propfind_time_allotment) {
-        log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded allotment of %u ms; took %u ms.",
+        log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded time allotment of %u ms; took %u ms.",
             last_updated > 0 ? "progressive" : "complete", propfind_time_allotment, elapsed_time);
         stats_counter("exceeded-time-propfind-count", 1);
         stats_timer("exceeded-time-propfind-latency", elapsed_time);
@@ -754,6 +754,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
      * on detecting an error, and perhaps using a value for it which would not cause an issue
      * if we failed to reset it correctly.
      */
+
     time_since = time(NULL) - parent_children_update_ts;
     // Keep stats for each second 0-6, then bucket everything over 6
     stats_histo("profind_ttl", time_since, 6);
