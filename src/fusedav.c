@@ -754,11 +754,11 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
      * on detecting an error, and perhaps using a value for it which would not cause an issue
      * if we failed to reset it correctly.
      */
-    // If the parent directory is out of date, update it.
-    time_since = time(NULL) - STAT_CACHE_NEGATIVE_TTL;
+    time_since = time(NULL) - parent_children_update_ts;
     // Keep stats for each second 0-6, then bucket everything over 6
     stats_histo("profind_ttl", time_since, 6);
-    if (parent_children_update_ts < time_since) {
+    // If the parent directory is out of date, update it.
+    if (time_since > STAT_CACHE_NEGATIVE_TTL) {
         GError *subgerr = NULL;
 
         stats_counter_local("propfind-nonnegative-cache", 1);
