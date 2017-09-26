@@ -294,10 +294,10 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                 stats_counter("statcache_stale", 1);
                 return NULL;
             } else {
-                stats_counter("statcache_fresh-dir", 1);
+                stats_counter("statcache_fresh_dir", 1);
             }
         } else {
-            stats_counter("statcache_fresh-file", 1);
+            stats_counter("statcache_fresh_file", 1);
         }
     }
 
