@@ -746,7 +746,7 @@ static void get_fresh_fd(filecache_t *cache,
             g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns 404-partial file transfer.", 
                     funcname, path);
         } else {
-            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns %d.", 
+            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns %ld.", 
                     funcname, path, response_code);
         }
         /* we get a 404 because the stat_cache returned that the file existed, but it
