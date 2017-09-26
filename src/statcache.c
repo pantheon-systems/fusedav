@@ -293,9 +293,11 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                 free(value);
                 stats_counter("statcache_stale", 1);
                 return NULL;
+            } else {
+                stats_counter("statcache_fresh-dir", 1);
             }
         } else {
-            stats_counter("statcache_fresh", 1);
+            stats_counter("statcache_fresh-file", 1);
         }
     }
 
