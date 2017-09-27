@@ -771,6 +771,12 @@ static void get_fresh_fd(filecache_t *cache,
                 funcname, path, lg, sz, atime, lsu);
 
             stat_cache_delete(cache, path, NULL);
+            // If we delete this file locally but it really exists, then a subsequent progressive
+            // propfind will not indicate that it exists, and this binding will continue
+            // to think it doesn't exist. Force a complete propfind next time on the
+            // parent directory to get a fresh update. We do this by resetting updated children
+            // to 0.
+            stat_cache_updated_children(cache, path, 0, NULL);
 
             free(value);
         }
