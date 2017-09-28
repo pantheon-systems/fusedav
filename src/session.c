@@ -53,7 +53,7 @@ static state_t saint_state = STATE_HEALTHY;
 pthread_mutex_t request_outstanding = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
 static int request_outstanding_lock_count = 0;
 
-const int time_limit = 30 * 1000; // 30 seconds
+const int time_limit = 60 * 1000; // 60 seconds
 
 void (*const state_table [NUM_STATES][NUM_EVENTS]) (void) = {
     { action_s1_e1, action_s1_e2, action_s1_e3 }, /* procedures for state 1 */
@@ -1006,6 +1006,14 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
     healthstatus->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
 }
 
+
+/* There are three types of responses:
+ * An error: most need to be retried; part of platform unhealthy, might succeed on subsequent try
+ * A non-retriable error: particular to the request not the platform, not likely to succeed on retry
+ * Non-error
+ * The process_status function will return either non-retriable error, or error/success
+ * A non-retriable error will not retry, others errors will retry, and non-errors will
+ * not retry because they will not meet the retry criteria in the for loop check. */
 bool process_status(const char *fcn_name, CURL *session, const CURLcode res, 
         const long response_code, const long elapsed_time, const int iter, 
         const char *path, bool tmp_session) {

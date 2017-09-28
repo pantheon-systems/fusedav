@@ -32,6 +32,7 @@
 #include "log_sections.h"
 #include "fusedav-statsd.h"
 #include "session.h"
+#include "util.h"
 
 // e.g. fusedav.valhallayolo1b.server-104_130_221_144.exceeded-time-small-GET-latency (82 characters)
 #define STATS_MSG_LEN 128
@@ -328,6 +329,26 @@ int stats_timer_cluster(const char *statname, const int value) {
 
 int stats_timer_local(const char *statname, const int value) {
     return stats_timer_common(statname, value, NULL, NULL);
+}
+
+// Not really a histogram, but keeps separate stats for each value
+int stats_histo(const char *statname, const int value, const int max) {
+    char *value_str = NULL;
+    char *attempts_str = NULL;
+    int ret;
+
+    if (value <= max) {
+        asprintf(&value_str, "%d_%s", value, statname);
+    } else {
+        asprintf(&value_str, "gt_%d_%s", max, statname);
+    }
+    // Is this the first, second, or third failure for this request?
+    stats_counter(value_str, 1);
+    free(value_str);
+    asprintf(&attempts_str, "%s_attempts", statname);
+    ret = stats_counter(attempts_str, 1);
+    free(attempts_str);
+    return ret;
 }
 
 /* For reference: 

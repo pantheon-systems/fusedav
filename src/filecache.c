@@ -728,7 +728,8 @@ static void get_fresh_fd(filecache_t *cache,
             stats_timer("exceeded-time-small-GET-latency", elapsed_time);
         }
     }
-    else if (response_code == 404 || res == CURLE_PARTIAL_FILE) {
+    else if (response_code == 404 || response_code == 410 || res == CURLE_PARTIAL_FILE) {
+
         /*  If two bindings are in a race condition on the same file, this 
          *  can occur. Binding A does a propfind; Binding B does a propfind
          *  and the file is shown to exist. Binding A deletes the file
@@ -743,9 +744,11 @@ static void get_fresh_fd(filecache_t *cache,
          */
         struct stat_cache_value *value;
         if (res == CURLE_PARTIAL_FILE) {
-            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File expected to exist returns 404-partial file transfer.", funcname);
+            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns 404-partial file transfer.", 
+                    funcname, path);
         } else {
-            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File expected to exist returns 404.", funcname);
+            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns %ld.", 
+                    funcname, path, response_code);
         }
         /* we get a 404 because the stat_cache returned that the file existed, but it
          * was not on the server. Deleting it from the stat_cache makes the stat_cache

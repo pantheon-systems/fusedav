@@ -121,7 +121,7 @@ static int simple_propfind_with_redirect(
     stats_counter("propfind-count", 1);
     stats_timer("propfind-latency", elapsed_time);
     if (elapsed_time > propfind_time_allotment) {
-        log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded allotment of %u ms; took %u ms.",
+        log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded time allotment of %u ms; took %u ms.",
             last_updated > 0 ? "progressive" : "complete", propfind_time_allotment, elapsed_time);
         stats_counter("exceeded-time-propfind-count", 1);
         stats_timer("exceeded-time-propfind-latency", elapsed_time);
@@ -633,6 +633,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     bool is_base_directory;
     int ret = -ENOENT;
     enum ignore_freshness skip_freshness_check = OFF;
+    time_t time_since;
 
     memset(stbuf, 0, sizeof(struct stat));
 
@@ -681,6 +682,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
         GError *subgerr = NULL;
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
+        stats_counter_local("propfind-root", 1);
         ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL, &subgerr);
         if (subgerr) {
             // Delete from cache on error; ignore errors from stat_cache_delete since we already have one
@@ -753,8 +755,12 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
      * on detecting an error, and perhaps using a value for it which would not cause an issue
      * if we failed to reset it correctly.
      */
+
+    time_since = time(NULL) - parent_children_update_ts;
+    // Keep stats for each second 0-6, then bucket everything over 6
+    stats_histo("profind_ttl", time_since, 6);
     // If the parent directory is out of date, update it.
-    if (parent_children_update_ts < (time(NULL) - STAT_CACHE_NEGATIVE_TTL)) {
+    if (time_since > STAT_CACHE_NEGATIVE_TTL) {
         GError *subgerr = NULL;
 
         stats_counter_local("propfind-nonnegative-cache", 1);
