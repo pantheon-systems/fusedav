@@ -1006,6 +1006,7 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
     healthstatus->timestamp = time(NULL); // Most recent failure. We don't currently use this value, but it might be interesting
 }
 
+
 /* There are three types of responses:
  * An error: most need to be retried; part of platform unhealthy, might succeed on subsequent try
  * A non-retriable error: particular to the request not the platform, not likely to succeed on retry

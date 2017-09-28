@@ -729,6 +729,7 @@ static void get_fresh_fd(filecache_t *cache,
         }
     }
     else if (response_code == 404 || response_code == 410 || res == CURLE_PARTIAL_FILE) {
+
         /*  If two bindings are in a race condition on the same file, this 
          *  can occur. Binding A does a propfind; Binding B does a propfind
          *  and the file is shown to exist. Binding A deletes the file
