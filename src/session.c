@@ -62,7 +62,7 @@ void (*const state_table [NUM_STATES][NUM_EVENTS]) (void) = {
 };
 
 // The string we pass to curl is domain:port:ip:address, so leave room
-#define IPSTR_SZ 128
+#define IPSTR_SZ 256
 // Maximum number of A records (bzw IP addresses) our domain can resolve to
 #define MAX_NODES 32
 
