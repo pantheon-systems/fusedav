@@ -1013,7 +1013,8 @@ static void increment_node_failure(char *addr, const CURLcode res, const long re
  * Non-error
  * The process_status function will return either non-retriable error, or error/success
  * A non-retriable error will not retry, others errors will retry, and non-errors will
- * not retry because they will not meet the retry criteria in the for loop check. */
+ * not retry because they will not meet the retry criteria in the for loop check. 
+ */
 bool process_status(const char *fcn_name, CURL *session, const CURLcode res, 
         const long response_code, const long elapsed_time, const int iter, 
         const char *path, bool tmp_session) {
@@ -1023,19 +1024,14 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
     stats_counter("attempts", 1);
 
     if (res != CURLE_OK) {
-        // Treat some curl failures differently than others
+        // Tag some curl failures differently than others
         if (res == CURLE_PARTIAL_FILE) {
-            non_retriable_error = true;
             print_errors(iter, "partial-file-transfer", fcn_name, res, response_code, elapsed_time, path);
-            // This error is not likely a reflection of the status of the node,
-            // but rather specific to the file being accessed. (We think it likely
-            // signals that the file was transferred to server but not to permanent storage.)
-            // So, don't retry, it's pretty certain it will have the same result.
         } else {
             print_errors(iter, "curl_failures", fcn_name, res, response_code, elapsed_time, path);
-            increment_node_failure(nodeaddr, res, response_code, elapsed_time);
-            delete_session(session, tmp_session);
         }
+        increment_node_failure(nodeaddr, res, response_code, elapsed_time);
+        delete_session(session, tmp_session);
         return non_retriable_error;
     }
 
