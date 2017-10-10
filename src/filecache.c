@@ -514,18 +514,11 @@ static void get_fresh_fd(filecache_t *cache,
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
-        if (res == CURLE_PARTIAL_FILE) {
-            // We see errors on partial file transfers. This seems to mean that the
-            // file didn't actually make it to S3. Capture this particular error,
-            // and don't send into saint mode
-            response_code = 999; // fake code to avoid accidental match
-        } else {
-            trigger_saint_event(CLUSTER_FAILURE);
-            set_dynamic_logging();
-            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: curl_easy_perform is not CURLE_OK or 500: %s",
-                funcname, curl_easy_strerror(res));
-            goto finish;
-        }
+        trigger_saint_event(CLUSTER_FAILURE);
+        set_dynamic_logging();
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: curl_easy_perform is not CURLE_OK or 500: %s",
+            funcname, curl_easy_strerror(res));
+        goto finish;
     } else {
         trigger_saint_event(CLUSTER_SUCCESS);
     }
@@ -541,9 +534,6 @@ static void get_fresh_fd(filecache_t *cache,
     // but on the close (dav_flush/release), the PUT fails and the file never makes it to the server.
     // On opening again, the server will deliver this unexpected 404. Changes for forensic-haven
     // should prevent these errors in the future (2013-08-29)
-
-    // Update: if the offload of the file to S3 fails for some reason, either a partial file
-    // transfer error, which is a curl error so res != CURLE_OK, or a 404 is returned.
 
     if (inject_error(filecache_error_fresh400)) response_code = 400;
 
@@ -728,7 +718,7 @@ static void get_fresh_fd(filecache_t *cache,
             stats_timer("exceeded-time-small-GET-latency", elapsed_time);
         }
     }
-    else if (response_code == 404 || response_code == 410 || res == CURLE_PARTIAL_FILE) {
+    else if (response_code == 404 || response_code == 410) {
 
         /*  If two bindings are in a race condition on the same file, this 
          *  can occur. Binding A does a propfind; Binding B does a propfind
@@ -736,20 +726,10 @@ static void get_fresh_fd(filecache_t *cache,
          *  then Binding B tries to access it and the server returns 404.
          *  Not sure how to remediate without doing way more work and
          *  introducing way more problems than the fix will fix.
-         *  If a file doesn't make it to S3, fusedav often sees 'partial file transfer'
-         *  In this case, treat more or less like a 404. The problem is that
-         *  Valhalla Cassandra will think the file exists, and only fail when
-         *  it tries to get content from S3. This will happen on each request
-         *  for the file.
          */
         struct stat_cache_value *value;
-        if (res == CURLE_PARTIAL_FILE) {
-            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns 404-partial file transfer.", 
-                    funcname, path);
-        } else {
-            g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns %ld.", 
-                    funcname, path, response_code);
-        }
+        g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns %ld.", 
+                funcname, path, response_code);
         /* we get a 404 because the stat_cache returned that the file existed, but it
          * was not on the server. Deleting it from the stat_cache makes the stat_cache
          * consistent, so the next access to the file will be handled correctly.
