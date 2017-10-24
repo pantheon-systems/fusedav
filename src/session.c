@@ -238,6 +238,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
         const CURLcode res, const long response_code, const long elapsed_time, const char *path) {
     char *error_str = NULL;
     bool slow_request = false;
+    float samplerate = 1.0;
 
     if (res != CURLE_OK) {
         asprintf(&error_str, "%s :: %s", curl_errorbuffer(res), "no rc");
@@ -250,7 +251,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
 
     // Stats log for all errors
     // Distinguish curl from 500-status failures from slow requests
-    stats_counter(type_str, 1);
+    stats_counter(type_str, 1, samplerate);
     log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
         "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s",
         fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
@@ -261,12 +262,12 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
         asprintf(&failure_str, "%d_failures", iter + 1);
 
         // Is this the first, second, or third failure for this request?
-        stats_counter(failure_str, 1);
+        stats_counter(failure_str, 1, samplerate);
 
         free(failure_str);
 
         // Total failures
-        stats_counter("failures", 1);
+        stats_counter("failures", 1, samplerate);
     }
 
     free(error_str);
@@ -490,11 +491,12 @@ void action_s2_e2 (void) {
 void action_s2_e3 (void) {}
 void action_s3_e1 (void) {
     struct timespec now;
+    float samplerate = 1.0;
     clock_gettime(CLOCK_MONOTONIC, &now);
     failure_timestamp = now.tv_sec;
     try_release_request_outstanding();
     saint_state = STATE_SAINT_MODE;
-    stats_counter_cluster("saint_mode", 1);
+    stats_counter_cluster("saint_mode", 1, samplerate);
     log_print(LOG_NOTICE, SECTION_ENHANCED, "Setting cluster saint mode for %lu seconds.", saint_mode_duration);
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
 }
@@ -507,12 +509,13 @@ void action_s3_e3 (void) {
 
 void trigger_saint_mode_expired_if_needed(void) {
     struct timespec now;
+    float samplerate = 1.0;
     clock_gettime(CLOCK_MONOTONIC, &now);
     if (saint_state == STATE_SAINT_MODE && now.tv_sec >= failure_timestamp + saint_mode_duration) {
         state_table[saint_state][SAINT_MODE_DURATION_EXPIRED]();
         // If we've been in saintmode for longer than saint_mode_warning_threshold, emit a stat saying so.
         if (now.tv_sec >= unhealthy_since_timestamp + saint_mode_warning_threshold) {
-            stats_counter_cluster("long_running_saint_mode", 1);
+            stats_counter_cluster("long_running_saint_mode", 1, samplerate);
             log_print(LOG_INFO, SECTION_ENHANCED, "saint_mode active for %d seconds", now.tv_sec-unhealthy_since_timestamp);
         }
     }
@@ -1020,8 +1023,9 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
         const char *path, bool tmp_session) {
 
     bool non_retriable_error = false; // default to retry
+    float samplerate = 1.0;
 
-    stats_counter("attempts", 1);
+    stats_counter("attempts", 1, samplerate);
 
     if (res != CURLE_OK) {
         // Tag some curl failures differently than others
@@ -1060,7 +1064,7 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
 
     // If it wasn't an error, and it isn't the 0'th iter, then we must have failed previously and now recovered
     if (iter > 0) {
-        stats_counter("recoveries", 1);
+        stats_counter("recoveries", 1, samplerate);
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT,
             "%s: curl iter %d on path %s -- fusedav.%s.server-%s.recoveries", fcn_name, iter, path, filesystem_cluster, nodeaddr);
         increment_node_success(nodeaddr);

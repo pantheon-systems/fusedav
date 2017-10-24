@@ -19,18 +19,20 @@
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 ***/
 
+// Special sample rate for propfinds so as not to overwhelm statsd transmission
+extern float pfsamplerate;
 
 int stats_init(const char *domain, const char *port);
 int stats_close(void);
-int stats_counter(const char *statname, const int value);
-int stats_counter_cluster(const char *statname, const int value);
-int stats_counter_local(const char *statname, const int value);
+int stats_counter(const char *statname, const int value, float samplerate);
+int stats_counter_cluster(const char *statname, const int value, float samplerate);
+int stats_counter_local(const char *statname, const int value, float samplerate);
 int stats_gauge(const char *statname, const int value);
 int stats_gauge_cluster(const char *statname, const int value);
 int stats_gauge_local(const char *statname, const int value);
 int stats_timer(const char *statname, const int value);
 int stats_timer_cluster(const char *statname, const int value);
 int stats_timer_local(const char *statname, const int value);
-int stats_histo(const char *statname, const int value, const int max);
+int stats_histo(const char *statname, const int value, const int max, float samplerate);
 
 #endif
