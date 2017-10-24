@@ -539,7 +539,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
 
 finish:
     asprintf(&description, "%s-propfinds", last_updated > 0 ? "progressive" : "complete");
-    stats_counter(description, 1);
+    stats_counter(description, 1, pfsamplerate);
     free(description);
     XML_ParserFree(parser);
     return ret;

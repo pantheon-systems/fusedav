@@ -588,6 +588,7 @@ static void get_fresh_fd(filecache_t *cache,
         char old_filename[PATH_MAX];
         const char *sz;
         bool unlink_old = false;
+        float samplerate = 1.0; // always sample stat
 
         if (pdata == NULL) {
             *pdatap = calloc(1, sizeof(struct filecache_pdata));
@@ -654,7 +655,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xlg_timing);
             count = FETCH(filecache_get_xlg_count);
             sz = "XLG";
-            stats_counter("large-gets", 1);
+            stats_counter("large-gets", 1, samplerate);
             stats_timer("large-get-latency", elapsed_time);
         }
         else if (st.st_size > LG) {
@@ -663,7 +664,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_lg_timing);
             count = FETCH(filecache_get_lg_count);
             sz = "LG";
-            stats_counter("large-gets", 1);
+            stats_counter("large-gets", 1, samplerate);
             stats_timer("large-get-latency", elapsed_time);
          }
         else if (st.st_size > MED) {
@@ -672,7 +673,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_med_timing);
             count = FETCH(filecache_get_med_count);
             sz = "MED";
-            stats_counter("large-gets", 1);
+            stats_counter("large-gets", 1, samplerate);
             stats_timer("large-get-latency", elapsed_time);
         }
         else if (st.st_size > SM) {
@@ -681,7 +682,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_sm_timing);
             count = FETCH(filecache_get_sm_count);
             sz = "SM";
-            stats_counter("small-gets", 1);
+            stats_counter("small-gets", 1, samplerate);
             stats_timer("small-get-latency", elapsed_time);
         }
         else if (st.st_size > XSM) {
@@ -690,7 +691,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xsm_timing);
             count = FETCH(filecache_get_xsm_count);
             sz = "XSM";
-            stats_counter("small-gets", 1);
+            stats_counter("small-gets", 1, samplerate);
             stats_timer("small-get-latency", elapsed_time);
         }
         else {
@@ -699,7 +700,7 @@ static void get_fresh_fd(filecache_t *cache,
             latency = FETCH(filecache_get_xxsm_timing);
             count = FETCH(filecache_get_xxsm_count);
             sz = "XXSM";
-            stats_counter("small-gets", 1);
+            stats_counter("small-gets", 1, samplerate);
             stats_timer("small-get-latency", elapsed_time);
         }
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "put_fresh_fd: GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
@@ -708,13 +709,13 @@ static void get_fresh_fd(filecache_t *cache,
         if (st.st_size >= LG && elapsed_time > large_time_allotment) {
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_fresh_fd: large (%lu) GET for %s exceeded time allotment %lu with %lu",
                 st.st_size, path, large_time_allotment, elapsed_time);
-            stats_counter("exceeded-time-large-GET-count", 1);
+            stats_counter("exceeded-time-large-GET-count", 1, samplerate);
             stats_timer("exceeded-time-large-GET-latency", elapsed_time);
         }
         else if (st.st_size < LG && elapsed_time > small_time_allotment) {
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_fresh_fd: small (%lu) GET for %s exceeded time allotment %lu with %lu",
                 st.st_size, path, small_time_allotment, elapsed_time);
-            stats_counter("exceeded-time-small-GET-count", 1);
+            stats_counter("exceeded-time-small-GET-count", 1, samplerate);
             stats_timer("exceeded-time-small-GET-latency", elapsed_time);
         }
     }
@@ -1015,8 +1016,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     CURLcode res = CURLE_OK;
     // Not to exceed time for operation, else it's an error. Allow large files a longer time
     // Somewhat arbitrary
-    static const unsigned small_time_allotment = 2000; // 2 seconds
+    static const unsigned small_time_allotment = 4000; // 4 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
+    float samplerate = 1.0; // always sample stats
 
     BUMP(filecache_return_etag);
 
@@ -1140,7 +1142,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xlg_timing);
             count = FETCH(filecache_put_xlg_count);
             sz = "XLG";
-            stats_counter("large-puts", 1);
+            stats_counter("large-puts", 1, samplerate);
             stats_timer("large-put-latency", elapsed_time);
         }
         else if (st.st_size > LG) {
@@ -1149,7 +1151,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_lg_timing);
             count = FETCH(filecache_put_lg_count);
             sz = "LG";
-            stats_counter("large-puts", 1);
+            stats_counter("large-puts", 1, samplerate);
             stats_timer("large-put-latency", elapsed_time);
          }
         else if (st.st_size > MED) {
@@ -1158,7 +1160,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_med_timing);
             count = FETCH(filecache_put_med_count);
             sz = "MED";
-            stats_counter("large-puts", 1);
+            stats_counter("large-puts", 1, samplerate);
             stats_timer("large-put-latency", elapsed_time);
         }
         else if (st.st_size > SM) {
@@ -1167,7 +1169,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_sm_timing);
             count = FETCH(filecache_put_sm_count);
             sz = "SM";
-            stats_counter("small-puts", 1);
+            stats_counter("small-puts", 1, samplerate);
             stats_timer("small-put-latency", elapsed_time);
         }
         else if (st.st_size > XSM) {
@@ -1176,7 +1178,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xsm_timing);
             count = FETCH(filecache_put_xsm_count);
             sz = "XSM";
-            stats_counter("small-puts", 1);
+            stats_counter("small-puts", 1, samplerate);
             stats_timer("small-put-latency", elapsed_time);
         }
         else {
@@ -1185,7 +1187,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             latency = FETCH(filecache_put_xxsm_timing);
             count = FETCH(filecache_put_xxsm_count);
             sz = "XXSM";
-            stats_counter("small-puts", 1);
+            stats_counter("small-puts", 1, samplerate);
             stats_timer("small-put-latency", elapsed_time);
         }
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: PUT on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
@@ -1194,13 +1196,13 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         if (st.st_size >= LG && elapsed_time > large_time_allotment) {
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: large (%lu) PUT for %s exceeded time allotment %lu with %lu",
                 funcname, st.st_size, path, large_time_allotment, elapsed_time);
-            stats_counter("exceeded-time-large-PUT-count", 1);
+            stats_counter("exceeded-time-large-PUT-count", 1, samplerate);
             stats_timer("exceeded-time-large-PUT-latency", elapsed_time);
         }
         else if (st.st_size < LG && elapsed_time > small_time_allotment) {
             log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: small (%lu) PUT for %s exceeded time allotment %lu with %lu",
                 funcname, st.st_size, path, small_time_allotment, elapsed_time);
-            stats_counter("exceeded-time-small-PUT-count", 1);
+            stats_counter("exceeded-time-small-PUT-count", 1, samplerate);
             stats_timer("exceeded-time-small-PUT-latency", elapsed_time);
         }
     }
