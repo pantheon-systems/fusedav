@@ -777,6 +777,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         }
     } else {
         stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "get_stat: Negative cache on: %s : %s : %lu",
+            path, parent_path, parent_children_update_ts);
         BUMP(propfind_negative_cache);
     }
 
