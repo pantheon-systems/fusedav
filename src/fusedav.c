@@ -74,21 +74,22 @@ static G_DEFINE_QUARK("FUSEDAV", fusedav)
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
     GError *gerr = *pgerr;
+    float samplerate = 1.0; // Always sample these stats
 
     log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s",
         prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
     ret = -gerr->code;
     if (gerr->code == ENOENT) {
-        stats_counter("error-ENOENT", 1);
+        stats_counter("error-ENOENT", 1, samplerate);
     }
     else if (gerr->code == ENETDOWN) {
-        stats_counter("error-ENETDOWN", 1);
+        stats_counter("error-ENETDOWN", 1, samplerate);
     }
     else if (gerr->code == EIO) {
-        stats_counter("error-EIO", 1);
+        stats_counter("error-EIO", 1, samplerate);
     }
     else {
-        stats_counter("error-OTHER", 1);
+        stats_counter("error-OTHER", 1, samplerate);
     }
     g_clear_error(pgerr);
 
@@ -110,6 +111,7 @@ static int simple_propfind_with_redirect(
     // Alert on propfind taking longer than 4 seconds. This is rather arbitrary.
     static const unsigned propfind_time_allotment = 4000; // 4 seconds
     int ret;
+    float samplerate = 1.0; // Always sample these stats
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: Performing (%s) PROPFIND of depth %d on path %s.", 
             last_updated > 0 ? "progressive" : "complete", depth, path);
@@ -118,12 +120,12 @@ static int simple_propfind_with_redirect(
     ret = simple_propfind(path, depth, last_updated, result_callback, userdata, &subgerr);
     clock_gettime(CLOCK_MONOTONIC, &now);
     elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
-    stats_counter("propfind-count", 1);
+    stats_counter("propfind-count", 1, samplerate);
     stats_timer("propfind-latency", elapsed_time);
     if (elapsed_time > propfind_time_allotment) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded time allotment of %u ms; took %u ms.",
             last_updated > 0 ? "progressive" : "complete", propfind_time_allotment, elapsed_time);
-        stats_counter("exceeded-time-propfind-count", 1);
+        stats_counter("exceeded-time-propfind-count", 1, samplerate);
         stats_timer("exceeded-time-propfind-latency", elapsed_time);
     }
     if (subgerr) {
@@ -682,7 +684,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
         GError *subgerr = NULL;
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
-        stats_counter_local("propfind-root", 1);
+        stats_counter_local("propfind-root", 1, pfsamplerate);
         ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL, &subgerr);
         if (subgerr) {
             // Delete from cache on error; ignore errors from stat_cache_delete since we already have one
@@ -758,12 +760,12 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
 
     time_since = time(NULL) - parent_children_update_ts;
     // Keep stats for each second 0-6, then bucket everything over 6
-    stats_histo("profind_ttl", time_since, 6);
+    stats_histo("profind_ttl", time_since, 6, pfsamplerate);
     // If the parent directory is out of date, update it.
     if (time_since > STAT_CACHE_NEGATIVE_TTL) {
         GError *subgerr = NULL;
 
-        stats_counter_local("propfind-nonnegative-cache", 1);
+        stats_counter_local("propfind-nonnegative-cache", 1, pfsamplerate);
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: Calling update_directory: %s; attempt_progressive_update will be %d",
             parent_path, (parent_children_update_ts > 0));
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
@@ -774,7 +776,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             goto fail;
         }
     } else {
-        stats_counter_local("propfind-negative-cache", 1);
+        stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
         BUMP(propfind_negative_cache);
     }
 
