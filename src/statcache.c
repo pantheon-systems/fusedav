@@ -39,6 +39,8 @@
 #define CACHE_TIMEOUT 3
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+// Define and initialize pfsamplerate, which will be used across files
+float pfsamplerate = 0.1;
 
 struct stat_cache_entry {
     const char *key;
@@ -237,7 +239,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     /*  We can miss in the cache... */
     if (value == NULL) {
         log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_value_get: miss on path: %s", path);
-        stats_counter("statcache_miss", 1);
+        stats_counter("statcache_miss", 1, pfsamplerate);
         return NULL;
     }
 
@@ -259,7 +261,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         time_since = current_time - value->updated;
 
         // Keep stats for each second 0-6, then bucket everything over 6
-        stats_histo("sc_value_get", time_since, 6);
+        stats_histo("sc_value_get", time_since, 6, pfsamplerate);
         if (time_since > CACHE_TIMEOUT) {
             char *directory;
             time_t directory_updated;
@@ -271,19 +273,19 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
             directory = path_parent(path);
             if (directory == NULL) {
                 log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry for directory %s is NULL.", path);
-                stats_counter("statcache_stale", 1);
+                stats_counter("statcache_stale", 1, pfsamplerate);
                 return NULL;
             }
 
             directory_updated = stat_cache_read_updated_children(cache, directory, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_value_get: ");
-                stats_counter("statcache_stale", 1);
+                stats_counter("statcache_stale", 1, pfsamplerate);
                 return NULL;
             }
             time_since = current_time - directory_updated;
             // Keep stats for each second 0-6, then bucket everything over 6
-            stats_histo("sc_dir_update", time_since, 6);
+            stats_histo("sc_dir_update", time_since, 6, pfsamplerate);
             log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Directory contents for %s are %lu seconds old.", 
                     directory, time_since);
             free(directory);
@@ -291,13 +293,13 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                 log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: %s is too old (%lu seconds).", 
                         path, time_since);
                 free(value);
-                stats_counter("statcache_stale", 1);
+                stats_counter("statcache_stale", 1, pfsamplerate);
                 return NULL;
             } else {
-                stats_counter("statcache_fresh_dir", 1);
+                stats_counter("statcache_fresh_dir", 1, pfsamplerate);
             }
         } else {
-            stats_counter("statcache_fresh_file", 1);
+            stats_counter("statcache_fresh_file", 1, pfsamplerate);
         }
     }
 
@@ -315,7 +317,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     }
 
     /*  If we neither miss nor return stale, we 'hit'. E.g. 'fresh' is also a 'hit' */
-    stats_counter("statcache_hit", 1);
+    stats_counter("statcache_hit", 1, pfsamplerate);
     return value;
 }
 
