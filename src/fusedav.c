@@ -190,14 +190,12 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     memset(&value, 0, sizeof(struct stat_cache_value));
     value.st = st;
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", 
-            funcname, path, status_code);
+    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", funcname, path, status_code);
 
     if (status_code == 410) {
         struct stat_cache_value *existing;
 
-        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: DELETE %s (%lu)", 
-                funcname, path, status_code);
+        log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: DELETE %s (%lu)", funcname, path, status_code);
         existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
         if (subgerr1) {
             g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
@@ -612,19 +610,139 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
         // else we're not skipping the freshness check and maybe the item is in the cache but just out of date
         log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Treating key as absent or expired for path %s.", path);
         return -EKEYEXPIRED;
+    } 
+    // If st_mode is 0, this is a negative (non-existing) entry
+    else if (response->st.st_mode == 0) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat_from_cache: negative entry response from stat_cache_value_get for path %s.", path);
+        return -ENOENT;
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache: Got response from stat_cache_value_get for path %s.", path);
     *stbuf = response->st;
     print_stat(stbuf, "stat_cache_value_get response");
     free(response);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache(%s, stbuf, %d): returns %s", path, skip_freshness_check, stbuf->st_mode ? "0" : "ENOENT");
-    if (stbuf->st_mode == 0 || inject_error(fusedav_error_statstmode)) {
-        g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat_from_cache: stbuf mode is 0: ");
-        return -1;
-    }
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "get_stat_from_cache(%s, stbuf, %d)", path, skip_freshness_check);
+ 
     return 0;
+}
 
+// A negative entry is an item in the cache which represents a miss,
+// so we can cache its non-existence and regulate how often
+// we make a propfind request to the server to check if it has
+// come into existence.
+static bool is_negative_entry(struct stat_cache_value value) {
+    // The struct stat st gets zero'ed out when we put a negative entry in the cache.
+    // If an extant item is put in the cache, at st_mode will be non-zero.
+    // So use st_mode as our check for non-existence
+    if (value.st.st_mode == 0) return true;
+    else return false;
+}
+
+// If its a nonnegative entry and outside the TTL, even if 0, then needs_propfind is true
+// If its a negative entry, then the TTL is a fibonacci sequence
+static bool requires_propfind(const char *path, time_t time_since, GError **gerr) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+    const char *funcname = "requires_propfind";
+    struct stat_cache_value *value = NULL;
+    bool skip_freshness_check = true;
+    GError *subgerr = NULL;
+    // If you change the length of fibs, change the value of fibs_last_element
+    // A negative entry will gradually wait longer and longer to retry until
+    // about 10 minutes (610 seconds); then every 610 seconds thereafter
+    static const int fibs[] = {0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610};
+    static const int fibs_last_element = 14;
+
+    // Get the entry
+    value = stat_cache_value_get(config->cache, path, skip_freshness_check, &subgerr);
+
+    // Check for error and return
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+        return true;
+    }
+
+    // If a value was returned from the stat cache ...
+    if (value != NULL) {
+        // And the path exists in the cache ...
+        if (!is_negative_entry(*value)) {
+            // Requested path exists as non-negative entry.
+            // If stale, (time_since > STAT_CACHE_NEGATIVE_TTL) return true
+            // Otherwise, return false
+            // If TTL is 0, this still works.
+            // NB Given our current configuration, I don't think we can see
+            // a non-stale real (nonnegative) value. All non-stale real
+            // values will have been returned as fresh before this gets called.
+            bool stale = time_since > STAT_CACHE_NEGATIVE_TTL;
+            if (stale) {
+                stats_counter_local("propfind-nonnegative-cache", 1, pfsamplerate);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: true on non-negative entry %s", funcname, path);
+            } else {
+                stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
+                BUMP(propfind_negative_cache);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: false on non-negative %s", funcname, path);
+            }
+            return stale;
+        } 
+        // The value was tagged as a negative (non-existent) value ...
+        else {
+            time_t current_time = time(NULL);
+            time_t next_time = value->updated + fibs[value->negative_value.negative_value.propfinds_made];
+
+            // Our "time to next propfind" is still in the future, so no propfind ...
+            if (next_time > current_time) {
+                stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
+                BUMP(propfind_negative_cache);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: false on negative entry %s", funcname, path);
+                return false;
+            } else {
+                // Time for a new propfind
+                stats_counter_local("propfind-negative-ttl-expired", 1, pfsamplerate);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: true on negative entry %s", funcname, path);
+
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s; new propfind for path: %s, pm: %d", 
+                        funcname, path, value->negative_value.negative_value.propfinds_made);
+
+                // Cap propfinds_made at index of last element in fibs array
+                if (value->negative_value.negative_value.propfinds_made < fibs_last_element) {
+                    value->negative_value.negative_value.propfinds_made++;
+                }
+
+                // Put it back in the stat cache with the updated profinds_made value
+                // This will also update the updated field
+                stat_cache_value_set(config->cache, path, value, &subgerr);
+                // Check for error and return
+                if (subgerr) {
+                    g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+                    return true;
+                }
+                return true;
+            }
+        }
+    } else {
+        // No value. We haven't previously cached its non-existence, so assume
+        // this is the first attempt at this item
+
+        // We could malloc value, but instead just follow the pattern we use everywhere else
+        struct stat_cache_value newvalue;
+
+        stats_counter_local("propfind-nonnegative-cache", 1, pfsamplerate);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: true on new entry %s", funcname, path);
+
+        // A negative value has no values in fields, and st_mode as 0 is our 
+        // sentinel for negative value, so initialize to all zero
+        // Its propfinds_made field will also be zero'ed, which is correct
+        memset(&newvalue, 0, sizeof(struct stat_cache_value));
+        // Put it in the stat cache. If the propfind indicates the path exists,
+        // a new entry with proper values will be created and will overwrite
+        // this entry
+        stat_cache_value_set(config->cache, path, &newvalue, &subgerr);
+        // Check for error and return
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+            return true;
+        }
+        return true;
+    }
 }
 
 static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
@@ -633,6 +751,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     GError *tmpgerr = NULL;
     time_t parent_children_update_ts;
     bool is_base_directory;
+    bool needs_propfind;
     int ret = -ENOENT;
     enum ignore_freshness skip_freshness_check = OFF;
     time_t time_since;
@@ -761,11 +880,15 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     time_since = time(NULL) - parent_children_update_ts;
     // Keep stats for each second 0-6, then bucket everything over 6
     stats_histo("profind_ttl", time_since, 6, pfsamplerate);
-    // If the parent directory is out of date, update it.
-    if (time_since > STAT_CACHE_NEGATIVE_TTL) {
+    needs_propfind = requires_propfind(path, time_since, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
+        goto fail;
+    }
+
+    if (needs_propfind) {
         GError *subgerr = NULL;
 
-        stats_counter_local("propfind-nonnegative-cache", 1, pfsamplerate);
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: Calling update_directory: %s; attempt_progressive_update will be %d",
             parent_path, (parent_children_update_ts > 0));
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
@@ -775,10 +898,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
             goto fail;
         }
-    } else {
-        stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
-        BUMP(propfind_negative_cache);
-    }
+    } 
 
     // Try again to hit the file in the stat cache.
     skip_freshness_check = ALREADY_FRESH;
@@ -786,6 +906,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     if (tmpgerr) {
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
+        goto fail;
+    } else if (ret == -ENOENT) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: ENOENT from get_stat_from_cache on %s", path);
+        g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat: ENOENT");
         goto fail;
     }
     if (ret == 0) goto finish;
