@@ -53,12 +53,30 @@ struct stat_cache_iterator {
     size_t key_prefix_len;
 };
 
+// For values which have been requested but don't exist in the cache
+// Make this a structure so that if we need more fields in the
+// future, we will have the facility to add them.
+struct stat_cache_negative_value {
+    // Track the number of times a propfind has returned ENOENT on this path
+    time_t propfinds_made;
+};
+
+// For values which exist in the cache
 struct stat_cache_value {
     struct stat st;
     unsigned long local_generation;
     time_t updated;
+    // Unused
     bool prepopulated; // Added to the local cache; not from the server.
-    char remote_generation[RGEN_LEN];
+    // We aren't using remote_generation, so reuse the field
+    // Since the items we store in the cache are all of a size
+    // which included remote_generation, leave it in.
+    // Make sure struct stat_cache_negative_value never exceeds
+    // RGEN_LEN in length.
+    union {
+        char remote_generation[RGEN_LEN];
+        struct stat_cache_negative_value negative_value;
+    } negative_value;
 };
 
 void stat_cache_print_stats(void);
@@ -80,7 +98,8 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation, GError **gerr);
 
 void stat_cache_walk(void);
-int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path_prefix, const char *filename, void *user), void *user, bool force);
+int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path_prefix, 
+            const char *filename, void *user), void *user, bool force);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 void stat_cache_prune(stat_cache_t *cache);
 

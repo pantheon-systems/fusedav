@@ -242,6 +242,13 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         stats_counter("statcache_miss", 1, pfsamplerate);
         return NULL;
     }
+    // If this is a negative entry, we need to return the value so the entry can be processed
+    else if (value->st.st_mode == 0) {
+        log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_value_get: negative entry on path: %s", path);
+        stats_counter("statcache_negative_entry", 1, pfsamplerate);
+        print_stat(&value->st, "stat_cache_value_get");
+        return value;
+    }
 
     if (vallen != sizeof(struct stat_cache_value)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
@@ -635,8 +642,11 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     while ((entry = stat_cache_iter_current(iter))) {
         log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "key: %s", entry->key);
         log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "fn: %s", entry->key + (iter->key_prefix_len - 1));
-        f(path_prefix, entry->key + (iter->key_prefix_len - 1), user);
-        ++found_entries;
+        // Ignore negative (non-existent) entries, those tagged with st_mode == 0
+        if (entry->value->st.st_mode != 0) {
+            f(path_prefix, entry->key + (iter->key_prefix_len - 1), user);
+            ++found_entries;
+        }
         free(entry);
         stat_cache_iter_next(iter);
     }
@@ -680,8 +690,11 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
 
     iter = stat_cache_iter_init(cache, path);
     if ((entry = stat_cache_iter_current(iter))) {
-        has_children = true;
-        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
+        // Ignore negative (non-existent) entries, those tagged with st_mode == 0
+        if (entry->value->st.st_mode != 0) {
+            has_children = true;
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
+        }
         free(entry);
     }
     stat_cache_iterator_free(iter);
@@ -700,16 +713,19 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
-        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
-            entry->key, minimum_local_generation, entry->value->local_generation);
-        if (entry->value->local_generation < minimum_local_generation) {
-            stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
-            ++deleted_entries;
-            if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
-                free(entry);
-                stat_cache_iterator_free(iter);
-                return;
+        // Ignore negative (non-existent) entries, those tagged with st_mode == 0
+        if (entry->value->st.st_mode != 0) {
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
+                entry->key, minimum_local_generation, entry->value->local_generation);
+            if (entry->value->local_generation < minimum_local_generation) {
+                stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
+                ++deleted_entries;
+                if (tmpgerr) {
+                    g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
+                    free(entry);
+                    stat_cache_iterator_free(iter);
+                    return;
+                }
             }
         }
         free(entry);
