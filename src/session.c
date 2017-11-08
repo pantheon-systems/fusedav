@@ -432,11 +432,11 @@ static int session_debug(__unused CURL *handle, curl_infotype type, char *data, 
             // We want to see the "Trying <ip addr> message, but the others only when in some
             // level of debug
             if (strstr(msg, "Trying")) {
-                log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
+                log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
                 print_ipaddr_pair(msg);
             }
             else {
-                log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
+                log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "cURL: %s", msg);
             }
             free(msg);
         }
