@@ -433,6 +433,31 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     return;
 }
 
+// Create a new negative entry in the stat cache for a deleted or non-existent object
+void stat_cache_negative_entry(stat_cache_t *cache, const char *path, GError **gerr) {
+    static const char *funcname = "stat_cache_negative_entry";
+    struct stat_cache_value newvalue;
+    GError *subgerr = NULL ;
+
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: true on new entry %s", funcname, path);
+
+    // A negative value has no values in fields, and st_mode as 0 is our 
+    // sentinel for negative value, so initialize to all zero
+    // Its propfinds_made field will also be zero'ed, which is correct
+    memset(&newvalue, 0, sizeof(struct stat_cache_value));
+    // Put it in the stat cache. If the subsequent propfind indicates the path exists,
+    // a new entry with proper values will be created and will overwrite
+    // this entry
+    stat_cache_value_set(cache, path, &newvalue, &subgerr);
+
+    // Check for error and return
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: failed setting new negative entry", funcname);
+    }
+
+    return;
+}
+
 void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
     leveldb_writeoptions_t *options;
     char *key;

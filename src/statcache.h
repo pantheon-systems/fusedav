@@ -93,6 +93,7 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
 void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr);
 void stat_cache_value_free(struct stat_cache_value *value);
 
+void stat_cache_negative_entry(stat_cache_t *cache, const char* path, GError **gerr);
 void stat_cache_delete(stat_cache_t *cache, const char* path, GError **gerr);
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr);
 void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation, GError **gerr);
