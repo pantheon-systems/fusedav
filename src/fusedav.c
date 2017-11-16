@@ -211,7 +211,6 @@ static void create_path_on_propfind(const char *path, struct stat st, GError **g
     // Copy st data into the value object
     value.st = st;
 
-
     log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: Removing path: %s", funcname, path);
     stat_cache_value_set(config->cache, path, &value, &subgerr1);
     // If we need to combine 2 errors, use one of the error messages in the propagated prefix
