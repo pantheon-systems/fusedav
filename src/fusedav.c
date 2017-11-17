@@ -211,7 +211,7 @@ static void create_path_on_propfind(const char *path, struct stat st, GError **g
     // Copy st data into the value object
     value.st = st;
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: Removing path: %s", funcname, path);
+    log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: Adding path: %s", funcname, path);
     stat_cache_value_set(config->cache, path, &value, &subgerr1);
     // If we need to combine 2 errors, use one of the error messages in the propagated prefix
     if (subgerr1 && subgerr2) {
@@ -225,6 +225,7 @@ static void create_path_on_propfind(const char *path, struct stat st, GError **g
     }
 
 }
+
 static void getdir_propfind_callback(__unused void *userdata, const char *path, struct stat st,
     unsigned long status_code, GError **gerr) {
 
@@ -236,13 +237,15 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", funcname, path, status_code);
 
     // 1. See if we have an item in the local cache
+    // It might be a positive (existing) entry, or a negative (non-existent) one
     existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
     if (subgerr1) {
         g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
         return;
     }
 
-    /* Binding A does a propfind.
+    /* Notes on dual-binding race conditions and odd 404s
+     * Binding A does a propfind.
      * Binding B does a propfind on a path with multiple directories.
      * Say, /abcdir. Binding B starts the propfind at /, and abcdir
      * still exists. Then Binding A deletes the directory abcdir.
@@ -278,7 +281,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         if (status_code != 410) {
             // I don't see how we can get ctime == 0 and status code other than 410
             log_print(LOG_ERR, SECTION_FUSEDAV_PROP, 
-                    "%s: unexpected status code on propfind with st_ctime == 0: %ul on %s",
+                    "%s: unexpected status code on propfind with st_ctime == 0: %lu on %s",
                     funcname, status_code, path);
             g_set_error(gerr, fusedav_quark(), EINVAL, 
                     "%s: Unexpected ctime as 0 but status_code not 410 (%lu)", funcname, status_code);
@@ -324,7 +327,9 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         long response_code = 500; // seed it as bad so we can enter the loop
         CURLcode res = CURLE_OK;
 
-        free(existing);
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                "%s: Updated equals ctime, making HEAD request: %s (%lu %lu)", 
+                funcname, path, existing->updated, st.st_ctime);
 
         for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
             bool tmp_session = true;
@@ -341,7 +346,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             curl_easy_setopt(session, CURLOPT_NOBODY, 1);
 
             log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
-                    "%s: saw 410; calling HEAD on %s", funcname, path);
+                    "%s: saw %lu; calling HEAD on %s", funcname, status_code, path);
             timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
             bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
@@ -369,7 +374,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         // making a new negative entry is not harmful.
         if (response_code >= 400 && response_code < 500) {
             log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
-                    "%s: saw %ul; executed HEAD; file doesn't exist: %s", 
+                    "%s: saw %lu; executed HEAD; file doesn't exist: %s", 
                     funcname, status_code, path);
             delete_path_on_propfind(path, &subgerr1);
             if (subgerr1) {
@@ -382,7 +387,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         else {
             if (response_code >= 200 && response_code < 300) {
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
-                        "%s: saw %ul; executed HEAD; file exists: %s", 
+                        "%s: saw %lu; executed HEAD; file exists: %s", 
                         funcname, status_code, path);
                 create_path_on_propfind(path, st, &subgerr1);
                 if (subgerr1) {
@@ -403,10 +408,13 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
      * what propfind gives us. On 410 delete, even if what exists is already
      * a negative entry; otherwise, create, even if what already exists is a
      * positive entry.
+     *
      * Since we're unconditionally creating or deleting regardless of what is
      * existing, we can use this code whether or not there is an existing item
      */
     else {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_PROP, "%s: status_code: %lu; normal case, deleting or creating: %s", 
+                funcname, status_code, path);
         if (status_code == 410) {
             delete_path_on_propfind(path, &subgerr1);
             if (subgerr1) {
@@ -708,18 +716,6 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
     return 0;
 }
 
-// A negative entry is an item in the cache which represents a miss,
-// so we can cache its non-existence and regulate how often
-// we make a propfind request to the server to check if it has
-// come into existence.
-static bool is_negative_entry(struct stat_cache_value value) {
-    // The struct stat st gets zero'ed out when we put a negative entry in the cache.
-    // If an extant item is put in the cache, at st_mode will be non-zero.
-    // So use st_mode as our check for non-existence
-    if (value.st.st_mode == 0) return true;
-    else return false;
-}
-
 // If its a nonnegative entry and outside the TTL, even if 0, then needs_propfind is true
 // If its a negative entry, then the TTL is a fibonacci sequence
 static bool requires_propfind(const char *path, time_t time_since, GError **gerr) {
@@ -746,7 +742,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
     // If a value was returned from the stat cache ...
     if (value != NULL) {
         // And the path exists in the cache ...
-        if (!is_negative_entry(*value)) {
+        if (!stat_cache_is_negative_entry(*value)) {
             // Requested path exists as non-negative entry.
             // If stale, (time_since > STAT_CACHE_NEGATIVE_TTL) return true
             // Otherwise, return false
@@ -768,35 +764,32 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
         // The value was tagged as a negative (non-existent) value ...
         else {
             time_t current_time = time(NULL);
-            time_t next_time = value->updated + fibs[value->negative_value.negative_value.propfinds_made];
+            time_t next_time;
+
+            // Check that we haven't passed the length of the fibs array
+            if (value->negative_value.negative_value.propfinds_made > fibs_last_element) {
+                value->negative_value.negative_value.propfinds_made = fibs_last_element;
+            }
+            // Use the fibs value to decide when the next propfind is due
+            next_time = value->updated + fibs[value->negative_value.negative_value.propfinds_made];
 
             // Our "time to next propfind" is still in the future, so no propfind ...
             if (next_time > current_time) {
                 stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
                 BUMP(propfind_negative_cache);
-                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: false on negative entry %s", funcname, path);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, 
+                        "%s: no propfind needed yet on negative entry %s", funcname, path);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
+                        "%s: no propfind needed yet on negative entry %s; now:next:upd:made--%lu:%lu:%lu:%d", 
+                        funcname, path, current_time, next_time, value->updated, 
+                        value->negative_value.negative_value.propfinds_made);
                 return false;
             } else {
                 // Time for a new propfind
                 stats_counter_local("propfind-negative-ttl-expired", 1, pfsamplerate);
-                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: true on negative entry %s", funcname, path);
-
                 log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s; new propfind for path: %s, pm: %d", 
                         funcname, path, value->negative_value.negative_value.propfinds_made);
 
-                // Cap propfinds_made at index of last element in fibs array
-                if (value->negative_value.negative_value.propfinds_made < fibs_last_element) {
-                    value->negative_value.negative_value.propfinds_made++;
-                }
-
-                // Put it back in the stat cache with the updated profinds_made value
-                // This will also update the updated field
-                stat_cache_value_set(config->cache, path, value, &subgerr);
-                // Check for error and return
-                if (subgerr) {
-                    g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
-                    return true;
-                }
                 return true;
             }
         }
@@ -805,13 +798,6 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
         // this is the first attempt at this item
 
         stats_counter_local("propfind-nonnegative-cache", 1, pfsamplerate);
-        stat_cache_negative_entry(config->cache, path, &subgerr);
-
-        // Check for error and return
-        if (subgerr) {
-            g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
-            return true;
-        }
         return true;
     }
 }

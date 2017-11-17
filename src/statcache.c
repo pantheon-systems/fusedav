@@ -433,26 +433,65 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     return;
 }
 
-// Create a new negative entry in the stat cache for a deleted or non-existent object
+// A negative entry is an item in the cache which represents a miss,
+// so we can cache its non-existence and regulate how often
+// we make a propfind request to the server to check if it has
+// come into existence.
+bool stat_cache_is_negative_entry(struct stat_cache_value value) {
+    // The struct stat st gets zero'ed out when we put a negative entry in the cache.
+    // If an extant item is put in the cache, at st_mode will be non-zero.
+    // So use st_mode as our check for non-existence
+    if (value.st.st_mode == 0) return true;
+    else return false;
+}
+
+
+// Create or update a negative entry in the stat cache for a deleted or non-existent object
 void stat_cache_negative_entry(stat_cache_t *cache, const char *path, GError **gerr) {
     static const char *funcname = "stat_cache_negative_entry";
     struct stat_cache_value newvalue;
+    struct stat_cache_value *existing = NULL;
     GError *subgerr = NULL ;
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: true on new entry %s", funcname, path);
 
     // A negative value has no values in fields, and st_mode as 0 is our 
     // sentinel for negative value, so initialize to all zero
     // Its propfinds_made field will also be zero'ed, which is correct
     memset(&newvalue, 0, sizeof(struct stat_cache_value));
+
+    existing = stat_cache_value_get(cache, path, true, &subgerr);
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: failed on stat_cache_get for %s", funcname, path);
+        return;
+    }
+
+    if (existing) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: incrementing entry %s", funcname, path);
+        // If we already have an existing value in the cache,
+        // and it is negative,
+        // transfer those value to the new entry and let it be known
+        // that yet another attempt has been made unsuccessfully to 
+        // access this item
+        if (stat_cache_is_negative_entry(*existing)) {
+            newvalue.negative_value.negative_value = existing->negative_value.negative_value;
+            // Protect against some measure of overflow; not necessary to get the exact type
+            if (newvalue.negative_value.negative_value.propfinds_made < UINT_MAX) {
+                newvalue.negative_value.negative_value.propfinds_made++;
+            }
+        }
+
+    }
+    else {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: creating entry %s", funcname, path);
+    }
+
     // Put it in the stat cache. If the subsequent propfind indicates the path exists,
-    // a new entry with proper values will be created and will overwrite
-    // this entry
+    // a new entry with proper values will be created and will overwrite this entry
     stat_cache_value_set(cache, path, &newvalue, &subgerr);
 
     // Check for error and return
     if (subgerr) {
-        g_propagate_prefixed_error(gerr, subgerr, "%s: failed setting new negative entry", funcname);
+        g_propagate_prefixed_error(gerr, subgerr, "%s: failed setting new negative entry for %s", funcname, path);
     }
 
     return;
@@ -739,6 +778,8 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
         // Ignore negative (non-existent) entries, those tagged with st_mode == 0
+        // REVIEW: Do we want to leave negative entries, since we're doing a delete,
+        // or delete them to make everything up to date?
         if (entry->value->st.st_mode != 0) {
             log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
                 entry->key, minimum_local_generation, entry->value->local_generation);
