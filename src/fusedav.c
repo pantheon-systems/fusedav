@@ -323,82 +323,91 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
      * use that.
      */
     else if (existing && existing->updated == st.st_ctime) {
-        CURL *session = NULL;
-        long response_code = 500; // seed it as bad so we can enter the loop
-        CURLcode res = CURLE_OK;
-
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
-                "%s: Updated equals ctime, making HEAD request: %s (%lu %lu)", 
-                funcname, path, existing->updated, st.st_ctime);
-
-        for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
-            bool tmp_session = true;
-            long elapsed_time = 0;
-
-            if (!(session = session_request_init(path, NULL, tmp_session)) || inject_error(fusedav_error_propfindsession)) {
-                g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
-                // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
-                try_release_request_outstanding();
-                return;
-            }
-
-            // This makes a "HEAD" call
-            curl_easy_setopt(session, CURLOPT_NOBODY, 1);
-
+        bool local_negative = stat_cache_is_negative_entry(*existing);
+        bool remote_negative = (status_code == 410);
+        if (local_negative == remote_negative) {
+            // Nothing to do
             log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
-                    "%s: saw %lu; calling HEAD on %s", funcname, status_code, path);
-            timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
-
-            bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
-            // Some errors should not be retried. (Non-errors will fail the
-            // for loop test and fall through naturally)
-            if (non_retriable_error) break;
+                    "%s: Updated equals ctime, but operations match, nothing to do : %s", funcname, path);
         }
-
-        delete_tmp_session(session);
-
-        if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
-            trigger_saint_event(CLUSTER_FAILURE);
-            set_dynamic_logging();
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: curl failed: %s : rc: %ld\n",
-                funcname, curl_easy_strerror(res), response_code);
-            // Stick with what we got, either a positive or negative entry
-            free(existing);
-            return;
-        } else {
-            trigger_saint_event(CLUSTER_SUCCESS);
-        }
-
-        // fileserver doesn't think the file exists, so delete it locally
-        // It's possible what we had locally was a negative entry, but
-        // making a new negative entry is not harmful.
-        if (response_code >= 400 && response_code < 500) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
-                    "%s: saw %lu; executed HEAD; file doesn't exist: %s", 
-                    funcname, status_code, path);
-            delete_path_on_propfind(path, &subgerr1);
-            if (subgerr1) {
-                g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
-            }
-        }
-        // fileserver thinks file exists. If we got a 410, we could just keep things the way they were.
-        // But we'd have to check that what was local wasn't a negative entry.
-        // Seems wise to just create in all cases
         else {
-            if (response_code >= 200 && response_code < 300) {
+            CURL *session = NULL;
+            long response_code = 500; // seed it as bad so we can enter the loop
+            CURLcode res = CURLE_OK;
+
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                    "%s: Updated equals ctime, making HEAD request: %s (%lu %lu)", 
+                    funcname, path, existing->updated, st.st_ctime);
+
+            for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
+                bool tmp_session = true;
+                long elapsed_time = 0;
+
+                if (!(session = session_request_init(path, NULL, tmp_session)) || inject_error(fusedav_error_propfindsession)) {
+                    g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
+                    // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
+                    try_release_request_outstanding();
+                    return;
+                }
+
+                // This makes a "HEAD" call
+                curl_easy_setopt(session, CURLOPT_NOBODY, 1);
+
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
-                        "%s: saw %lu; executed HEAD; file exists: %s", 
+                        "%s: saw %lu; calling HEAD on %s", funcname, status_code, path);
+                timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
+
+                bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, tmp_session);
+                // Some errors should not be retried. (Non-errors will fail the
+                // for loop test and fall through naturally)
+                if (non_retriable_error) break;
+            }
+
+            delete_tmp_session(session);
+
+            if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
+                trigger_saint_event(CLUSTER_FAILURE);
+                set_dynamic_logging();
+                g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: curl failed: %s : rc: %ld\n",
+                    funcname, curl_easy_strerror(res), response_code);
+                // Stick with what we got, either a positive or negative entry
+                free(existing);
+                return;
+            } else {
+                trigger_saint_event(CLUSTER_SUCCESS);
+            }
+
+            // fileserver doesn't think the file exists, so delete it locally
+            // It's possible what we had locally was a negative entry, but
+            // making a new negative entry is not harmful.
+            if (response_code >= 400 && response_code < 500) {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                        "%s: saw %lu; executed HEAD; file doesn't exist: %s", 
                         funcname, status_code, path);
-                create_path_on_propfind(path, st, &subgerr1);
+                delete_path_on_propfind(path, &subgerr1);
                 if (subgerr1) {
                     g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
                 }
             }
+            // fileserver thinks file exists. If we got a 410, we could just keep things the way they were.
+            // But we'd have to check that what was local wasn't a negative entry.
+            // Seems wise to just create in all cases
             else {
-                // On error, retain local file
-                g_set_error(gerr, fusedav_quark(), EINVAL,
-                    "%s(%s): saw %lu; HEAD returns unexpected response from curl %ld",
-                    funcname, path, status_code, response_code);
+                if (response_code >= 200 && response_code < 300) {
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+                            "%s: saw %lu; executed HEAD; file exists: %s", 
+                            funcname, status_code, path);
+                    create_path_on_propfind(path, st, &subgerr1);
+                    if (subgerr1) {
+                        g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
+                    }
+                }
+                else {
+                    // On error, retain local file
+                    g_set_error(gerr, fusedav_quark(), EINVAL,
+                        "%s(%s): saw %lu; HEAD returns unexpected response from curl %ld",
+                        funcname, path, status_code, response_code);
+                }
             }
         }
     }
