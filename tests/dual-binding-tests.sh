@@ -82,14 +82,15 @@ echo "ENTER dual-binding-tests"
 iter=1
 while [ $iter -le $iters ]
 do
+    echo; echo "TEST 1"; echo
     echo; echo "PRELIMINARY"; echo
 
     # Preliminary: remove files and dir to set a clean slate
-    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c listRbase;removefiles;listRbase;removedir;listRbase" -d "-v -c null"
+    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -c "-i 1 -c removefiles;removedir" -d "-c null"
 
     # On the first binding, make a directory, put some files in it, 
     # remove the files, then remove directory via the second binding
-    echo; echo "TEST 1"; echo
+    echo; echo "TEST"; echo
 
     # Run the real test
     $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c makedir;writefile;removefiles" -d "-v -c removedir"
@@ -101,13 +102,15 @@ do
         fail=$((fail + 1))
     fi
 
+#########################################################################
+    echo; echo "TEST 2"; echo
     echo; echo "PRELIMINARY"; echo
 
     # remove files and dir to set a clean slate
-    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c listRbase;removefiles;listRbase;removedir;listRbase" -d "-v -c null"
+    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -c "-i 1 -c removefiles;removedir" -d "-c null"
 
     # Add removefiles and removedir afterward, to clean up
-    echo; echo "TEST 2"; echo
+    echo; echo "TEST"; echo
 
     # On the first binding, make a directory, and put some files in it, then 
     # remove directory via the second binding, which should fail (use the 'f' version to pass on failure)
@@ -120,8 +123,36 @@ do
     fi
 
     iter=$((iter + 1))
+
+#########################################################################
+    echo; echo "TEST 3"; echo
+    echo; echo "PRELIMINARY"; echo
+
+    # remove files and dir to set a clean slate
+    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -c "-i 1 -c removefiles;removedir" -d "-c null"
+
+    # Add removefiles and removedir afterward, to clean up
+    echo; echo "TEST"; echo
+
+    # On the first binding, make a directory, and put some files in it, then 
+    # ls the binding, then remove some files but leave others, then ls the binding
+    # and expect to get back only the files which weren't removed
+    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c makedir;writefile" -d "-v -c removefile;removedir"
+    ret=$?
+    if [ $ret -eq 0 ]; then
+        pass=$((pass + 1))
+    else
+        fail=$((fail + 1))
+    fi
+
+    iter=$((iter + 1))
+
+#########################################################################
+
+
 done
 
+#########################################################################
 if [ $verbose -eq 1 ]; then
     endtime=$(date +%s)
     elapsedtime=$(( $endtime - $starttime ))

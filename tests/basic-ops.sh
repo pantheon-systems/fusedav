@@ -82,8 +82,11 @@ listR() {
 }
 
 makedir() {
-    echo "makedir: mkdir -p $1/$2"
-    mkdir -p $1/$2
+    echo "makedir: mkdir $1/$2"
+    if [ ! -d $1 ]; then
+	mkdir $1
+    fi
+    mkdir $1/$2
     ret=$?
     return $ret 
 }
@@ -111,6 +114,13 @@ removedir() {
 
 removefiles() {
     echo "removefiles: rm -f $1/$2/*"
+    rm -f $1/$2/*
+    ret=$?
+    return $ret 
+}
+
+removefile() {
+    echo "removefiles: rm -f $1/$2/$3-$4"
     rm -f $1/$2/*
     ret=$?
     return $ret 
@@ -234,6 +244,14 @@ for cmd in "${commands[@]}"; do
         expect_failure=1
 	echo "--Expect Failure"
         removefiles $binding $dir
+        ret=$?
+    elif [ $cmd == "removefile" ]; then
+        removefile $binding $dir $file 1
+        ret=$?
+    elif [ $cmd == "fremovefile" ]; then
+        expect_failure=1
+	echo "--Expect Failure"
+        removefile $binding $dir $file 1
         ret=$?
     elif [ $cmd == "removedir" ]; then
         removedir $binding $dir

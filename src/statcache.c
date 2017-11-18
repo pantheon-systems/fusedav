@@ -535,7 +535,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: deleting parent %s", p);
 
-        stat_cache_delete(cache, p, &tmpgerr);
+        stat_cache_negative_entry(cache, p, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
         }
@@ -549,7 +549,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
     }
     else {
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
-        stat_cache_delete(cache, path, &tmpgerr);
+        stat_cache_negative_entry(cache, path, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
         }
@@ -777,14 +777,12 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
-        // Ignore negative (non-existent) entries, those tagged with st_mode == 0
-        // REVIEW: Do we want to leave negative entries, since we're doing a delete,
-        // or delete them to make everything up to date?
+        // Not deleting, rather, inserting negative entries.
         if (entry->value->st.st_mode != 0) {
             log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
                 entry->key, minimum_local_generation, entry->value->local_generation);
             if (entry->value->local_generation < minimum_local_generation) {
-                stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
+                stat_cache_negative_entry(cache, key2path(entry->key), &tmpgerr);
                 ++deleted_entries;
                 if (tmpgerr) {
                     g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
@@ -980,7 +978,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
                     log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
-                    stat_cache_delete(cache, path, NULL);
+                    stat_cache_negative_entry(cache, path, NULL);
                 }
                 free(parentpath);
             }
@@ -1029,6 +1027,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             ++deleted_entries;
             // We recreate the basics of stat_cache_delete here, since we can't call it directly
             // since it doesn't deal with keys with "updated_children:"
+            // NB. We are not imitating stat_cache_negative_entry here
             woptions = leveldb_writeoptions_create();
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
             leveldb_writeoptions_destroy(woptions);
