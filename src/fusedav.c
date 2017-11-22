@@ -516,7 +516,6 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         }
 
         // All files in propfind list will have local_generation > min_generation and will not be subject to deletion
-        // TODO: Make each entry a negative entry
         stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -796,8 +795,10 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
             } else {
                 // Time for a new propfind
                 stats_counter_local("propfind-negative-ttl-expired", 1, pfsamplerate);
-                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s; new propfind for path: %s, pm: %d", 
-                        funcname, path, value->negative_value.negative_value.propfinds_made);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, 
+                        "%s; new propfind for path: %s, pm: %d, c/nt: %lu: %lu", 
+                        funcname, path, value->negative_value.negative_value.propfinds_made, 
+                        current_time, next_time);
 
                 return true;
             }
@@ -805,6 +806,8 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
     } else {
         // No value. We haven't previously cached its non-existence, so assume
         // this is the first attempt at this item
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s; first propfind for path: %s", 
+                funcname, path);
 
         stats_counter_local("propfind-nonnegative-cache", 1, pfsamplerate);
         return true;
@@ -815,6 +818,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     char *parent_path = NULL;
     GError *tmpgerr = NULL;
+    GError *subgerr = NULL;
     time_t parent_children_update_ts;
     bool is_base_directory;
     bool needs_propfind;
@@ -867,7 +871,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // If it's the root directory or refresh_dir_for_file_stat is false,
     // just do a single, zero-depth PROPFIND.
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
-        GError *subgerr = NULL;
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
         stats_counter_local("propfind-root", 1, pfsamplerate);
         ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL, &subgerr);
@@ -953,8 +956,6 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     }
 
     if (needs_propfind) {
-        GError *subgerr = NULL;
-
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: Calling update_directory: %s; attempt_progressive_update will be %d",
             parent_path, (parent_children_update_ts > 0));
         // If parent_children_update_ts is 0, there are no entries for updated_children in statcache
@@ -970,11 +971,27 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     skip_freshness_check = ALREADY_FRESH;
     ret = get_stat_from_cache(path, stbuf, skip_freshness_check, &tmpgerr);
     if (tmpgerr) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: error from get_stat_from_cache on %s :: %d", path, tmpgerr->code);
+        if (tmpgerr->code == ENOENT) {
+            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: ENOENT on %s; creating negative entry", path);
+            // Only need to adjust negative entry if there really was a propfind
+            if (needs_propfind) delete_path_on_propfind(path, &subgerr);
+            if (subgerr) {
+                g_propagate_prefixed_error(gerr, subgerr, "get_stat: ENOENT: ");
+                goto fail;
+            }
+        }
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: propagating error from get_stat_from_cache on %s", path);
         g_propagate_prefixed_error(gerr, tmpgerr, "get_stat: ");
         goto fail;
     } else if (ret == -ENOENT) {
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat: ENOENT from get_stat_from_cache on %s", path);
+        // Only need to adjust negative entry if there really was a propfind
+        if (needs_propfind) delete_path_on_propfind(path, &subgerr);
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "get_stat: ENOENT: ");
+            goto fail;
+        }
         g_set_error(gerr, fusedav_quark(), ENOENT, "get_stat: ENOENT");
         goto fail;
     }

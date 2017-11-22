@@ -121,9 +121,15 @@ removefiles() {
 
 removefile() {
     echo "removefiles: rm -f $1/$2/$3-$4"
-    rm -f $1/$2/*
+    rm $1/$2/$3-$4
     ret=$?
     return $ret 
+}
+
+insertsleep() {
+    sleep $1
+    ret=$?
+    return $ret
 }
 
 # get commands from string and put in array
@@ -260,6 +266,9 @@ for cmd in "${commands[@]}"; do
         expect_failure=1
 	echo "--Expect Failure"
         removedir $binding $dir
+        ret=$?
+    elif [ $cmd == "sleep" ]; then
+        insertsleep 3
         ret=$?
     else
         echo "Unknowned command: $cmd"

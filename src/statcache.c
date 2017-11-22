@@ -750,14 +750,14 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
 
     BUMP(statcache_has_child);
 
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s)", path);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_child(%s)", path);
 
     iter = stat_cache_iter_init(cache, path);
     if ((entry = stat_cache_iter_current(iter))) {
         // Ignore negative (non-existent) entries, those tagged with st_mode == 0
         if (entry->value->st.st_mode != 0) {
             has_children = true;
-            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_child(%s); entry \'%s\'", path, entry->key);
         }
         free(entry);
     }

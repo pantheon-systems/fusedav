@@ -93,7 +93,7 @@ do
     echo; echo "TEST"; echo
 
     # Run the real test
-    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c makedir;writefile;removefiles" -d "-v -c removedir"
+    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c sleep;makedir;writefile;removefiles" -d "-v -c removedir"
 
     ret=$?
     if [ $ret -eq 0 ]; then
@@ -114,7 +114,7 @@ do
 
     # On the first binding, make a directory, and put some files in it, then 
     # remove directory via the second binding, which should fail (use the 'f' version to pass on failure)
-    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c makedir;writefile" -d "-v -c fremovedir;removefiles;removedir"
+    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c sleep;makedir;writefile" -d "-v -c fremovedir;removefiles;removedir"
     ret=$?
     if [ $ret -eq 0 ]; then
         pass=$((pass + 1))
@@ -137,7 +137,8 @@ do
     # On the first binding, make a directory, and put some files in it, then 
     # ls the binding, then remove some files but leave others, then ls the binding
     # and expect to get back only the files which weren't removed
-    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 1 -c makedir;writefile" -d "-v -c removefile;removedir"
+    $testdir/dual-binding-test.sh -1 $bid1 -2 $bid2 -a basic-ops.sh -b basic-ops.sh -v -c "-v -i 2 -c sleep;makedir;writefile" -d "-v -c list;removefile;list;removefiles;removedir"
+    echo "Check the two lists; one should be missing basic-ops-file-1"
     ret=$?
     if [ $ret -eq 0 ]; then
         pass=$((pass + 1))
