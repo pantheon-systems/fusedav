@@ -1025,14 +1025,15 @@ static int dav_rmdir(const char *path) {
         return processed_gerror(funcname, path, &gerr);
     }
 
+    update_directory(path, true, &gerr);
+    if (gerr) {
+        return processed_gerror(funcname, path, &gerr);
+    }
+
     if (!S_ISDIR(st.st_mode)) {
         log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "%s: failed to remove `%s\': Not a directory", funcname, path);
         return -ENOTDIR;
     }
-
-    // The slash should force it to find entries in the directory after the slash, and
-    // not the directory itself
-    snprintf(fn, sizeof(fn), "%s/", path);
 
     // Check to see if it is empty ...
     // get_stat already called update_directory, which called stat_cache_updated_children
@@ -1042,6 +1043,10 @@ static int dav_rmdir(const char *path) {
         log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "%s: failed to remove `%s\': Directory not empty ", funcname, path);
         return -ENOTEMPTY;
     }
+
+    // The slash should force it to find entries in the directory after the slash, and
+    // not the directory itself
+    snprintf(fn, sizeof(fn), "%s/", path);
 
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
@@ -1197,7 +1202,7 @@ static int dav_rename(const char *from, const char *to) {
 
     get_stat(from, &st, &gerr);
     if (gerr) {
-        server_ret = processed_gerror("dav_rmdir: ", from, &gerr);
+        server_ret = processed_gerror("dav_rename: ", from, &gerr);
         goto finish;
     }
 

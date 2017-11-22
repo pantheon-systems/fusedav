@@ -352,7 +352,7 @@ static size_t header_callback(void *contents, size_t length, size_t nmemb, __unu
                     "header_callback: got readonly:'%s'", header);
         } else if (strcasestr(header, "readwrite") != NULL) {
             clear_readonly_mode();
-            log_print(LOG_INFO, SECTION_PROPS_DEFAULT, 
+            log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, 
                     "header_callback: got readwrite:'%s'", header);
         } else {
             // If we get something other than readonly or readwrite, punt. Default is read-write
@@ -363,7 +363,7 @@ static size_t header_callback(void *contents, size_t length, size_t nmemb, __unu
         }
     }
 
-    log_print(LOG_INFO, SECTION_PROPS_DEFAULT, "header_callback: '%s' :: %d, %d", header, length, nmemb);
+    log_print(LOG_DEBUG, SECTION_PROPS_DEFAULT, "header_callback: '%s' :: %d, %d", header, length, nmemb);
     free(header);
     return length * nmemb;
 }
