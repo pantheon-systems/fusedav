@@ -62,8 +62,13 @@ forensichaventest-flags =
 
 trunc = $(testdir)/trunc
 # -v for verbose, -r# for number of rounds, -f# for number of files, -s# for size of write, -i# for
-# number of write iters'trunc-flags=-v -r 8 -f 8 -s 32 -i 16'
+# number of write iters 'trunc-flags=-v -r 8 -f 8 -s 32 -i 16'
 trunc-flags =
+
+pfbackoff = $(testdir)/pfbackoff.sh
+# -v for verbose, -n# for number of rounds
+# number of iters 'pfbackoff-flags=-v -n 8'
+pfbackoff-flags =
 
 saintmode-haproxy = $(testdir)/saintmode-haproxy.sh
 # -v for verbose, -i# for number of write iters'saintmode-haproxy-flags=-v -i 16'
@@ -112,21 +117,21 @@ forensic-haven-cleanup-flags =
 all: run-simple-stress-tests
 
 # restrict unit tests to low-resource tests
-run-unit-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-unit echo-finish
+run-unit-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-unit echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx echo-finish
+run-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx echo-finish
 
 # simple stress test; don't run the 'error' tests since they assume a onebox for creating error conditions which don't occur on yolo endpoint
-run-simple-stress-tests: echo-finish run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-forensic-haven-cleanup run-iozone-stress echo-finish
+run-simple-stress-tests: echo-finish run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
-# run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
-run-continual-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-forensic-haven-cleanup run-iozone-continual echo-finish
+# run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-iozone-continual
+run-continual-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-continual echo-finish
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-short-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc echo-finish
+run-short-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff echo-finish
 
 # run this to test the system under error. To do this:
 # use the fusedav client inject error mechanism. Use the writewrite_test 
@@ -220,6 +225,9 @@ run-trunc: $(trunc)
 
 $(trunc): $(testdir)/trunc.c
 	cc $< -std=c99 -g -o $@
+
+run-pfbackoff: $(pfbackoff)
+	$(pfbackoff) $(pfbackoff-flags)
 
 run-timestamptest:
 	$(timestamptest) $(timestamptest-flags)

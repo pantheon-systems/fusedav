@@ -193,11 +193,11 @@ static values_t byte_bit_location(unsigned long startvalue, int bits_in_chunk) {
 int bloomfilter_add(bloomfilter_options_t *options, const void *key, size_t klen) {
     values_t values;
 
-    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_add: enter \'%s\' :: salt %ul", key, options->salt);
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_add: enter \'%s\' :: salt %lu", key, options->salt);
     values.hashvalue = options->hashfcn(options->salt, key, klen);
     for (unsigned int idx = 0; idx < options->num_chunks; idx++) {
         values = byte_bit_location(values.hashvalue, options->bits_in_chunk);
-        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_add: iter %d :: key: \'%s\' :: salt: %ul :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
+        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_add: iter %d :: key: \'%s\' :: salt: %lu :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
         options->bitfield[values.bytevalue] |= values.bitvalue;
     }
     return 0;
@@ -207,11 +207,11 @@ int bloomfilter_add(bloomfilter_options_t *options, const void *key, size_t klen
 bool bloomfilter_exists(bloomfilter_options_t * options, const void *key, size_t klen) {
     values_t values;
 
-    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_exists: enter \'%s\' :: salt %ul", key, options->salt);
+    log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_exists: enter \'%s\' :: salt %lu", key, options->salt);
     values.hashvalue = options->hashfcn(options->salt, key, klen);
     for (unsigned int idx = 0; idx < options->num_chunks; idx++) {
         values = byte_bit_location(values.hashvalue, options->bits_in_chunk);
-        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_exists: iter %d :: key: \'%s\' :: salt: %ul :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
+        log_print(LOG_DEBUG, SECTION_BLOOM_DEFAULT, "bloomfilter_exists: iter %d :: key: \'%s\' :: salt: %lu :: byte %d :: bit %d", idx, key, values.hashvalue, values.bytevalue, values.bitvalue);
         if ((options->bitfield[values.bytevalue] & values.bitvalue) == 0) return false;
     }
     return true;
