@@ -447,7 +447,7 @@ bool stat_cache_is_negative_entry(struct stat_cache_value value) {
 
 
 // Create or update a negative entry in the stat cache for a deleted or non-existent object
-void stat_cache_negative_entry(stat_cache_t *cache, const char *path, GError **gerr) {
+void stat_cache_negative_entry(stat_cache_t *cache, const char *path, bool update, GError **gerr) {
     static const char *funcname = "stat_cache_negative_entry";
     struct stat_cache_value newvalue;
     struct stat_cache_value *existing = NULL;
@@ -467,15 +467,15 @@ void stat_cache_negative_entry(stat_cache_t *cache, const char *path, GError **g
 
     if (existing) {
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: incrementing entry %s", funcname, path);
-        // If we already have an existing value in the cache,
-        // and it is negative,
-        // transfer those value to the new entry and let it be known
-        // that yet another attempt has been made unsuccessfully to 
-        // access this item
+        // If we already have an existing value in the cache, and it is negative,
+        // transfer those value to the new entry. If we are updating, let it be known
+        // that yet another attempt has been made unsuccessfully to access this item
+        // We only update when we do a propfind and the item is still non-existent. We
+        // avoid updating on normal cleanup activities like stat_cache_prune
         if (stat_cache_is_negative_entry(*existing)) {
             newvalue.negative_value.negative_value = existing->negative_value.negative_value;
             // Protect against some measure of overflow; not necessary to get the exact type
-            if (newvalue.negative_value.negative_value.propfinds_made < UINT_MAX) {
+            if (update && newvalue.negative_value.negative_value.propfinds_made < UINT_MAX) {
                 newvalue.negative_value.negative_value.propfinds_made++;
             }
         }
@@ -526,6 +526,8 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
 
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr) {
     char *p;
+    // false since this is not the result of a successful propfind
+    bool update = false;
     GError *tmpgerr = NULL;
 
     BUMP(statcache_del_parent);
@@ -535,7 +537,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: deleting parent %s", p);
 
-        stat_cache_negative_entry(cache, p, &tmpgerr);
+        stat_cache_negative_entry(cache, p, update, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
         }
@@ -549,7 +551,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
     }
     else {
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
-        stat_cache_negative_entry(cache, path, &tmpgerr);
+        stat_cache_negative_entry(cache, path, update, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
         }
@@ -726,6 +728,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 void stat_cache_walk(void) {
     leveldb_readoptions_t *roptions;
     struct leveldb_iterator_t *iter;
+    const struct stat_cache_value *itervalue;
 
     log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: starting: %p", gcache);
 
@@ -734,9 +737,14 @@ void stat_cache_walk(void) {
     iter = leveldb_create_iterator(gcache, roptions); // We've kept a pointer to cache for just this call
     leveldb_iter_seek_to_first(iter);
     for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
-        size_t klen;
+        size_t klen, vlen;
+        bool negative_entry;
+        char posneg[] = "positive";
         const char *iterkey = leveldb_iter_key(iter, &klen);
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: iterkey = %s", iterkey);
+        itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
+        negative_entry = stat_cache_is_negative_entry(*itervalue);
+        if (negative_entry) strcpy(posneg, "negative");
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: iterkey = %s :: posneg: %s", iterkey, posneg);
     }
     leveldb_iter_destroy(iter);
     leveldb_readoptions_destroy(roptions);
@@ -771,6 +779,8 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     struct stat_cache_entry *entry;
     GError *tmpgerr = NULL;
     unsigned int deleted_entries = 0;
+    // false since this is not the result of a successful propfind
+    bool update = false;
 
     BUMP(statcache_delete_older);
 
@@ -782,7 +792,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
             log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
                 entry->key, minimum_local_generation, entry->value->local_generation);
             if (entry->value->local_generation < minimum_local_generation) {
-                stat_cache_negative_entry(cache, key2path(entry->key), &tmpgerr);
+                stat_cache_negative_entry(cache, key2path(entry->key), update, &tmpgerr);
                 ++deleted_entries;
                 if (tmpgerr) {
                     g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
@@ -839,6 +849,9 @@ void stat_cache_prune(stat_cache_t *cache) {
     clock_t elapsedtime;
     static unsigned int numcalls = 0;
     static unsigned long totaltime = 0; //
+
+    // false since this is not the result of a successful propfind
+    bool update = false;
 
     BUMP(statcache_prune);
 
@@ -962,7 +975,8 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
 
                 if (bloomfilter_exists(boptions, parentpath, strlen(parentpath))) {
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", parentpath);
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, 
+                            "stat_cache_prune: parent exists in bloom filter\'%s\'", parentpath);
                     // If the parent is in the filter, and this child is a directory, add it to
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
@@ -978,7 +992,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
                     log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
-                    stat_cache_negative_entry(cache, path, NULL);
+                    stat_cache_negative_entry(cache, path, update, NULL);
                 }
                 free(parentpath);
             }

@@ -5,6 +5,11 @@ cltest = $(testdir)/cltest.sh
 # -i is iters; default is 64
 cltest-flags=
 
+urlencode = $(testdir)/urlencode.sh
+# usage on Makefile line: 'urlencode-flags=-i64'
+# -i is iters; default is 1
+urlencode-flags=
+
 statcacheprune = $(testdir)/statcacheprune.sh
 # usage on Makefile line: 'statcacheprune-flags=-d2 -f64 -tdflt'
 # default for -d is 2; max allowed is 4; for -f it's 64
@@ -51,6 +56,10 @@ readwhatwaswritten-flags =
 continualwrites = $(testdir)/continualwrites
 # flag -v for verbose, -f# for number of files 'continualwrites-flags=-v -w -f16'
 continualwrites-flags =
+
+rename = $(testdir)/rename
+# flag -v for verbose 'rename-flags=-v'
+rename-flags =
 
 one-open-many-writes = $(testdir)/one-open-many-writes 
 # flag -v for verbose, -f# for number of files 'one-open-many-writes=-v -w -f16'
@@ -117,21 +126,21 @@ forensic-haven-cleanup-flags =
 all: run-simple-stress-tests
 
 # restrict unit tests to low-resource tests
-run-unit-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-unit echo-finish
+run-unit-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-unit echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx echo-finish
+run-stress-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx echo-finish
 
-# simple stress test; don't run the 'error' tests since they assume a onebox for creating error conditions which don't occur on yolo endpoint
-run-simple-stress-tests: echo-finish run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress echo-finish
+# simple stress test; don't run the 'saintmode' tests since they assume a unified development environment for creating error conditions which don't generally occur in production environments.
+run-simple-stress-tests: echo-finish run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
-# run-continual-tests: run-cltest run-statcacheprune run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-iozone-continual
-run-continual-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-continual echo-finish
+# run-continual-tests: run-cltest run-urlencode run-statcacheprune run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-iozone-continual
+run-continual-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-continual echo-finish
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-short-stress-tests: echo-start run-cltest run-statcacheprune run-dutest run-readrecursive run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff echo-finish
+run-short-stress-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup echo-finish
 
 # run this to test the system under error. To do this:
 # use the fusedav client inject error mechanism. Use the writewrite_test 
@@ -159,6 +168,9 @@ echo-finish:
 
 run-cltest:
 	$(cltest) $(cltest-flags)
+
+run-urlencode:
+	$(urlencode) $(urlencode-flags)
 
 run-statcacheprune:
 	$(statcacheprune) $(statcacheprune-dirs) $(statcacheprune-flags)
@@ -204,6 +216,9 @@ $(openunlinkclose): $(testdir)/openunlinkclose.c
 
 run-continualwrites-unit: $(continualwrites)
 	$(continualwrites) -f16 $(continualwrites-flags)
+
+run-rename-unit: $(rename)
+	$(rename) -f16 $(rename-flags)
 
 $(continualwrites): $(testdir)/continualwrites.c
 	cc $< -std=c99 -g -o $@
