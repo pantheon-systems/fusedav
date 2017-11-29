@@ -94,7 +94,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
 void stat_cache_value_free(struct stat_cache_value *value);
 
 bool stat_cache_is_negative_entry(struct stat_cache_value value);
-void stat_cache_negative_entry(stat_cache_t *cache, const char* path, GError **gerr);
+void stat_cache_negative_entry(stat_cache_t *cache, const char* path, bool update, GError **gerr);
 void stat_cache_delete(stat_cache_t *cache, const char* path, GError **gerr);
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr);
 void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation, GError **gerr);

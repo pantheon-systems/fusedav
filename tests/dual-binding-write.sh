@@ -6,7 +6,8 @@ usage()
 cat << EOF
 usage: $0 options
 
-This script enables dual-binding tests
+This script tests that a file created on one binding is immediately available when accessed
+on a different binding in the environment.
 
 OPTIONS:
    -h      Show this message
@@ -69,6 +70,9 @@ if [ $verbose -eq 1 ]; then
     starttime=$(date +%s)
 fi
 
+# We used to have a two-second window which if kept open, would trigger
+# a 404 on one binding when a different binding had just created a file.
+# Simulate that just to make sure we have solved the problem.
 repeated_ls(){
     while true; do
         if [ $verbose -eq 1 ]; then
@@ -92,40 +96,47 @@ echo "seedfile" > $bid1path/files/$filedir/seedfile.txt
 # 2-second propfind window which should no longer exist
 repeated_ls $bid1path/files/$filedir &
 # Save of the function pid to kill it later
-lspid=$!
+lspid1=$!
+repeated_ls $bid2path/files/$filedir &
+# Save of the function pid to kill it later
+lspid2=$!
 
 iter=0
 # Write several new files to bid2 and expect them to appear on bid1 without delay 
 while [ $iter -lt $doubleiters ]; do
-    head -c 67 /dev/urandom > $bid2path/files/$filedir/file-$iter.txt
-    cat $bid1path/files/$filedir/file-$iter.txt > /dev/null 2>&1
-
-    if [ $? -eq 0 ]; then
-	pass=$((pass + 1))
-        if [ $verbose -eq 1 ]; then
-	    echo "iter $iter: pass"
-	fi
-    else
-	fail=$((fail + 1))
-        if [ $verbose -eq 1 ]; then
-	    echo "iter $iter: fail"
-	fi
-    fi
-
-    # Sleep from 0 - iter seconds the first half,
-    # then just 1 second each time the second half
-    # Just testing that the sleep interval does not
-    # matter for the ability to pick up the new file
-    if [ $iter -lt $iters ]; then
-        sleep $iter 
-    else
-	sleep 1
-    fi
-
+    inneriter=0
+    while [ $inneriter -lt $iter ]; do
+        head -c 67 /dev/urandom > $bid2path/files/$filedir/file-$iter-$inneriter.txt
+        cat $bid1path/files/$filedir/file-$iter-$inneriter.txt > /dev/null 2>&1
+    
+        if [ $? -eq 0 ]; then
+            pass=$((pass + 1))
+            if [ $verbose -eq 1 ]; then
+    	        echo "iter $iter-$inneriter: pass"
+    	    fi
+        else
+    	    fail=$((fail + 1))
+            if [ $verbose -eq 1 ]; then
+    	        echo "iter $iter-$inneriter: fail"
+    	    fi
+        fi
+    
+        # Sleep from 0 - iter seconds the first half,
+        # then just 1 second each time the second half
+        # Just testing that the sleep interval does not
+        # matter for the ability to pick up the new file
+        if [ $iter -lt $iters ]; then
+            sleep $iter 
+        else
+    	    sleep 1
+        fi
+        inneriter=$((inneriter + 1))
+    done
     iter=$((iter + 1))
 done
 
-kill $lspid
+kill $lspid1
+kill $lspid2
 
 if [ $verbose -eq 1 ]; then
     endtime=$(date +%s)

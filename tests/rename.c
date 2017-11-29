@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
     int opt;
     bool fail = false;
 
-    while ((opt = getopt (argc, argv, "uvhf:")) != -1) {
+    while ((opt = getopt (argc, argv, "uvh")) != -1) {
         switch (opt)
         {
             case 'v':

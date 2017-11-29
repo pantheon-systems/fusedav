@@ -180,11 +180,13 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
 static void delete_path_on_propfind(const char *path, GError **gerr) {
     static const char *funcname = "delete_file_on_propfind";
     struct fusedav_config *config = fuse_get_context()->private_data;
+    // true will cause stat_cache_negative_entry to increment it's propfind count for the fibonacci backoff
+    bool update = true;
     GError *subgerr1 = NULL ;
     GError *subgerr2 = NULL ;
 
     log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: Removing path: %s", funcname, path);
-    stat_cache_negative_entry(config->cache, path, &subgerr1);
+    stat_cache_negative_entry(config->cache, path, update, &subgerr1);
     filecache_delete(config->cache, path, true, &subgerr2);
     // If we need to combine 2 errors, use one of the error messages in the propagated prefix
     if (subgerr1 && subgerr2) {
@@ -632,8 +634,7 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
         unsigned long status_code, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value value;
-    GError *subgerr1 = NULL;
-    GError *subgerr2 = NULL;
+    GError *subgerr = NULL;
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -641,32 +642,20 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
 
     if (status_code == 410) {
         log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Deleting from stat cache: %s", path);
-        stat_cache_negative_entry(config->cache, path, &subgerr1);
-        filecache_delete(config->cache, path, true, &subgerr2);
+        delete_path_on_propfind(path, &subgerr);
 
-        // If we need to combine 2 errors, use one of the error messages in the propagated prefix
-        if (subgerr1 && subgerr2) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s: %s", path, subgerr1->message, subgerr2->message);
-            g_propagate_prefixed_error(gerr, subgerr1, "getattr_propfind_callback: %s :: ", subgerr2->message);
-            return;
-        }
-        else if (subgerr1) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr1->message);
-            g_propagate_prefixed_error(gerr, subgerr1, "getattr_propfind_callback: ");
-            return;
-        }
-        else if (subgerr2) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr2->message);
-            g_propagate_prefixed_error(gerr, subgerr2, "getattr_propfind_callback: ");
+        if (subgerr) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr->message);
+            g_propagate_prefixed_error(gerr, subgerr, "getattr_propfind_callback: ");
             return;
         }
     }
     else {
         log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Adding to stat cache: %s", path);
-        stat_cache_value_set(config->cache, path, &value, &subgerr1);
-        if (subgerr1) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr1->message);
-            g_propagate_prefixed_error(gerr, subgerr1, "getattr_propfind_callback: ");
+        stat_cache_value_set(config->cache, path, &value, &subgerr);
+        if (subgerr) {
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr->message);
+            g_propagate_prefixed_error(gerr, subgerr, "getattr_propfind_callback: ");
             return;
         }
     }
@@ -871,17 +860,18 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // If it's the root directory or refresh_dir_for_file_stat is false,
     // just do a single, zero-depth PROPFIND.
     if (!config->refresh_dir_for_file_stat || is_base_directory) {
+        bool update = false; // false for stat_cache_negative_entry since this is not the result of a successful propfind
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Performing zero-depth PROPFIND on path: %s", path);
         stats_counter_local("propfind-root", 1, pfsamplerate);
         ret = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ZERO, 0, getattr_propfind_callback, NULL, &subgerr);
         if (subgerr) {
             // Delete from cache on error; ignore errors from stat_cache_delete since we already have one
             g_propagate_prefixed_error(gerr, subgerr, "get_stat: ");
-            stat_cache_negative_entry(config->cache, path, NULL);
+            stat_cache_negative_entry(config->cache, path, update, NULL);
             goto fail;
         }
         else if (ret < 0) { // We don't ever expect ret < 0 without gerr
-            stat_cache_negative_entry(config->cache, path, &subgerr);
+            stat_cache_negative_entry(config->cache, path, update, &subgerr);
             if (subgerr) {
                 g_propagate_prefixed_error(gerr, subgerr, "get_stat: PROPFIND failed");
                 goto fail;
@@ -1108,6 +1098,8 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     static const char *funcname = "common_unlink";
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat st;
+    // No update on stat_cache_negative_entry since this is not the result of a propfind
+    bool update = false;
     GError *gerr2 = NULL;
     GError *gerr3 = NULL;
 
@@ -1168,7 +1160,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     filecache_delete(config->cache, path, true, &gerr2);
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "%s: calling stat_cache_negative_entry on %s", funcname, path);
-    stat_cache_negative_entry(config->cache, path, &gerr3);
+    stat_cache_negative_entry(config->cache, path, update, &gerr3);
 
     // If we need to combine 2 errors, use one of the error messages in the propagated prefix
     if (gerr2 && gerr3) {
@@ -1213,6 +1205,8 @@ static int dav_rmdir(const char *path) {
     GError *gerr = NULL;
     char fn[PATH_MAX];
     bool has_child;
+    // false because this call to stat_cache_negative_entry is not the result of a successful propfind
+    bool update = false;
     struct stat st;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
@@ -1293,7 +1287,7 @@ static int dav_rmdir(const char *path) {
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "%s: removed(%s)", funcname, path);
 
-    stat_cache_negative_entry(config->cache, path, &gerr);
+    stat_cache_negative_entry(config->cache, path, update, &gerr);
     if (gerr) {
         return processed_gerror(funcname, path, &gerr);
     }
@@ -1388,6 +1382,8 @@ static int dav_rename(const char *from, const char *to) {
     int server_ret = -EIO;
     int local_ret = -EIO;
     int fd = -1;
+    // false for stat_cache_negative_entry since this is not the result of a successful propfind
+    bool update = false;
     struct stat st;
     char fn[PATH_MAX];
     struct stat_cache_value *entry = NULL;
@@ -1512,7 +1508,7 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
-    stat_cache_negative_entry(config->cache, from, &gerr);
+    stat_cache_negative_entry(config->cache, from, update, &gerr);
     if (gerr) {
         local_ret = processed_gerror(funcname, from, &gerr);
         goto finish;
