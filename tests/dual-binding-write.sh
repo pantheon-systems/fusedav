@@ -73,6 +73,7 @@ fi
 # We used to have a two-second window which if kept open, would trigger
 # a 404 on one binding when a different binding had just created a file.
 # Simulate that just to make sure we have solved the problem.
+
 repeated_ls(){
     while true; do
         if [ $verbose -eq 1 ]; then
