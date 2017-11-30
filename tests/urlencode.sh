@@ -6,7 +6,9 @@ usage()
 cat << EOF
 usage: $0 options
 
-This script runs the command line tests
+This script runs the command line tests, but it does so by adding
+special characters to the filename and ensuring that they are properly
+processed by the backend
 
 OPTIONS:
    -h      Show this message
