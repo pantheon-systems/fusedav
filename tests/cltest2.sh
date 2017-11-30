@@ -1,6 +1,8 @@
 #! /bin/bash
 set +e
 
+# Obsolete. A better version exists as cltest.sh
+
 start=1
 # Skip to test $start, which can be passed as a parameter
 if [ $# -gt 0 ]
@@ -11,7 +13,7 @@ fi
 starttime=$(date +%s)
 
     iters=1
-    jters=1
+    jters=10000
     # append; this also creates a file for later tests
     test=1
     rm -f cltest2.file > /dev/null 2>&1

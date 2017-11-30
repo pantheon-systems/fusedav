@@ -242,6 +242,13 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
         stats_counter("statcache_miss", 1, pfsamplerate);
         return NULL;
     }
+    // If this is a negative entry, we need to return the value so the entry can be processed
+    else if (value->st.st_mode == 0) {
+        log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_value_get: negative entry on path: %s", path);
+        stats_counter("statcache_negative_entry", 1, pfsamplerate);
+        print_stat(&value->st, "stat_cache_value_get");
+        return value;
+    }
 
     if (vallen != sizeof(struct stat_cache_value)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_get: Length %lu is not expected length %lu.", vallen, sizeof(struct stat_cache_value));
@@ -426,6 +433,70 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     return;
 }
 
+// A negative entry is an item in the cache which represents a miss,
+// so we can cache its non-existence and regulate how often
+// we make a propfind request to the server to check if it has
+// come into existence.
+bool stat_cache_is_negative_entry(struct stat_cache_value value) {
+    // The struct stat st gets zero'ed out when we put a negative entry in the cache.
+    // If an extant item is put in the cache, at st_mode will be non-zero.
+    // So use st_mode as our check for non-existence
+    if (value.st.st_mode == 0) return true;
+    else return false;
+}
+
+
+// Create or update a negative entry in the stat cache for a deleted or non-existent object
+void stat_cache_negative_entry(stat_cache_t *cache, const char *path, bool update, GError **gerr) {
+    static const char *funcname = "stat_cache_negative_entry";
+    struct stat_cache_value newvalue;
+    struct stat_cache_value *existing = NULL;
+    GError *subgerr = NULL ;
+
+
+    // A negative value has no values in fields, and st_mode as 0 is our 
+    // sentinel for negative value, so initialize to all zero
+    // Its propfinds_made field will also be zero'ed, which is correct
+    memset(&newvalue, 0, sizeof(struct stat_cache_value));
+
+    existing = stat_cache_value_get(cache, path, true, &subgerr);
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: failed on stat_cache_get for %s", funcname, path);
+        return;
+    }
+
+    if (existing) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: incrementing entry %s", funcname, path);
+        // If we already have an existing value in the cache, and it is negative,
+        // transfer those value to the new entry. If we are updating, let it be known
+        // that yet another attempt has been made unsuccessfully to access this item
+        // We only update when we do a propfind and the item is still non-existent. We
+        // avoid updating on normal cleanup activities like stat_cache_prune
+        if (stat_cache_is_negative_entry(*existing)) {
+            newvalue.negative_value.negative_value = existing->negative_value.negative_value;
+            // Protect against some measure of overflow; not necessary to get the exact type
+            if (update && newvalue.negative_value.negative_value.propfinds_made < UINT_MAX) {
+                newvalue.negative_value.negative_value.propfinds_made++;
+            }
+        }
+
+    }
+    else {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: creating entry %s", funcname, path);
+    }
+
+    // Put it in the stat cache. If the subsequent propfind indicates the path exists,
+    // a new entry with proper values will be created and will overwrite this entry
+    stat_cache_value_set(cache, path, &newvalue, &subgerr);
+
+    // Check for error and return
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: failed setting new negative entry for %s", funcname, path);
+    }
+
+    return;
+}
+
 void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
     leveldb_writeoptions_t *options;
     char *key;
@@ -455,6 +526,8 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
 
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr) {
     char *p;
+    // false since this is not the result of a successful propfind
+    bool update = false;
     GError *tmpgerr = NULL;
 
     BUMP(statcache_del_parent);
@@ -464,7 +537,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
 
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: deleting parent %s", p);
 
-        stat_cache_delete(cache, p, &tmpgerr);
+        stat_cache_negative_entry(cache, p, update, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
         }
@@ -478,7 +551,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
     }
     else {
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
-        stat_cache_delete(cache, path, &tmpgerr);
+        stat_cache_negative_entry(cache, path, update, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
         }
@@ -635,8 +708,11 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     while ((entry = stat_cache_iter_current(iter))) {
         log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "key: %s", entry->key);
         log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "fn: %s", entry->key + (iter->key_prefix_len - 1));
-        f(path_prefix, entry->key + (iter->key_prefix_len - 1), user);
-        ++found_entries;
+        // Ignore negative (non-existent) entries, those tagged with st_mode == 0
+        if (entry->value->st.st_mode != 0) {
+            f(path_prefix, entry->key + (iter->key_prefix_len - 1), user);
+            ++found_entries;
+        }
         free(entry);
         stat_cache_iter_next(iter);
     }
@@ -652,6 +728,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 void stat_cache_walk(void) {
     leveldb_readoptions_t *roptions;
     struct leveldb_iterator_t *iter;
+    const struct stat_cache_value *itervalue;
 
     log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: starting: %p", gcache);
 
@@ -660,9 +737,14 @@ void stat_cache_walk(void) {
     iter = leveldb_create_iterator(gcache, roptions); // We've kept a pointer to cache for just this call
     leveldb_iter_seek_to_first(iter);
     for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
-        size_t klen;
+        size_t klen, vlen;
+        bool negative_entry;
+        char posneg[] = "positive";
         const char *iterkey = leveldb_iter_key(iter, &klen);
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: iterkey = %s", iterkey);
+        itervalue = (const struct stat_cache_value *) leveldb_iter_value(iter, &vlen);
+        negative_entry = stat_cache_is_negative_entry(*itervalue);
+        if (negative_entry) strcpy(posneg, "negative");
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_walk: iterkey = %s :: posneg: %s", iterkey, posneg);
     }
     leveldb_iter_destroy(iter);
     leveldb_readoptions_destroy(roptions);
@@ -676,12 +758,15 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
 
     BUMP(statcache_has_child);
 
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s)", path);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_child(%s)", path);
 
     iter = stat_cache_iter_init(cache, path);
     if ((entry = stat_cache_iter_current(iter))) {
-        has_children = true;
-        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_children(%s); entry \'%s\'", path, entry->key);
+        // Ignore negative (non-existent) entries, those tagged with st_mode == 0
+        if (entry->value->st.st_mode != 0) {
+            has_children = true;
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_dir_has_child(%s); entry \'%s\'", path, entry->key);
+        }
         free(entry);
     }
     stat_cache_iterator_free(iter);
@@ -694,22 +779,27 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     struct stat_cache_entry *entry;
     GError *tmpgerr = NULL;
     unsigned int deleted_entries = 0;
+    // false since this is not the result of a successful propfind
+    bool update = false;
 
     BUMP(statcache_delete_older);
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
     while ((entry = stat_cache_iter_current(iter))) {
-        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
-            entry->key, minimum_local_generation, entry->value->local_generation);
-        if (entry->value->local_generation < minimum_local_generation) {
-            stat_cache_delete(cache, key2path(entry->key), &tmpgerr);
-            ++deleted_entries;
-            if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
-                free(entry);
-                stat_cache_iterator_free(iter);
-                return;
+        // Not deleting, rather, inserting negative entries.
+        if (entry->value->st.st_mode != 0) {
+            log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
+                entry->key, minimum_local_generation, entry->value->local_generation);
+            if (entry->value->local_generation < minimum_local_generation) {
+                stat_cache_negative_entry(cache, key2path(entry->key), update, &tmpgerr);
+                ++deleted_entries;
+                if (tmpgerr) {
+                    g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
+                    free(entry);
+                    stat_cache_iterator_free(iter);
+                    return;
+                }
             }
         }
         free(entry);
@@ -759,6 +849,9 @@ void stat_cache_prune(stat_cache_t *cache) {
     clock_t elapsedtime;
     static unsigned int numcalls = 0;
     static unsigned long totaltime = 0; //
+
+    // false since this is not the result of a successful propfind
+    bool update = false;
 
     BUMP(statcache_prune);
 
@@ -882,7 +975,8 @@ void stat_cache_prune(stat_cache_t *cache) {
                 }
 
                 if (bloomfilter_exists(boptions, parentpath, strlen(parentpath))) {
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter\'%s\'", parentpath);
+                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, 
+                            "stat_cache_prune: parent exists in bloom filter\'%s\'", parentpath);
                     // If the parent is in the filter, and this child is a directory, add it to
                     // the filter for iteration at the next depth
                     if (S_ISDIR(itervalue->st.st_mode)) {
@@ -898,7 +992,7 @@ void stat_cache_prune(stat_cache_t *cache) {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
                     log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
-                    stat_cache_delete(cache, path, NULL);
+                    stat_cache_negative_entry(cache, path, update, NULL);
                 }
                 free(parentpath);
             }
@@ -947,6 +1041,7 @@ void stat_cache_prune(stat_cache_t *cache) {
             ++deleted_entries;
             // We recreate the basics of stat_cache_delete here, since we can't call it directly
             // since it doesn't deal with keys with "updated_children:"
+            // NB. We are not imitating stat_cache_negative_entry here
             woptions = leveldb_writeoptions_create();
             leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
             leveldb_writeoptions_destroy(woptions);

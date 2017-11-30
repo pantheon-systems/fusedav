@@ -1,0 +1,159 @@
+Setup:
+Install the fusedav repository from github
+If you install it in: /root/pantheon/fusedav;
+ then <fusedav-test-path> will be "/root/pantheon/fusedav/tests"
+
+NB. If you install it elsewhere, you may need to add 
+"testdir=<yourpath>" to the call to make, since some tests use that variable
+to find other tests.
+
+A. The Basic Tests:
+
+1. The Regular Version: (will run "run-simple-stress-tests")
+cd to a files directory, e.g. /srv/bindings/<bid>/files
+execute: make -f <path>/Makefile
+
+2. The Short Version: (will run "run-unit-tests")
+These are roughly the same set of tests as the Basic version above;
+however, some of the tests are run with parameters to make them
+do less work and finish more quickly.
+cd to a files directory, e.g. /srv/bindings/<bid>/files
+execute: make -f <path>/Makefile run-unit-tests
+
+3. The Long Version: (will run "run-stress-tests")
+These are a superset of the Basic Tests, they include the "saintmode" tests.
+These saintmode tests really only work in certain specially-configured, unified
+development environments, since they attempt to disable various functionality 
+on the path to the fileserver, i.e.  nginx and haproxy.
+cd to a files directory, e.g. /srv/bindings/<bid>/files
+execute: make -f <path>/Makefile run-stress-tests
+
+4. The Truncated Stress Version: (will run "run-short-stress-tests")
+Same as #3, but omits iozone in order to get a shorter execution time.
+
+Individual Tests in the above suites:
+cltest
+  - command line tests, cp, mv, rm, etc.
+urlencode
+  - cltest, except that the filenames get coded to ensure we can urlencode correctly
+statcacheprune
+  - creates a bunch of directories and files
+  - designed as stress test, run simulaneously on multiple bindings with differnt flags
+    which will create different file names on different fusedav bindings, and test
+    the ability to not get confused, and to keep up
+  - not sure why it's called statcacheprune, which is something rather different
+  - Previously used to trigger "Too Many Events" exception
+dutest
+  - Regression test to check for zero-length files.
+  - Inadequate as tests because it has to hardcode the files it expects
+    to have zero-length
+iozone
+  - Third party file system performance test. 
+  - Mostly used as test for file system correctness, and for stress.
+  - The version we run has a slight modification, since there is one
+    POSIX feature we don't support
+readrecursive
+  - Reads all files in the file system
+openunlinkclose
+  - I forget what it's called, but this tests writing to a bare file descriptor
+readwhatwaswritten
+  - write some files, read them back and ensure the content read is the same as was written
+continualwrites
+  - Similar to readwhatwaswritten, but is designed to tally file system errors.
+  - Can be run in conjunction with fusedav error injection
+  - See instructions in continualwrites.c for more
+rename
+  - Test renaming files
+one-open-many-writes
+  - Hmm. "...derived from continualwrites.c. In the middle of the test,
+    stop the fileserver and see what happens."
+forensichaventest
+  - Run in conjunction with test errors to ensure error'ed writes
+    go to the forensic haven
+trunc
+  - tests truncating files on open, I think
+pfbackoff
+  - test that non-existent files properly cause or avoid propfinds depending on
+    how many times they have been tried
+saintmode-haproxy
+  - In a unified environment, partially or fully disables the fileserver in the
+    middle of the test by messing with haproxy. Tests that saintmode works correctly.
+saintmode-nginx
+  - In a unified environment, partially or fully disables the fileserver in the
+    middle of the test by messing with nginx. Tests that saintmode works correctly.
+saintmode-writes-nginx
+  - Checks that writes and removes fail when in saintmode
+unhealthy-haproxy
+  - runs the short version of the basic tests (make -f Makefile above) while taking
+    selectively disabling haproxy. Perhaps a forerunner of saintmode-haproxy?
+  - Needs work to actually run
+timestamptest
+  - Requires a binding id to be passed in
+  - Run on two fusedav bindings simultaneously
+perfanalysis-write
+perfanalysis-read
+  - See perfanalysis-writeread.c in Other Tests below
+forensic-haven-cleanup
+  - The forensic haven needs to restrain the number of files it contains.
+  - This tests a number of scenarios to ensure that files are deleted as needed
+forensic-haven-test
+  - run this test in conjunction with filecache_forensic_haven_test in
+    util.c while injecting errors (make INJECT_ERRORS=1)
+  - Run overnight or so; if there are no catastrophic failures (e.g. segv)
+    consider it a pass.
+  - NB: this test needs to create an errors file in <...>/files directory
+    but often fails because we are injecting errors. It may need to be
+    started several times before it actually takes. If the errors file
+    cannot be created, the program exits.
+
+B. Other Tests
+1. continualtest.sh
+   Calls the Makefile in a loop and runs "run-continual-tests" set of tests.
+   It dumps heap and compares memory growth over time (hours, days, ...)
+   This was used when fusedav had a memory leak via curl and the nsf library
+2. dual-binding-tests.sh
+   dual-binding-test.sh
+   basic-ops.sh
+   A somewhat failed experiment to design a flexible mechanism to 
+   run tests against environments with multiple fusedav bindings.
+   The script dual-binding-test.sh can take different programs/scripts
+   one for each binding, and pass in some parameters to them.
+   The script dual-binding-tests.sh (tests plural) calls
+   dual-binding-test.sh (test singular), passing in basic-ops.sh
+   as the script for both, and runs a series of tests.
+3. perfanalysis-writeread.c
+   Tests how long it takes before a write on one fusedav binding
+   is available on a different fusedav binding on the same environment.
+   One binding runs the program in write mode, the other in read mode.
+   These can be run via "make -f <path> Makefile.
+   Somewhat complicated to run.
+4. "gerror" tests
+   Not part of the tests directory itself.
+   After "make clean" on fusedav binary, recompile with:
+   "make INJECT_ERRORS=1"
+   Configure fusedav/src/util.c with the errors you want to simulate.
+   It will inject errors depending on the configuration, to test
+   the "gerror" mechanism.
+   Since it is hard to configure a system to cause the errors you
+   might want to track, and to ensure that the error reporting did
+   not itself introduce errors (Don't you hate it when reporting
+   an error causes the program to crash due to an errant pointer?)
+   this was originally created to inject errors to trigger those
+   gerror messages.
+   Somewhat complicated to run. See fusedav/src/util.c for 
+   instructions.
+
+C. Other Tests and Miscellaneous Scripts
+1. create-many-files.sh
+   Creates many files in the current directory.
+   Not part of testing, but can be used to create many files before testing
+   Often used to test propfind performance if a directory has many files
+2. migrate-cassandra-data.sh
+   Not sure why it's here
+3. test_fusedav_stress.py
+   A python mechanism for invoking the Basic Test, Regular Version
+   Not used
+4. test_dav.py
+   Canonical unit tests called from python
+   Not used
+
