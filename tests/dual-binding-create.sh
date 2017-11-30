@@ -23,6 +23,8 @@ verbose=0
 vverbose=0
 b1="none"
 b2="none"
+pass=0
+fail=0
 
 echo "ENTER dual-binding-write"
 
@@ -86,6 +88,13 @@ fi
 rm -f $bid1path/$filedir/*
 rmdir $bid1path/$filedir
 
+# Reset the state of the files to an initial state
+if [ $verbose -eq 1 ]; then
+    btool invalidate srv-bindings-$b1-files.mount
+else
+    btool invalidate srv-bindings-$b1-files.mount > /dev/null 2>&1
+fi
+
 # make the directory for the new file and put a seed file there
 # (just to have a non-empty directory)
 mkdir $bid1path/$filedir
@@ -93,11 +102,6 @@ mkdir $bid1path/$filedir
 iter=0
 while [ $iter -lt $iters ]
 do
-    if [ $verbose -eq 1 ]; then
-        echo "$iter: cat $bid1path/$createdfile"
-        date '+%Y-%m-%d %H:%M:%S'
-    fi
-
     sleeptime=${fibs[$iter]}
 
     if [ $verbose -eq 1 ]; then
@@ -105,8 +109,14 @@ do
     fi
     sleep $sleeptime
 
-    # We haven't created the file yet, so access should trigger fibonacci backoff
-    cat $bid1path/$createdfile
+    if [ $verbose -eq 1 ]; then
+        echo "$iter: cat $bid1path/$createdfile"
+        date '+%Y-%m-%d %H:%M:%S'
+        cat $bid1path/$createdfile
+    else
+        # We haven't created the file yet, so access should trigger fibonacci backoff
+        cat $bid1path/$createdfile > /dev/null 2>&1
+    fi
 
     iter=$((iter + 1))
 done
@@ -115,15 +125,21 @@ done
 # Binding one is now in fibonacci backoff for 8 seconds, create file on bid2
 echo "createdfile" > $bid2path/$createdfile
 
-# Access file on binding one; won't be found for 13 seconds
+# Access file on binding one; won't be found for 8 seconds
+# We only increment on propfinds returning ENOENT
+# We did 5 iters above, on the 5th, the backoff window gets set to 8
 
-for iter in 1 2 3 4 5; do
+for iter in 1 2 3; do
     if [ $verbose -eq 1 ]; then
         echo "$iter: cat $bid1path/$createdfile should fail"
         date '+%Y-%m-%d %H:%M:%S'
     fi
 
-    cat $bid1path/$createdfile
+    if [ $verbose -eq 1 ]; then
+        cat $bid1path/$createdfile
+    else
+        cat $bid1path/$createdfile > /dev/null 2>&1
+    fi
     # Still in fibonacci backoff window, so should fail, since this binding doesn't think the file exists
     if [ $? -eq 0 ]; then
         fail=$((fail + 1))
@@ -144,7 +160,11 @@ fi
 
 # We should have slept 9 seconds and have slipped out of the fibonacci backoff window.
 # Expect this access to trigger a propfind, and return success on fail access
-cat $bid1path/$createdfile
+if [ $verbose -eq 1 ]; then
+    cat $bid1path/$createdfile
+else
+    cat $bid1path/$createdfile > /dev/null 2>&1
+fi
 if [ $? -ne 0 ]; then
     fail=$((fail + 1))
     echo "FAIL"
