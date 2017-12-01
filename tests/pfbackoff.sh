@@ -15,8 +15,8 @@ are generated.
 This script calls journalctl to get log messages, and uses their content
 to ascertain success or failure. The log entries required are those
 which don't print under production configuration. So the binding they
-are run on requires that verbose logging be enabled. One way to do this
-is to modify fusedav.conf to contain the following values:
+are run on requires that verbose logging be enabled. The script will
+modify fusedav.conf to contain the following values:
 
 log_level=6
 log_level_by_section=600070707000000000700007
@@ -54,11 +54,11 @@ done
 # Most tests need to be in the files directory, but this one needs to be
 # one up.
 if [ -f ../fusedav.conf ]; then
-	cd ..
+    cd ..
 fi
 
 if [ ! -f fusedav.conf ]; then
-    echo "ERROR: Need to be in /srv/bindings/<bid> directory"
+    echo "ERROR: Need to be in /srv/bindings/<bid> directory: $(pwd)"
     exit
 fi
 
@@ -94,8 +94,18 @@ fail=0
 # For journalctl
 since=$(date '+%Y-%m-%d %H:%M:%S')
 
+# Set fusedav.conf for logging needed to get results from journalctl to parse
+mv /srv/bindings/$bid/fusedav.conf /srv/bindings/$bid/fusedav.conf.1
+sed 's/log_level=.*/log_level=6/' /srv/bindings/$bid/fusedav.conf.1 > /srv/bindings/$bid/fusedav.conf.2
+sed 's/log_level_by_section=.*/log_level_by_section=600070707000000000700007/' /srv/bindings/$bid/fusedav.conf.1 > /srv/bindings/$bid/fusedav.conf
+
 # Reset the state of the 'missing file' to first attempt.
-btool invalidate srv-bindings-$bid-files.mount
+if [ $verbose -eq 1 ]; then
+    btool invalidate srv-bindings-$bid-files.mount
+else
+    btool invalidate srv-bindings-$bid-files.mount > /dev/null 2>&1
+fi
+
 
 while [ $numattempt -lt $numattempts ]
 do
@@ -111,28 +121,42 @@ do
     fi
     sleep $sleeptime
 
-    cat $missingfile
+    if [ $verbose -eq 1 ]; then
+        cat $missingfile
+    else
+        cat $missingfile > /dev/null 2>&1
+    fi
 
     numattempt=$(( numattempt + 1 ))
 done
 
-echo "journalctl -a -u srv-bindings-$bid-files.mount --since $since --no-pager > $outfile"
+if [ $verbose -eq 1 ]; then
+    echo "journalctl -a -u srv-bindings-$bid-files.mount --since $since --no-pager > $outfile"
+fi
 journalctl -a -u srv-bindings-$bid-files.mount --since "$since" --no-pager > $outfile
 
+# If the log level is not high enough, we won't get any output. This is an error.
 gjctl=$(grep "requires_propfind.*$basemissingfile" $outfile)
-if [ $verbose -eq 1 ]; then
-    echo "OUTPUT: $gjctl"
-fi
-
-# If we see "no propfind needed", we have failed;
-grep -q "no propfind needed" $outfile
-
-if [ $? -eq 0 ]; then
+if [ $? -ne 0 ]; then
     fail=$((fail + 1))
     echo "FAIL: TEST 1"
 else
     pass=$((pass + 1))
-    echo "PASS: TEST 1"
+
+    if [ $verbose -eq 1 ]; then
+        echo "OUTPUT: $gjctl"
+    fi
+    
+    # If we see "no propfind needed", we have failed;
+    grep -q "no propfind needed" $outfile
+    
+    if [ $? -eq 0 ]; then
+        fail=$((fail + 1))
+        echo "FAIL: TEST 1"
+    else
+        pass=$((pass + 1))
+        echo "PASS: TEST 1"
+    fi
 fi
 
 #### TEST 2
@@ -158,7 +182,11 @@ do
         date '+%Y-%m-%d %H:%M:%S'
     fi
 
-    cat $missingfile
+    if [ $verbose -eq 1 ]; then
+        cat $missingfile
+    else
+        cat $missingfile > /dev/null 2>&1
+    fi
 
     attempt=$(( attempt + 1 ))
 
@@ -176,22 +204,38 @@ echo "journalctl -a -u srv-bindings-$bid-files.mount --since $since --no-pager >
 journalctl -a -u srv-bindings-$bid-files.mount --since "$since" --no-pager > $outfile
 
 gjctl=$(grep "requires_propfind.*$basemissingfile" $outfile)
-if [ $verbose -eq 1 ]; then
-    echo "OUTPUT: $gjctl"
-fi
-
-# If we see "new propfind for path", we have failed;
-grep -q "new propfind for path" $outfile
-
-if [ $? -eq 0 ]; then
+if [ $? -ne 0 ]; then
     fail=$((fail + 1))
-    echo "FAIL: TEST 2"
+    echo "FAIL: TEST 1"
 else
     pass=$((pass + 1))
-    echo "PASS: TEST 2"
+
+    if [ $verbose -eq 1 ]; then
+        echo "OUTPUT: $gjctl"
+    fi
+    
+    # If we see "new propfind for path", we have failed;
+    grep -q "new propfind for path" $outfile
+    
+    if [ $? -eq 0 ]; then
+        fail=$((fail + 1))
+        echo "FAIL: TEST 1"
+    else
+        pass=$((pass + 1))
+        echo "PASS: TEST 1"
+    fi
 fi
 
 #### Clean Up
+# Set fusedav.conf back to original and do a remount to invoke
+mv /srv/bindings/$bid/fusedav.conf.1 /srv/bindings/$bid/fusedav.conf
+rm -f /srv/bindings/$bid/fusedav.conf.2
+if [ $verbose -eq 1 ]; then
+    btool remount srv-bindings-$bid-files.mount
+else
+    btool remount srv-bindings-$bid-files.mount > /dev/null 2>&1
+fi
+
 if [ $verbose -eq 1 ]; then
     endtime=$(date +%s)
     elapsedtime=$(( $endtime - $starttime ))

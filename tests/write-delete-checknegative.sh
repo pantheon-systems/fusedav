@@ -43,14 +43,12 @@ do
      esac
 done
 
-# Most tests need to be in the files directory, but this one needs to be
-# one up.
 if [ -f ../fusedav.conf ]; then
 	cd ..
 fi
 
 if [ ! -f fusedav.conf ]; then
-    echo "ERROR: Need to be in /srv/bindings/<bid> directory"
+    echo "ERROR: Need to be in /srv/bindings/<bid> directory: $(pwd)"
     exit
 fi
 
