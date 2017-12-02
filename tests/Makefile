@@ -1,4 +1,5 @@
 testdir = /root/pantheon/fusedav/tests
+curdir := $(shell pwd)
 
 cltest = $(testdir)/cltest.sh
 # usage on Makefile line: 'cltest-flags=-i64'
@@ -28,6 +29,21 @@ statcacheprune-flags=
 dutest = $(testdir)/dutest.sh
 # -v for verbose
 dutest-flags=
+
+# Create a lot of files in a lot of directories
+writefiles-create = $(testdir)/writefiles-create.sh
+# -v for verbose
+writefiles-create-flags=
+
+# Remove a lot of files in a lot of directories
+writefiles-remove = $(testdir)/writefiles-remove.sh
+# -v for verbose
+writefiles-remove-flags=
+
+# Write some files, delete some of them, check for correct positive/negative entries
+write-delete-checknegative = $(testdir)/write-delete-checknegative.sh
+# -v for verbose
+write-delete-checknegative-flags=
 
 # NB: no PASS/FAIL notification yet from iozone, still requires eyeballs
 iozone = /root/pantheon/iozone/src/current/iozone
@@ -123,24 +139,32 @@ forensic-haven-cleanup = $(testdir)/forensic-haven-cleanup.sh
 # -v for verbose, 'forensic-haven-cleanup-flags=-v'
 forensic-haven-cleanup-flags =
 
-all: run-simple-stress-tests
+all: run-simple-stress-tests run-nonfiles-tests
 
+# S
+#
 # restrict unit tests to low-resource tests
-run-unit-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-unit echo-finish
+run-unit-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-unit run-readwhatwaswritten-unlink-unit run-continualwrites-unit run-rename run-trunc run-iozone-unit echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-stress-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx echo-finish
+run-stress-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-iozone-stress run-saintmode-haproxy run-saintmode-nginx run-unhealthy-haproxy run-saintmode-writes-nginx echo-finish
 
 # simple stress test; don't run the 'saintmode' tests since they assume a unified development environment for creating error conditions which don't generally occur in production environments.
-run-simple-stress-tests: echo-finish run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-stress echo-finish
+run-simple-stress-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-iozone-stress echo-finish
+
+# I'm having difficulties running some tests in <bid dir>/files, and some just in <bid dir>. Separate these and
+# handle on the command line. If someone can figure out the issues switching over file system boundaries,
+# please make this better. For now, I run, from <bid dir>:
+# make -f /root/pantheon/fusedav/tests/Makefile run-nonfiles-tests; (cd files; make -f /root/pantheon/fusedav/tests/Makefile)
+run-nonfiles-tests: echo-start run-pfbackoff run-write-delete-checknegative run-forensic-haven-cleanup echo-finish
 
 # stress test is all test, but run the stress version if there is both a unit and a stress version. e.g. iozone
 # unlink test is creating increasing numbers of open files which never get closed. Remove for now.
-# run-continual-tests: run-cltest run-urlencode run-statcacheprune run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-iozone-continual
-run-continual-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-pfbackoff run-forensic-haven-cleanup run-iozone-continual echo-finish
+# run-continual-tests: run-cltest run-urlencode run-statcacheprune run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual
+run-continual-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-trunc run-iozone-continual echo-finish
 
 # short stress test is all tests but iozone, but run the stress version if there is both a unit and a stress version. e.g. iozone
-run-short-stress-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc run-pfbackoff run-forensic-haven-cleanup echo-finish
+run-short-stress-tests: echo-start run-cltest run-urlencode run-statcacheprune run-dutest run-writefiles-create run-readrecursive run-writefiles-remove run-readwhatwaswritten-stress run-readwhatwaswritten-unlink-stress run-continualwrites-unit run-rename run-trunc echo-finish
 
 # run this to test the system under error. To do this:
 # use the fusedav client inject error mechanism. Use the writewrite_test 
@@ -162,7 +186,9 @@ run-forensic-haven-test: run-forensic-haven-unit
 
 echo-start:
 	@ echo "Start: "; date
+	@ echo "Current Directory: $(curdir)"
 
+.PHONY: echo-finish
 echo-finish:
 	@ echo "Finish: "; date
 
@@ -177,6 +203,25 @@ run-statcacheprune:
 
 run-dutest:
 	$(dutest) $(dutest-flags)
+
+run-writefiles-create:
+	$(writefiles-create) $(writefiles-create-flags)
+
+run-writefiles-remove:
+	$(writefiles-remove) $(writefiles-remove-flags)
+
+.PHONY: run-write-delete-checknegative
+run-write-delete-checknegative:
+	$(write-delete-checknegative) $(write-delete-checknegative-flags)
+
+.PHONY: run-forensic-haven-cleanup
+run-forensic-haven-cleanup:
+	$(forensic-haven-cleanup) $(forensic-haven-flags)
+
+# Seems .PHONY is needed for this one; not sure why
+.PHONY: run-pfbackoff
+run-pfbackoff:
+	$(pfbackoff) $(pfbackoff-flags)
 
 run-iozone-unit:
 	$(iozone) -Ra $(iozone-unit-flags)
@@ -217,10 +262,13 @@ $(openunlinkclose): $(testdir)/openunlinkclose.c
 run-continualwrites-unit: $(continualwrites)
 	$(continualwrites) -f16 $(continualwrites-flags)
 
-run-rename-unit: $(rename)
-	$(rename) -f16 $(rename-flags)
-
 $(continualwrites): $(testdir)/continualwrites.c
+	cc $< -std=c99 -g -o $@
+
+run-rename: $(rename)
+	$(rename) $(rename-flags)
+
+$(rename): $(testdir)/rename.c
 	cc $< -std=c99 -g -o $@
 
 run-one-open-many-writes-unit: $(one-open-many-writes)
@@ -240,9 +288,6 @@ run-trunc: $(trunc)
 
 $(trunc): $(testdir)/trunc.c
 	cc $< -std=c99 -g -o $@
-
-run-pfbackoff: $(pfbackoff)
-	$(pfbackoff) $(pfbackoff-flags)
 
 run-timestamptest:
 	$(timestamptest) $(timestamptest-flags)
@@ -272,6 +317,3 @@ run-perfanalysis-read: $(perfanalysis-read)
 	
 $(perfanalysis-read): $(testdir)/perfanalysis-writeread.c
 	cc $< -std=c99 -g -o $@
-
-run-forensic-haven-cleanup:
-	$(forensic-haven-cleanup) $(forensic-haven-flags)
