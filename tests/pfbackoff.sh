@@ -139,7 +139,7 @@ journalctl -a -u srv-bindings-$bid-files.mount --since "$since" --no-pager > $ou
 gjctl=$(grep "requires_propfind.*$basemissingfile" $outfile)
 if [ $? -ne 0 ]; then
     fail=$((fail + 1))
-    echo "FAIL: TEST 1"
+    echo "FAIL: TEST 1: gjctl"
 else
     pass=$((pass + 1))
 
@@ -206,7 +206,7 @@ journalctl -a -u srv-bindings-$bid-files.mount --since "$since" --no-pager > $ou
 gjctl=$(grep "requires_propfind.*$basemissingfile" $outfile)
 if [ $? -ne 0 ]; then
     fail=$((fail + 1))
-    echo "FAIL: TEST 1"
+    echo "FAIL: TEST 2: gjctl"
 else
     pass=$((pass + 1))
 
@@ -219,10 +219,10 @@ else
     
     if [ $? -eq 0 ]; then
         fail=$((fail + 1))
-        echo "FAIL: TEST 1"
+        echo "FAIL: TEST 2"
     else
         pass=$((pass + 1))
-        echo "PASS: TEST 1"
+        echo "PASS: TEST 2"
     fi
 fi
 

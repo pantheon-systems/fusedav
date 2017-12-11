@@ -185,8 +185,7 @@ run-write-errors: run-continualwrites-unit
 run-forensic-haven-test: run-forensic-haven-unit
 
 echo-start:
-	@ echo "Start: "; date
-	@ echo "Current Directory: $(curdir)"
+	@ echo "Start: "; date; echo "Current Directory: $(curdir)"
 
 .PHONY: echo-finish
 echo-finish:

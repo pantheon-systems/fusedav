@@ -53,34 +53,17 @@ struct stat_cache_iterator {
     size_t key_prefix_len;
 };
 
-// For values which have been requested but don't exist in the cache
-// Make this a structure so that if we need more fields in the
-// future, we will have the facility to add them.
-struct stat_cache_negative_value {
-    // Track the number of times a propfind has returned ENOENT on this path
-    time_t propfinds_made;
-};
-
 // For values which exist in the cache
 struct stat_cache_value {
     struct stat st;
     unsigned long local_generation;
     time_t updated;
-    // Unused
-    bool prepopulated; // Added to the local cache; not from the server.
-    // We aren't using remote_generation, so reuse the field
-    // Since the items we store in the cache are all of a size
-    // which included remote_generation, leave it in.
-    // Make sure struct stat_cache_negative_value never exceeds
-    // RGEN_LEN in length.
-    union {
-        char remote_generation[RGEN_LEN];
-        struct stat_cache_negative_value negative_value;
-    } negative_value;
+    bool from_propfind; // A propfind caused this update
+    char remote_generation[RGEN_LEN];
 };
 
 void stat_cache_print_stats(void);
-int print_stat(struct stat *stbuf, const char *title);
+int print_stat(struct stat *stbuf, const char *title, const char *path);
 
 unsigned long stat_cache_get_local_generation(void);
 
@@ -94,7 +77,9 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
 void stat_cache_value_free(struct stat_cache_value *value);
 
 bool stat_cache_is_negative_entry(struct stat_cache_value value);
-void stat_cache_negative_entry(stat_cache_t *cache, const char* path, bool update, GError **gerr);
+void stat_cache_negative_set(struct stat_cache_value *value);
+time_t stat_cache_next_propfind(struct stat_cache_value value);
+void stat_cache_from_propfind(struct stat_cache_value *value, bool bvalue);
 void stat_cache_delete(stat_cache_t *cache, const char* path, GError **gerr);
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr);
 void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsigned long minimum_local_generation, GError **gerr);
