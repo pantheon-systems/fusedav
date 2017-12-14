@@ -29,6 +29,7 @@ config.h.in
 /tests/forensic-haven-test
 /tests/openunlinkclose
 /tests/trunc
+/tests/rename
 tests/perfanalysis-read
 tests/perfanalysis-write
 tests/one-open-many-writes
