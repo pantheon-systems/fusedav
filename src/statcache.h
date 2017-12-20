@@ -88,6 +88,6 @@ void stat_cache_walk(void);
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path_prefix, 
             const char *filename, void *user), void *user, bool force);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
-void stat_cache_prune(stat_cache_t *cache);
+void stat_cache_prune(stat_cache_t *cache, bool first);
 
 #endif
