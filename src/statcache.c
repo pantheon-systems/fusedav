@@ -37,6 +37,9 @@
 #include "fusedav-statsd.h"
 
 #define CACHE_TIMEOUT 3
+// The version of the data stored in the stat cache
+const uint64_t STAT_CACHE_DATA_VERSION = 2;
+static uint64_t data_version = 0;
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 // Define and initialize pfsamplerate, which will be used across files
@@ -147,21 +150,98 @@ static const char *key2path(const char *key) {
     return NULL;
 }
 
+// As we change the size and content of the data we store in the stat cache, we
+// track which version this instantiation is using.
+// As the cache gets deleted and recreated over time, earlier version of data
+// get deleted, and new versions inserted
+// Get the data version out of the cache
+static uint64_t stat_cache_data_version_get(stat_cache_t *cache, GError **gerr){
+    const char *funcname = "stat_cache_data_version_get";
+    leveldb_readoptions_t *options;
+    const char *key = "data_version";
+    char *errptr = NULL;
+    uint64_t *value = NULL;
+    uint64_t ret;
+    size_t vallen;
+
+    options = leveldb_readoptions_create();
+    leveldb_readoptions_set_fill_cache(options, false);
+    value = (uint64_t *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &errptr);
+    leveldb_readoptions_destroy(options);
+
+    if (errptr != NULL || inject_error(statcache_error_data_version_get)) {
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "%s: leveldb_get error: %s", funcname, errptr ? errptr : "inject-error");
+        free(errptr);
+        free(value);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "%s: leveldb_get error, kill fusedav process", funcname);
+        kill(getpid(), SIGTERM);
+        return 0;
+    }
+
+    if (value == NULL) {
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: no data version detected for %s.", funcname, key);
+        return 0;
+    }
+
+    ret = *value;
+
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: returning data version %lu for %s.", funcname, ret, key);
+
+    free(value);
+    return ret;
+}
+
+static void stat_cache_data_version_set(stat_cache_t *cache, const uint64_t data_ver, GError **gerr){
+    const char *funcname = "stat_cache_data_version_set";
+    leveldb_writeoptions_t *options;
+    const char *key = "data_version";
+    char *errptr = NULL;
+
+    options = leveldb_writeoptions_create();
+    leveldb_put(cache, options, key, strlen(key) + 1, (const char *) &data_ver, sizeof(uint64_t), &errptr);
+    leveldb_writeoptions_destroy(options);
+
+    if (errptr != NULL || inject_error(statcache_error_data_version_set)) {
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "%s: leveldb_set error: %s", funcname, errptr ? errptr : "inject-error");
+        free(errptr);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "%s: leveldb_set error, kill fusedav process", funcname);
+        kill(getpid(), SIGTERM);
+        return;
+    }
+
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: put data version %lu.", funcname, data_ver);
+
+    return;
+}
+
 static stat_cache_t *gcache; // Save off pointer to cache for stat_cache_walk
 
 void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *supplemental, char *cache_path, GError **gerr) {
+    const char *funcname = "stat_cache_open";
     char *errptr = NULL;
     char storage_path[PATH_MAX];
+    bool exists;
+    GError *subgerr = NULL;
 
     BUMP(statcache_open);
 
     // Check that a directory is set.
     if (!cache_path || inject_error(statcache_error_cachepath)) {
-        g_set_error (gerr, leveldb_quark(), EINVAL, "stat_cache_open: no cache path specified.");
+        g_set_error (gerr, leveldb_quark(), EINVAL, "%s: no cache path specified.", funcname);
         return;
     }
 
     snprintf(storage_path, PATH_MAX, "%s/leveldb", cache_path);
+
+    // Note if the cache does or doesn't exist
+    // This will be used to help set the version of the data in the cache
+    if (access(storage_path, F_OK) == -1) {
+        // Cache does not exist, will be created.
+        exists = false;
+    }
+    else {
+        exists = true;
+    }
 
     supplemental->options = leveldb_options_create();
 
@@ -180,8 +260,41 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
     *cache = leveldb_open(supplemental->options, storage_path, &errptr);
     gcache = *cache; // save off pointer to cache for stat_cache_walk
     if (errptr || inject_error(statcache_error_openldb)) {
-        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_open: Error opening db; %s.", errptr ? errptr : "inject-error");
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "%s: Error opening db; %s.", funcname, errptr ? errptr : "inject-error");
         free(errptr);
+        return;
+    }
+
+    // If this cache already has a data_version entry, use it.
+    // If this cache is newly created, it is empty and all new data will be of the latest version
+    // If this is cache already exists and doesn't have a data_version entry, it must have been created with
+    // an earlier version of fusedav which didn't have a data version, so assume version 1.
+    if (exists) {
+        // Get the version of the data in the cache
+        // If it doesn't exist, assume 1.0, the original version
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: Cache exists, getting data version", funcname);
+        data_version = stat_cache_data_version_get(*cache, &subgerr);
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+            return;
+        }
+        if (data_version == 0) {
+            data_version = 1;
+            log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, 
+                    "%s: No data version entry detected, using %d", funcname, data_version);
+        }
+    }
+    else {
+        // If the cache is empty, then all data inserted will be the version indicated
+        // by this version of fusedav
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: Cache does not exist, using new data version %d", funcname);
+        data_version = STAT_CACHE_DATA_VERSION;
+    }
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: Using data version %d", funcname, data_version);
+
+    stat_cache_data_version_set(*cache, data_version, &subgerr);
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
         return;
     }
 
@@ -720,13 +833,14 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: calling stat_cache_prune on %s : deletedentries %u", path_prefix, deleted_entries);
     // Only prune if there are deleted entries; otherwise there's no work to do
     if (deleted_entries > 0) {
-        stat_cache_prune(cache);
+        bool first = false;
+        stat_cache_prune(cache, first);
     }
 
     return;
 }
 
-void stat_cache_prune(stat_cache_t *cache) {
+void stat_cache_prune(stat_cache_t *cache, bool first) {
     // leveldb stuff
     leveldb_readoptions_t *roptions;
     leveldb_writeoptions_t *woptions;
@@ -802,12 +916,21 @@ void stat_cache_prune(stat_cache_t *cache) {
             // armor against potential faults
             key = key2path(iterkey);
             if (key == NULL) {
-                log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring malformed iterkey");
-                woptions = leveldb_writeoptions_create();
-                leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
-                leveldb_writeoptions_destroy(woptions);
-                ++issues;
-                continue;
+                // If the iterkey is "data_version", it will fail the key2path test, so watch for it.
+                // This signals that processing of regular stat cache entries is complete.
+                // Other stat cache entries have paths in them and pass the key2path test, e.g.
+                // fc:/path and updated_children:/path
+                if (!strncmp(iterkey, "data_version", strlen("data_version"))) {
+                    break;
+                }
+                else {
+                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring malformed iterkey: %s", iterkey);
+                    woptions = leveldb_writeoptions_create();
+                    leveldb_delete(cache, woptions, iterkey, strlen(iterkey) + 1, &errptr);
+                    leveldb_writeoptions_destroy(woptions);
+                    ++issues;
+                    continue;
+                }
             }
             // We'll need to change path below, so we don't want it to be a part of iterkey.
             // Make a copy first.
@@ -827,7 +950,8 @@ void stat_cache_prune(stat_cache_t *cache) {
 
             // @TODO seems not to set errno on returning 0
             if (depth == 0 /*&& errno != 0*/) {
-                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: depth = 0; break:%d, %d", depth, errno);
+                log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, 
+                        "stat_cache_prune: depth = 0; iterkey: %s; break:%d, %d", iterkey, depth, errno);
                 break;
             }
 
@@ -893,6 +1017,14 @@ void stat_cache_prune(stat_cache_t *cache) {
                             break;
                         }
                     }
+                    else {
+                        // Future version of fusedav will have negative entries. If we revert a binding back, get rid
+                        // of these negative entries on startup, so as not to confuse this version of fusedav
+                        if (first && itervalue->st.st_mode == 0) {
+                            log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting negative entry \'%s\'", path);
+                            stat_cache_delete(cache, path, NULL);
+                        }
+                    }
                 }
                 else {
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
@@ -905,6 +1037,26 @@ void stat_cache_prune(stat_cache_t *cache) {
         }
         ++pass;
         log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: updating pass %d", pass);
+    }
+
+    // Handle data_version entries
+    leveldb_iter_seek(iter, "data_version", strlen("data_version") + 1);
+
+    for (; leveldb_iter_valid(iter); leveldb_iter_next(iter)) {
+        iterkey = leveldb_iter_key(iter, &klen);
+        log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "DBG: stat_cache_prune: data_version: %s", iterkey);
+        if (!strncmp(iterkey, "data_version", strlen("data_version"))) {
+            const uint64_t *iterv;
+            iterv = (const uint64_t *) leveldb_iter_value(iter, &vlen);
+            log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: data_version: %lu", *iterv);
+            break;
+        }
+
+        // If we pass the last key which begins with data_version, move on
+        if (strncmp(iterkey, "data_version", strlen("data_version"))) {
+            log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: passed data_version on %s", iterkey);
+            break;
+        }
     }
 
     // Handle updated_children entries

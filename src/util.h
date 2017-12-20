@@ -115,6 +115,8 @@ void *inject_error_mechanism(void *ptr);
 #define statcache_error_readchildrenldb 74
 #define statcache_error_setldb 75
 #define statcache_error_deleteldb 76
+#define statcache_error_data_version_get 77
+#define statcache_error_data_version_set 78
 
 #define config_error_parse 80
 #define config_error_sessioninit 81
