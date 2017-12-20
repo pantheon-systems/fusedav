@@ -71,8 +71,8 @@ unsigned long stat_cache_get_local_generation(void) {
     return ret;
 }
 
-int print_stat(struct stat *stbuf, const char *title) {
-    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "stat: %s", title);
+int print_stat(struct stat *stbuf, const char *title, const char *path) {
+    log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "stat: %s :: %s", title, path);
     log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_mode=%04o", stbuf->st_mode);
     log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_nlink=%ld", stbuf->st_nlink);
     log_print(LOG_DEBUG, SECTION_STATCACHE_OUTPUT, "  .st_uid=%d", stbuf->st_uid);
@@ -246,7 +246,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
     else if (value->st.st_mode == 0) {
         log_print(LOG_INFO, SECTION_STATCACHE_CACHE, "stat_cache_value_get: negative entry on path: %s", path);
         stats_counter("statcache_negative_entry", 1, pfsamplerate);
-        print_stat(&value->st, "stat_cache_value_get");
+        print_stat(&value->st, "stat_cache_value_get", path);
         return value;
     }
 
@@ -297,7 +297,8 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
                     directory, time_since);
             free(directory);
             if (time_since > CACHE_TIMEOUT) {
-                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: %s is too old (%lu seconds).", 
+                log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, 
+                        "stat_cache_value_get: Parent directory for %s is too old (%lu seconds).", 
                         path, time_since);
                 free(value);
                 stats_counter("statcache_stale", 1, pfsamplerate);
@@ -395,42 +396,9 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
     return ret;
 }
 
-void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr) {
-    leveldb_writeoptions_t *options;
-    char *errptr = NULL;
-    char *key;
-
-    if (path == NULL) {
-        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_value_set: input path is null");
-        return;
-    }
-
-    BUMP(statcache_value_set);
-
-    assert(value);
-
-    value->updated = time(NULL);
-    value->local_generation = stat_cache_get_local_generation();
-
-    key = path2key(path, false);
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "CSET: %s (mode %04o: updated %lu: loc_gen %lu)",
-        key, value->st.st_mode, value->updated, value->local_generation);
-
-    options = leveldb_writeoptions_create();
-    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
-    leveldb_writeoptions_destroy(options);
-
-    free(key);
-
-    if (errptr != NULL || inject_error(statcache_error_setldb)) {
-        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "stat_cache_value_set: leveldb_set error: %s", errptr ? errptr : "inject-error");
-        free(errptr);
-        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "stat_cache_value_set: leveldb_get error, kill fusedav process");
-        kill(getpid(), SIGTERM);
-        return;
-    }
-
-    return;
+// Use atime to store the next time we want a propfind
+time_t stat_cache_next_propfind(struct stat_cache_value value) {
+    return value.st.st_atime;
 }
 
 // A negative entry is an item in the cache which represents a miss,
@@ -445,19 +413,41 @@ bool stat_cache_is_negative_entry(struct stat_cache_value value) {
     else return false;
 }
 
+// We use st_mode == 0 to denote that the entry is a negative (non-existing) one
+void stat_cache_negative_set(struct stat_cache_value *value) {
+    value->st.st_mode = 0;
+}
+
+// We need to know if this access was from a propfind in order to
+// correctly note when to next call propfind on a negative entry
+void stat_cache_from_propfind(struct stat_cache_value *value, bool bvalue) {
+    value->from_propfind = bvalue;
+}
+
+// Determine the next fibs value (if we've reached it)
+// curvalue is always a fib
+static int next_fibs(const int curvalue, const int idx) {
+    // A negative entry will gradually wait longer and longer to retry until
+    // about 10 minutes (610 seconds); then every 610 seconds thereafter
+    static const int fibs[] = {0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610};
+    static const int fibs_len = sizeof(fibs) / sizeof(int);
+
+    // If we're at the last element already, return that last indexed value
+    // (It should never be greater than fibs_len - 1; just being careful)
+    if (idx >= fibs_len - 1) return fibs[fibs_len - 1];
+
+    // If an exact match, return the next indexed value
+    if (curvalue == fibs[idx]) return fibs[idx + 1];
+
+    // The sentinel
+    return -1;
+}
 
 // Create or update a negative entry in the stat cache for a deleted or non-existent object
-void stat_cache_negative_entry(stat_cache_t *cache, const char *path, bool update, GError **gerr) {
+static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr) {
     static const char *funcname = "stat_cache_negative_entry";
-    struct stat_cache_value newvalue;
     struct stat_cache_value *existing = NULL;
     GError *subgerr = NULL ;
-
-
-    // A negative value has no values in fields, and st_mode as 0 is our 
-    // sentinel for negative value, so initialize to all zero
-    // Its propfinds_made field will also be zero'ed, which is correct
-    memset(&newvalue, 0, sizeof(struct stat_cache_value));
 
     existing = stat_cache_value_get(cache, path, true, &subgerr);
     if (subgerr) {
@@ -467,31 +457,103 @@ void stat_cache_negative_entry(stat_cache_t *cache, const char *path, bool updat
 
     if (existing) {
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: incrementing entry %s", funcname, path);
-        // If we already have an existing value in the cache, and it is negative,
-        // transfer those value to the new entry. If we are updating, let it be known
-        // that yet another attempt has been made unsuccessfully to access this item
-        // We only update when we do a propfind and the item is still non-existent. We
-        // avoid updating on normal cleanup activities like stat_cache_prune
+        // Keep mtime constant, equal to the time when the negative entry was created
+        // atime then is incremented by the next fib
         if (stat_cache_is_negative_entry(*existing)) {
-            newvalue.negative_value.negative_value = existing->negative_value.negative_value;
-            // Protect against some measure of overflow; not necessary to get the exact type
-            if (update && newvalue.negative_value.negative_value.propfinds_made < UINT_MAX) {
-                newvalue.negative_value.negative_value.propfinds_made++;
+            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: negative entry %s", funcname, path);
+            if (value->from_propfind) {
+                int curfib;
+                int nextfib;
+                int idx = 0;
+                curfib = existing->st.st_atime - existing->st.st_mtime;
+                nextfib = next_fibs(curfib, idx);
+                while (nextfib == -1) {
+                    idx++;
+                    nextfib = next_fibs(curfib, idx);
+                }
+
+                // Reset mtime to the current atime, and atime to the nextfib increment
+                value->st.st_mtime = existing->st.st_atime;
+                value->st.st_atime += existing->st.st_atime + nextfib;
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
+                        "%s: %s: negative entry from propfind; mode: %lu; atime: %lu; mtime: %lu", 
+                        funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
+            }
+            else {
+                // Just copy the st from existing to value
+                value->st = existing->st;
+                log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
+                        "%s: %s: negative entry not from propfind; mode: %lu; atime: %lu; mtime: %lu", 
+                        funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
             }
         }
-
+        free(existing);
     }
     else {
+        time_t curtime = time(NULL);
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: creating entry %s", funcname, path);
+        value->st.st_mtime = curtime;
+        value->st.st_atime = curtime + 1; // the next fib
     }
-
-    // Put it in the stat cache. If the subsequent propfind indicates the path exists,
-    // a new entry with proper values will be created and will overwrite this entry
-    stat_cache_value_set(cache, path, &newvalue, &subgerr);
 
     // Check for error and return
     if (subgerr) {
         g_propagate_prefixed_error(gerr, subgerr, "%s: failed setting new negative entry for %s", funcname, path);
+    }
+
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: %s: mode: %lu; atime: %lu; mtime: %lu", 
+            funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
+
+    return;
+}
+
+void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr) {
+    static const char *funcname = "stat_cache_value_set";
+    leveldb_writeoptions_t *options;
+    GError *subgerr = NULL ;
+    char *errptr = NULL;
+    char *key;
+
+    if (path == NULL) {
+        log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "%s: input path is null", funcname);
+        return;
+    }
+
+    BUMP(statcache_value_set);
+
+    assert(value);
+
+    if (stat_cache_is_negative_entry(*value)) {
+        // Update value with negative entry values
+        stat_cache_negative_entry(cache, path, value, &subgerr);
+        if (subgerr) {
+            g_propagate_prefixed_error(gerr, subgerr, "%s: failed on stat_cache_negative_entry for %s", funcname, path);
+            return;
+        }
+        log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: negative_entry; %s (mode %04o: atime %lu: mtime %lu)",
+            funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
+    }
+
+    value->updated = time(NULL);
+    value->local_generation = stat_cache_get_local_generation();
+
+    key = path2key(path, false);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: %s (mode %04o: updated %lu: loc_gen %lu: atime %lu: mtime %lu)",
+        funcname, key, value->st.st_mode, value->updated, value->local_generation, value->st.st_atime, value->st.st_mtime);
+
+    options = leveldb_writeoptions_create();
+    leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
+    leveldb_writeoptions_destroy(options);
+
+    free(key);
+
+    if (errptr != NULL || inject_error(statcache_error_setldb)) {
+        g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "%s: leveldb_set error: %s", funcname, errptr ? errptr : "inject-error");
+        free(errptr);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "%s: leveldb_get error, kill fusedav process", funcname);
+        kill(getpid(), SIGTERM);
+        return;
     }
 
     return;
@@ -526,18 +588,21 @@ void stat_cache_delete(stat_cache_t *cache, const char *path, GError **gerr) {
 
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr) {
     char *p;
-    // false since this is not the result of a successful propfind
-    bool update = false;
     GError *tmpgerr = NULL;
+    struct stat_cache_value value;
 
     BUMP(statcache_del_parent);
+
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: %s", path);
     if ((p = path_parent(path))) {
 
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: deleting parent %s", p);
 
-        stat_cache_negative_entry(cache, p, update, &tmpgerr);
+        stat_cache_negative_set(&value);
+        stat_cache_value_set(cache, path, &value, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
         }
@@ -551,7 +616,8 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
     }
     else {
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_parent: not deleting parent, deleting child %s", path);
-        stat_cache_negative_entry(cache, path, update, &tmpgerr);
+        stat_cache_negative_set(&value);
+        stat_cache_value_set(cache, path, &value, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
         }
@@ -779,10 +845,12 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
     struct stat_cache_entry *entry;
     GError *tmpgerr = NULL;
     unsigned int deleted_entries = 0;
-    // false since this is not the result of a successful propfind
-    bool update = false;
+    struct stat_cache_value value;
 
     BUMP(statcache_delete_older);
+
+    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+    memset(&value, 0, sizeof(struct stat_cache_value));
 
     log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s", path_prefix);
     iter = stat_cache_iter_init(cache, path_prefix);
@@ -792,14 +860,15 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
             log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
                 entry->key, minimum_local_generation, entry->value->local_generation);
             if (entry->value->local_generation < minimum_local_generation) {
-                stat_cache_negative_entry(cache, key2path(entry->key), update, &tmpgerr);
-                ++deleted_entries;
+                stat_cache_negative_set(&value);
+                stat_cache_value_set(cache, key2path(entry->key), &value, &tmpgerr);
                 if (tmpgerr) {
                     g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_older: ");
                     free(entry);
                     stat_cache_iterator_free(iter);
                     return;
                 }
+                ++deleted_entries;
             }
         }
         free(entry);
@@ -849,9 +918,6 @@ void stat_cache_prune(stat_cache_t *cache) {
     clock_t elapsedtime;
     static unsigned int numcalls = 0;
     static unsigned long totaltime = 0; //
-
-    // false since this is not the result of a successful propfind
-    bool update = false;
 
     BUMP(statcache_prune);
 
@@ -989,10 +1055,14 @@ void stat_cache_prune(stat_cache_t *cache) {
                     }
                 }
                 else {
+                    struct stat_cache_value value;
+                    // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
+                    memset(&value, 0, sizeof(struct stat_cache_value));
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
                     log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
-                    stat_cache_negative_entry(cache, path, update, NULL);
+                    stat_cache_negative_set(&value);
+                    stat_cache_value_set(cache, path, &value, NULL);
                 }
                 free(parentpath);
             }
