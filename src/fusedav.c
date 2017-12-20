@@ -2220,7 +2220,7 @@ static void *cache_cleanup(void *ptr) {
         if (gerr) {
             processed_gerror("cache_cleanup: ", config->cache_path, &gerr);
         }
-        stat_cache_prune(config->cache);
+        stat_cache_prune(config->cache, first);
         if (!first) {
             binding_busyness_stats();
         }
