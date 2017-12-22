@@ -588,7 +588,7 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
                 // Reset mtime to the current atime, and atime to the nextfib increment
                 value->st.st_mtime = existing->st.st_atime;
                 value->st.st_atime += existing->st.st_atime + nextfib;
-                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
                         "%s: %s: negative entry from propfind; mode: %lu; atime: %lu; mtime: %lu", 
                         funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
@@ -596,7 +596,7 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
             else {
                 // Just copy the st from existing to value
                 value->st = existing->st;
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, 
                         "%s: %s: negative entry not from propfind; mode: %lu; atime: %lu; mtime: %lu", 
                         funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
             }
@@ -1181,7 +1181,7 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                         // Future version of fusedav will have negative entries. If we revert a binding back, get rid
                         // of these negative entries on startup, so as not to confuse this version of fusedav
                         if (first && itervalue->st.st_mode == 0) {
-                            log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting negative entry \'%s\'", path);
+                            log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting negative entry \'%s\'", path);
                             stat_cache_delete(cache, path, NULL);
                         }
                     }
@@ -1192,7 +1192,7 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                     memset(&value, 0, sizeof(struct stat_cache_value));
                     log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
-                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting \'%s\'", path);
+                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: setting negative entry \'%s\'", path);
                     stat_cache_negative_set(&value);
                     stat_cache_value_set(cache, path, &value, NULL);
                 }
@@ -1259,7 +1259,7 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
             log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: exists in bloom filter (basepath of)\'%s\'", iterkey);
         }
         else {
-            log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: updated_children: deleting \'%s\'", iterkey);
+            log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: updated_children: deleting \'%s\'", iterkey);
             ++deleted_entries;
             // We recreate the basics of stat_cache_delete here, since we can't call it directly
             // since it doesn't deal with keys with "updated_children:"
