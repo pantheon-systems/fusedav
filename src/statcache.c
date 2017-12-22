@@ -290,7 +290,7 @@ void stat_cache_open(stat_cache_t **cache, struct stat_cache_supplemental *suppl
         log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: Cache does not exist, using new data version %d", funcname);
         data_version = STAT_CACHE_DATA_VERSION;
     }
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: Using data version %d", funcname, data_version);
+    log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "%s: Using data version %d", funcname, data_version);
 
     stat_cache_data_version_set(*cache, data_version, &subgerr);
     if (subgerr) {
