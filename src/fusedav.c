@@ -400,6 +400,8 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, 
                         "%s: Expected negative entry (5); got: %s : st_mode=%d", funcname, path, st.st_mode);
             }
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: normal case, deleting: %s", 
+                    funcname, path);
             stat_cache_negative_set(&value);
             stat_cache_value_set(config->cache, path, &value, &subgerr1);
             if (subgerr1) {
@@ -1196,7 +1198,7 @@ static int dav_unlink(const char *path) {
         return processed_gerror("dav_unlink: ", path, &gerr);
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_unlink: deleted \"%s\")", path);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_unlink: deleted \"%s\")", path);
     return 0;
 }
 
