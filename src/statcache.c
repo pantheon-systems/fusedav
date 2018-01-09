@@ -1190,7 +1190,7 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                     struct stat_cache_value value;
                     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
                     memset(&value, 0, sizeof(struct stat_cache_value));
-                    log_print(LOG_DEBUG, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
+                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
                     log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: setting negative entry \'%s\'", path);
                     stat_cache_negative_set(&value);
