@@ -921,7 +921,7 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                 // Other stat cache entries have paths in them and pass the key2path test, e.g.
                 // fc:/path and updated_children:/path
                 if (!strncmp(iterkey, "data_version", strlen("data_version"))) {
-                    break;
+                    continue;
                 }
                 else {
                     log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: ignoring malformed iterkey: %s", iterkey);
