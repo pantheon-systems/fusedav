@@ -63,6 +63,7 @@ if [ $verbose -eq 1 ]; then
     starttime=$(date +%s)
 fi
 
+echo "Current directory: $(pwd)"
 # append; this also creates a file for later tests
 rm cltest.file > /dev/null 2>&1
 rm cltest.file.save > /dev/null 2>&1

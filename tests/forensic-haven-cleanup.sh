@@ -39,7 +39,7 @@ if [ -f ../fusedav.conf ]; then
 fi
 
 if [ ! -f fusedav.conf ]; then
-    echo "ERROR: Need to be in /srv/bindings/<bid> directory"
+	echo "ERROR: Need to be in /srv/bindings/<bid> directory: $(pwd)"
     exit
 fi
 
