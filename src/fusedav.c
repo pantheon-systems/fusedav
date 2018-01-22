@@ -274,9 +274,10 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                     funcname, path, existing->updated, st.st_ctime);
         }
         else {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+            log_print(LOG_INFO, SECTION_FUSEDAV_PROP, 
                     "%s: Ignoring outdated creation of path: %s (%lu %lu)", 
                     funcname, path, existing->updated, st.st_ctime);
+            stat_cache_value_set(config->cache, path, &value, &subgerr1);
         }
     }
 
@@ -293,6 +294,10 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             // Nothing to do
             log_print(LOG_INFO, SECTION_FUSEDAV_PROP, 
                     "%s: Updated equals ctime, but operations match, nothing to do : %s", funcname, path);
+            // But we still need to call 'set' to update the local_generation
+            if (!local_negative) {
+                stat_cache_value_set(config->cache, path, &value, &subgerr1);
+            }
         }
         else {
             CURL *session = NULL;
