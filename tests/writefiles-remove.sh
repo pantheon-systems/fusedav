@@ -6,7 +6,7 @@ usage()
 cat << EOF
 usage: $0 options
 
-This script runs the command line tests
+This script removes files created with the writefiles-create script
 
 OPTIONS:
    -h      Show this message
@@ -58,26 +58,33 @@ do
      esac
 done
 
+# If no bid was passed in, see if we are in a directory where
+# we can extract a valid bid
 if [ $bid == "none" ]; then
-    echo "-b <binding uuid> is required. Exiting ..."
-    exit
+    if [ -f ../fusedav.conf ]; then
+	cd ..
+    fi
+    if [ ! -f fusedav.conf ]; then
+        echo "-b <binding uuid> is required. Exiting ..."
+        exit
+    fi
+    curdir=$(pwd)
+    bid=${curdir##*/}
 fi
+
 biddir=/srv/bindings/$bid/files
 
 if [ $numdirs -eq 0 ]; then
-    numdirs=100
+    numdirs=10
 fi
 
 if [ $numfiles -eq 0 ]; then
-    numfiles=1000
+    numfiles=100
 fi
 
 if [ $verbose -eq 1 ]; then
     starttime=$(date +%s)
 fi
-
-# append; this also creates a file for later tests
-head -c 64 /dev/urandom > urlencode.file
 
 iters=0
 numdir=1
@@ -85,11 +92,6 @@ while [ $numdir -le $numdirs ]
 do
 	dirnum=$(( $numdir + $startdir ))
 	dirname=$biddir/dir-$dirnum
-	if [ $verbose -eq 1 ]; then
-		echo "$numdir: mkdir $dirname"
-	fi
-	mkdir $dirname
-	numdir=$(( numdir + 1 ))
 
 	numfile=1
 	while [ $numfile -le $numfiles ]
@@ -97,12 +99,18 @@ do
 	    filenum=$(( $numfile + $startnum ))
 	    filename=$dirname/file-$filenum
 	    if [ $verbose -eq 1 ]; then
-            echo "$iters: head -c 64 /dev/urandom > $filename"
+                echo "$iters: rm -f $filename"
 	    fi
-	    head -c 64 /dev/urandom > $filename
+	    rm -f $filename
 	    numfile=$(( numfile + 1 ))
 	    iters=$(( iters + 1 ))
 	done
+
+	if [ $verbose -eq 1 ]; then
+	    echo "$numdir: rmdir $dirname"
+	fi
+	rmdir $dirname
+	numdir=$(( numdir + 1 ))
 done
 
 if [ $verbose -eq 1 ]; then
