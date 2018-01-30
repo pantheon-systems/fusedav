@@ -695,7 +695,7 @@ static bool set_health_status(char *addr, char *curladdr) {
                     "%s: new entry doesn't have curladdr %s", funcname, addr);
         }
         g_hash_table_replace(node_status.node_hash_table, g_strdup(addr), healthstatus);
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, 
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, 
                 "%s: creating new entry for %s // %s", funcname, addr, curladdr);
         added_entry = true;
     }
@@ -736,7 +736,7 @@ static void construct_resolve_slist(GHashTable *addr_table) {
         if (!exists) {
             // Add to node_hash_table
             set_health_status(key, value);
-            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: added to hash table %s :: %s",
+            log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: added to hash table %s :: %s",
                     funcname, key, value);
         }
     }
@@ -1135,7 +1135,7 @@ static bool needs_new_session(bool tmp_session) {
     log_print(LOG_DEBUG, SECTION_SESSION_DEFAULT, "%s?: session (%p)", funcname, session);
 
     if (!session) {
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: !session", funcname);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "%s: !session", funcname);
         new_session = true;
     }
 
