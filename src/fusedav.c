@@ -269,7 +269,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
      */
     else if (existing && existing->updated > st.st_ctime) {
         if (status_code == 410) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+            log_print(LOG_INFO, SECTION_FUSEDAV_PROP, 
                     "%s: Ignoring outdated removal of path: %s (%lu %lu)", 
                     funcname, path, existing->updated, st.st_ctime);
         }
@@ -402,10 +402,10 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
         if (status_code == 410) {
             // Inserting negative entry
             if (st.st_mode != 0) {
-                log_print(LOG_WARNING, SECTION_FUSEDAV_PROP, 
+                log_print(LOG_INFO, SECTION_FUSEDAV_PROP, 
                         "%s: Expected negative entry (5); got: %s : st_mode=%d", funcname, path, st.st_mode);
             }
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: normal case, deleting: %s", 
+            log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: normal case, deleting: %s", 
                     funcname, path);
             stat_cache_negative_set(&value);
             stat_cache_value_set(config->cache, path, &value, &subgerr1);
@@ -2374,7 +2374,7 @@ int main(int argc, char *argv[]) {
 
     ret = 0;
 
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Left main FUSE loop. Shutting down.");
+    log_print(LOG_INFO, SECTION_FUSEDAV_MAIN, "Left main FUSE loop. Shutting down.");
 
 finish:
     if (gerr) {
@@ -2392,7 +2392,7 @@ finish:
         free(mountpoint);
     }
 
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Unmounted.");
+    log_print(LOG_INFO, SECTION_FUSEDAV_MAIN, "Unmounted.");
 
     if (fuse) {
         fuse_destroy(fuse);
