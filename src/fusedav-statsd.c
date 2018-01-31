@@ -154,18 +154,18 @@ static int set_addr(const char *domain, const char *port, struct stats_server *s
             }
             // Failing to get a socket is not fatal. Try again.
             continue;
-        } else if (logging(LOG_NOTICE, SECTION_STATS_DEFAULT)) { // Don't do all the work if we aren't logging
+        } else if (logging(LOG_INFO, SECTION_STATS_DEFAULT)) { // Don't do all the work if we aren't logging
             // Let's get the human readable IP string
             char ipaddr[INET6_ADDRSTRLEN];
             if (ai->ai_family == AF_INET) {
                 if(inet_ntop(ai->ai_family, &(((struct sockaddr_in *)ai->ai_addr)->sin_addr), ipaddr, INET6_ADDRSTRLEN)) {
-                    log_print(LOG_NOTICE, SECTION_STATS_DEFAULT, "%s: set_socket succeeds on addr %s", funcname, ipaddr);
+                    log_print(LOG_INFO, SECTION_STATS_DEFAULT, "%s: set_socket succeeds on addr %s", funcname, ipaddr);
                 }
             }
             // An IPv6 struct
             else if (ai->ai_family == AF_INET6) {
                 if(inet_ntop(ai->ai_family, &(((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr), ipaddr, INET6_ADDRSTRLEN)) {
-                    log_print(LOG_NOTICE, SECTION_STATS_DEFAULT, "%s: set_socket succeeds on addr %s", funcname, ipaddr);
+                    log_print(LOG_INFO, SECTION_STATS_DEFAULT, "%s: set_socket succeeds on addr %s", funcname, ipaddr);
                 }
             }
         }
