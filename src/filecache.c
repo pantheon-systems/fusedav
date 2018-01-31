@@ -1522,7 +1522,7 @@ static int clear_files(const char *filecache_path, time_t stamped_time, GError *
                             fname, cachefile_path, errno, strerror(errno));
                     --ret;
                 }
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: unlinked %s", fname, cachefile_path);
+                log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "%s: unlinked %s", fname, cachefile_path);
                 ++unlinked;
             }
             else {
@@ -1532,7 +1532,7 @@ static int clear_files(const char *filecache_path, time_t stamped_time, GError *
         }
     }
     closedir(dir);
-    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: visited %d files, unlinked %d, and had %d issues", 
+    log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "%s: visited %d files, unlinked %d, and had %d issues", 
             fname, visited, unlinked, ret);
 
     // return the number of files still left
@@ -1795,6 +1795,6 @@ void filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     }
 
 finish:
-    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues",
+    log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues",
         cached_files, unlinked_files, pruned_files, issues);
 }
