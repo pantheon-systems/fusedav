@@ -1391,6 +1391,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
         return processed_gerror(funcname, path, &gerr);
     }
 
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DIR, "%s: made %s", funcname, path);
     return 0;
 }
 
@@ -2122,7 +2123,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
         return processed_gerror("dav_create: ", path, &gerr);
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_create: created \"%s\"", path);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_create: created \"%s\"", path);
 
     return 0;
 }
