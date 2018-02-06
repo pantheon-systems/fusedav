@@ -1405,7 +1405,6 @@ static int dav_rename(const char *from, const char *to) {
     struct stat st;
     char fn[PATH_MAX];
     struct stat_cache_value *entry = NULL;
-    struct stat_cache_value value;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
 
@@ -1527,8 +1526,10 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
-    memset(&value, 0, sizeof(struct stat_cache_value));
-    stat_cache_value_set(config->cache, from, &value, &gerr);
+    /* For dav_rename, don't set a negative value which will trigger fibonacci delays, since
+     * the 'from' entries are likely to be reused frequently by certain modules
+    */
+    stat_cache_delete(config->cache, from, &gerr);
     // stat_cache_negative_entry(config->cache, from, update, &gerr);
     if (gerr) {
         local_ret = processed_gerror(funcname, from, &gerr);
