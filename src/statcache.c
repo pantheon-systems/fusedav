@@ -561,8 +561,10 @@ static int next_fibs(const int curvalue, const int idx) {
 static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr) {
     static const char *funcname = "stat_cache_negative_entry";
     struct stat_cache_value *existing = NULL;
+    time_t curtime;
     GError *subgerr = NULL ;
 
+    curtime = time(NULL);
     existing = stat_cache_value_get(cache, path, true, &subgerr);
     if (subgerr) {
         g_propagate_prefixed_error(gerr, subgerr, "%s: failed on stat_cache_get for %s", funcname, path);
@@ -576,23 +578,33 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
         if (stat_cache_is_negative_entry(*existing)) {
             log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: negative entry %s", funcname, path);
             if (value->from_propfind) {
+                // Allow propfinds during a probationary period after creation before letting fibonacci delay kick in
+                // Set it to 5 seconds; this is arbitrary, maybe there's a better value
+                const time_t probation_duration = 5;
+                time_t probation;
                 int curfib;
                 int nextfib;
                 int idx = 0;
-                curfib = existing->st.st_atime - existing->st.st_mtime;
-                nextfib = next_fibs(curfib, idx);
-                while (nextfib == -1) {
-                    idx++;
-                    nextfib = next_fibs(curfib, idx);
-                }
 
-                // Reset mtime to the current atime, and atime to the nextfib increment
-                value->st.st_mtime = existing->st.st_atime;
-                value->st.st_atime += existing->st.st_atime + nextfib;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
-                        "%s: %s: negative entry from propfind; mode: %lu; atime: %lu; mtime: %lu", 
-                        funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
+                // If we're in the probationary period, just fall through
+                probation = existing->st.st_ctime + probation_duration;
+                if (probation < curtime) {
+                    curfib = existing->st.st_atime - existing->st.st_mtime;
+                    nextfib = next_fibs(curfib, idx);
+                    while (nextfib == -1) {
+                        idx++;
+                        nextfib = next_fibs(curfib, idx);
+                    }
+
+                    // Reset mtime to the current atime, and atime to the nextfib increment
+                    value->st.st_mtime = existing->st.st_atime;
+                    value->st.st_atime += existing->st.st_atime + nextfib;
+                    value->st.st_ctime = existing->st.st_ctime;
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
+                    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
+                            "%s: %s: negative entry from propfind; mode: %lu; atime: %lu; mtime: %lu", 
+                            funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
+                }
             }
             else {
                 // Just copy the st from existing to value
@@ -605,10 +617,11 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
         free(existing);
     }
     else {
-        time_t curtime = time(NULL);
+        // There was no pre-existing positive entry; create a negative entry from scratch
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: creating entry %s", funcname, path);
         value->st.st_mtime = curtime;
         value->st.st_atime = curtime + 1; // the next fib
+        value->st.st_ctime = curtime;
     }
 
     // Check for error and return
