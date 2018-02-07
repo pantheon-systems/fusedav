@@ -755,7 +755,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
             time_t current_time = time(NULL);
             time_t next_time;
 
-            next_time = stat_cache_next_propfind(*value);
+            next_time = stat_cache_next_propfind(*value, path);
 
             // Our "time to next propfind" is still in the future, so no propfind ...
             if (next_time > current_time) {
