@@ -607,7 +607,7 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
                 value->st.st_atime += existing->st.st_atime + nextfib;
                 // Make sure to pass through the existing ctime
                 value->st.st_ctime = existing->st.st_ctime;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
                         "%s: %s: negative entry from propfind; mode: %lu; atime: %lu; mtime: %lu", 
                         funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
@@ -1007,6 +1007,8 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
                     stat_cache_iterator_free(iter);
                     return;
                 }
+                log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
+                    key2path(entry->key), minimum_local_generation, entry->value->local_generation);
                 ++deleted_entries;
             }
         }
@@ -1206,7 +1208,7 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                     else {
                         // Remove negative entries on startup
                         if (first && itervalue->st.st_mode == 0) {
-                            log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting negative entry \'%s\'", path);
+                            log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting negative entry \'%s\'", path);
                             stat_cache_delete(cache, path, NULL);
                         }
                     }
