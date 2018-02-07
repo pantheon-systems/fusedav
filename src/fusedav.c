@@ -269,12 +269,12 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
      */
     else if (existing && existing->updated > st.st_ctime) {
         if (status_code == 410) {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+            log_print(LOG_INFO, SECTION_FUSEDAV_PROP, 
                     "%s: Ignoring outdated removal of path: %s (%lu %lu)", 
                     funcname, path, existing->updated, st.st_ctime);
         }
         else {
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, 
+            log_print(LOG_INFO, SECTION_FUSEDAV_PROP, 
                     "%s: Ignoring outdated creation of path: %s (%lu %lu)", 
                     funcname, path, existing->updated, st.st_ctime);
             stat_cache_value_set(config->cache, path, &value, &subgerr1);
@@ -408,7 +408,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 log_print(LOG_INFO, SECTION_FUSEDAV_PROP, 
                         "%s: Expected negative entry (5); got: %s : st_mode=%d", funcname, path, st.st_mode);
             }
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: normal case, deleting: %s", 
+            log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: normal case, deleting: %s", 
                     funcname, path);
             stat_cache_negative_set(&value);
             stat_cache_value_set(config->cache, path, &value, &subgerr1);
@@ -505,7 +505,7 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         }
 
         // All files in propfind list will have local_generation > min_generation and will not be subject to deletion
-        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "update_directory: Complete PROPFIND, calling stat_cache_delete_older): %s", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Complete PROPFIND, calling stat_cache_delete_older): %s", path);
         stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -967,7 +967,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
                 stat_cache_from_propfind(&value, true);
                 value.st = *stbuf;
                 value.st.st_mode = 0; // Make it so, even if it already is
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on if", funcname, path);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on if", funcname, path);
                 stat_cache_value_set(config->cache, path, &value, &subgerr);
             }
             if (subgerr) {
@@ -992,7 +992,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             stat_cache_from_propfind(&value, true);
             value.st = *stbuf;
             value.st.st_mode = 0; // Make it so, even if it already is
-            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on else", funcname, path);
+            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on else", funcname, path);
             stat_cache_value_set(config->cache, path, &value, &subgerr);
         }
         if (subgerr) {
