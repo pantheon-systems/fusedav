@@ -198,6 +198,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
     if (subgerr1) {
         g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
+        if (existing) free(existing);
         return;
     }
 
@@ -319,6 +320,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                     // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                     try_release_request_outstanding();
+                    if (existing) free(existing);
                     return;
                 }
 
@@ -748,6 +750,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
                 BUMP(propfind_negative_cache);
                 log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: false on non-negative %s", funcname, path);
             }
+            free(value);
             return stale;
         } 
         // The value was tagged as a negative (non-existent) value ...
@@ -766,6 +769,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
                         "%s: no propfind needed yet on negative entry %s; now:next:upd:made--%lu:%lu:%lu", 
                         funcname, path, current_time, next_time, value->updated);
+                free(value);
                 return false;
             } else {
                 // Time for a new propfind
@@ -774,6 +778,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
                         "%s; new propfind for path: %s, c/nt: %lu: %lu", 
                         funcname, path, current_time, next_time);
 
+                free(value);
                 return true;
             }
         }
