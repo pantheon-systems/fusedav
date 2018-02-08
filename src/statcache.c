@@ -615,7 +615,7 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
             else {
                 // Just copy the st from existing to value
                 value->st = existing->st;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, 
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, 
                         "%s: %s: negative entry not from propfind; mode: %lu; atime: %lu; mtime: %lu", 
                         funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
             }
@@ -1217,9 +1217,9 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                     struct stat_cache_value value;
                     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
                     memset(&value, 0, sizeof(struct stat_cache_value));
-                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
+                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
-                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: setting negative entry \'%s\'", path);
+                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: setting negative entry \'%s\'", path);
                     stat_cache_negative_set(&value);
                     stat_cache_value_set(cache, path, &value, NULL);
                 }
