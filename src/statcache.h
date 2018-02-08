@@ -78,7 +78,7 @@ void stat_cache_value_free(struct stat_cache_value *value);
 
 bool stat_cache_is_negative_entry(struct stat_cache_value value);
 void stat_cache_negative_set(struct stat_cache_value *value);
-time_t stat_cache_next_propfind(struct stat_cache_value value);
+time_t stat_cache_next_propfind(struct stat_cache_value value, const char *path);
 void stat_cache_from_propfind(struct stat_cache_value *value, bool bvalue);
 void stat_cache_delete(stat_cache_t *cache, const char* path, GError **gerr);
 void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **gerr);

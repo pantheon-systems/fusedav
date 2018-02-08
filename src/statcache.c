@@ -511,8 +511,22 @@ time_t stat_cache_read_updated_children(stat_cache_t *cache, const char *path, G
 }
 
 // Use atime to store the next time we want a propfind
-time_t stat_cache_next_propfind(struct stat_cache_value value) {
-    return value.st.st_atime;
+time_t stat_cache_next_propfind(struct stat_cache_value value, const char *path) {
+    static const char *funcname = "stat_cache_negative_entry";
+    // Allow propfinds in first 5 seconds of creation of negative entry,
+    // since modules often check for (non-)existence of file before creating it
+    const time_t probation_delay = 5;
+    time_t curtime;
+    curtime = time(NULL);
+    if (value.st.st_ctime + probation_delay > curtime) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: still within probation period %s; ctime: %lu; probation: %lu", 
+                funcname, path, value.st.st_ctime, curtime);
+        return curtime;
+    } else {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: outside probation period %s; ctime: %lu; probation: %lu; atime: %lu", 
+                funcname, path, value.st.st_ctime, curtime, value.st.st_atime);
+        return value.st.st_atime;
+    }
 }
 
 // A negative entry is an item in the cache which represents a miss,
@@ -561,8 +575,10 @@ static int next_fibs(const int curvalue, const int idx) {
 static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, struct stat_cache_value *value, GError **gerr) {
     static const char *funcname = "stat_cache_negative_entry";
     struct stat_cache_value *existing = NULL;
+    time_t curtime;
     GError *subgerr = NULL ;
 
+    curtime = time(NULL);
     existing = stat_cache_value_get(cache, path, true, &subgerr);
     if (subgerr) {
         g_propagate_prefixed_error(gerr, subgerr, "%s: failed on stat_cache_get for %s", funcname, path);
@@ -589,7 +605,9 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
                 // Reset mtime to the current atime, and atime to the nextfib increment
                 value->st.st_mtime = existing->st.st_atime;
                 value->st.st_atime += existing->st.st_atime + nextfib;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
+                // Make sure to pass through the existing ctime
+                value->st.st_ctime = existing->st.st_ctime;
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: negative entry from propfind %s", funcname, path);
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
                         "%s: %s: negative entry from propfind; mode: %lu; atime: %lu; mtime: %lu", 
                         funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
@@ -597,17 +615,24 @@ static void stat_cache_negative_entry(stat_cache_t *cache, const char *path, str
             else {
                 // Just copy the st from existing to value
                 value->st = existing->st;
-                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, 
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, 
                         "%s: %s: negative entry not from propfind; mode: %lu; atime: %lu; mtime: %lu", 
                         funcname, path, value->st.st_mode, value->st.st_atime, value->st.st_mtime);
             }
+        } else {
+            // We are creating a negative entry from a formerly positive one.
+            // Likely the times have been zeroed out, so reset them
+            value->st.st_mtime = curtime;
+            value->st.st_ctime = curtime;
+            value->st.st_atime = curtime + 1; // the next fib
         }
         free(existing);
     }
     else {
-        time_t curtime = time(NULL);
+        // Access was attempted on a path which doesn't exist. Create a new negative entry
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: creating entry %s", funcname, path);
         value->st.st_mtime = curtime;
+        value->st.st_ctime = curtime;
         value->st.st_atime = curtime + 1; // the next fib
     }
 
@@ -982,6 +1007,8 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *path_prefix, unsig
                     stat_cache_iterator_free(iter);
                     return;
                 }
+                log_print(LOG_NOTICE, SECTION_STATCACHE_CACHE, "stat_cache_delete_older: %s: min_gen %lu: loc_gen %lu",
+                    key2path(entry->key), minimum_local_generation, entry->value->local_generation);
                 ++deleted_entries;
             }
         }
@@ -1179,10 +1206,9 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                         }
                     }
                     else {
-                        // Future version of fusedav will have negative entries. If we revert a binding back, get rid
-                        // of these negative entries on startup, so as not to confuse this version of fusedav
+                        // Remove negative entries on startup
                         if (first && itervalue->st.st_mode == 0) {
-                            log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting negative entry \'%s\'", path);
+                            log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: deleting negative entry \'%s\'", path);
                             stat_cache_delete(cache, path, NULL);
                         }
                     }
@@ -1191,9 +1217,9 @@ void stat_cache_prune(stat_cache_t *cache, bool first) {
                     struct stat_cache_value value;
                     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
                     memset(&value, 0, sizeof(struct stat_cache_value));
-                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
+                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: doesn't exist in bloom filter \'%s\'", parentpath);
                     ++deleted_entries;
-                    log_print(LOG_NOTICE, SECTION_STATCACHE_PRUNE, "stat_cache_prune: setting negative entry \'%s\'", path);
+                    log_print(LOG_INFO, SECTION_STATCACHE_PRUNE, "stat_cache_prune: setting negative entry \'%s\'", path);
                     stat_cache_negative_set(&value);
                     stat_cache_value_set(cache, path, &value, NULL);
                 }

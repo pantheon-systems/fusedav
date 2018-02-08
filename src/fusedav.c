@@ -198,6 +198,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     existing = stat_cache_value_get(config->cache, path, true, &subgerr1);
     if (subgerr1) {
         g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
+        if (existing) free(existing);
         return;
     }
 
@@ -296,6 +297,9 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                     "%s: Updated equals ctime, but operations match, nothing to do : %s", funcname, path);
             // But we still need to call 'set' to update the local_generation
             if (!local_negative) {
+                if (stat_cache_is_negative_entry(value)) {
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "%s: Unexpected negative entry (1); %s", funcname, path);
+                }
                 stat_cache_value_set(config->cache, path, &value, &subgerr1);
             }
         }
@@ -316,6 +320,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                     // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                     try_release_request_outstanding();
+                    if (existing) free(existing);
                     return;
                 }
 
@@ -414,6 +419,9 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             }
         }
         else {
+            if (stat_cache_is_negative_entry(value)) {
+                log_print(LOG_ERR, SECTION_FUSEDAV_PROP, "%s: Unexpected negative entry (2); %s", funcname, path);
+            }
             stat_cache_value_set(config->cache, path, &value, &subgerr1);
             if (subgerr1) {
                 g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
@@ -499,6 +507,7 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         }
 
         // All files in propfind list will have local_generation > min_generation and will not be subject to deletion
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Complete PROPFIND, calling stat_cache_delete_older): %s", path);
         stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
@@ -639,6 +648,9 @@ static void getattr_propfind_callback(__unused void *userdata, const char *path,
     }
     else {
         log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Adding to stat cache: %s", path);
+        if (stat_cache_is_negative_entry(value)) {
+            log_print(LOG_ERR, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: Unexpected negative entry (3); %s", path);
+        }
         stat_cache_value_set(config->cache, path, &value, &subgerr);
         if (subgerr) {
             log_print(LOG_NOTICE, SECTION_FUSEDAV_PROP, "getattr_propfind_callback: %s: %s", path, subgerr->message);
@@ -738,6 +750,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
                 BUMP(propfind_negative_cache);
                 log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: false on non-negative %s", funcname, path);
             }
+            free(value);
             return stale;
         } 
         // The value was tagged as a negative (non-existent) value ...
@@ -745,7 +758,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
             time_t current_time = time(NULL);
             time_t next_time;
 
-            next_time = stat_cache_next_propfind(*value);
+            next_time = stat_cache_next_propfind(*value, path);
 
             // Our "time to next propfind" is still in the future, so no propfind ...
             if (next_time > current_time) {
@@ -756,6 +769,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
                         "%s: no propfind needed yet on negative entry %s; now:next:upd:made--%lu:%lu:%lu", 
                         funcname, path, current_time, next_time, value->updated);
+                free(value);
                 return false;
             } else {
                 // Time for a new propfind
@@ -764,6 +778,7 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
                         "%s; new propfind for path: %s, c/nt: %lu: %lu", 
                         funcname, path, current_time, next_time);
 
+                free(value);
                 return true;
             }
         }
@@ -957,7 +972,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
                 stat_cache_from_propfind(&value, true);
                 value.st = *stbuf;
                 value.st.st_mode = 0; // Make it so, even if it already is
-                log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on if", funcname, path);
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on if", funcname, path);
                 stat_cache_value_set(config->cache, path, &value, &subgerr);
             }
             if (subgerr) {
@@ -982,7 +997,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             stat_cache_from_propfind(&value, true);
             value.st = *stbuf;
             value.st.st_mode = 0; // Make it so, even if it already is
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on else", funcname, path);
+            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on else", funcname, path);
             stat_cache_value_set(config->cache, path, &value, &subgerr);
         }
         if (subgerr) {
@@ -1292,7 +1307,7 @@ static int dav_rmdir(const char *path) {
         trigger_saint_event(CLUSTER_SUCCESS);
     }
 
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "%s: removed(%s)", funcname, path);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DIR, "%s: removed(%s)", funcname, path);
 
     memset(&value, 0, sizeof(struct stat_cache_value));
     stat_cache_value_set(config->cache, path, &value, &gerr);
@@ -1381,6 +1396,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
         return processed_gerror(funcname, path, &gerr);
     }
 
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_DIR, "%s: made %s", funcname, path);
     return 0;
 }
 
@@ -1394,7 +1410,6 @@ static int dav_rename(const char *from, const char *to) {
     struct stat st;
     char fn[PATH_MAX];
     struct stat_cache_value *entry = NULL;
-    struct stat_cache_value value;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
 
@@ -1507,7 +1522,7 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "%s: stat cache moving source entry to destination %d:%s", funcname, fd, to);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "%s: stat cache moving source entry to destination %d:%s -> %s", funcname, fd, from, to);
     stat_cache_value_set(config->cache, to, entry, &gerr);
     if (gerr) {
         local_ret = processed_gerror(funcname, to, &gerr);
@@ -1516,8 +1531,10 @@ static int dav_rename(const char *from, const char *to) {
         goto finish;
     }
 
-    memset(&value, 0, sizeof(struct stat_cache_value));
-    stat_cache_value_set(config->cache, from, &value, &gerr);
+    /* For dav_rename, don't set a negative value which will trigger fibonacci delays, since
+     * the 'from' entries are likely to be reused frequently by certain modules
+    */
+    stat_cache_delete(config->cache, from, &gerr);
     // stat_cache_negative_entry(config->cache, from, update, &gerr);
     if (gerr) {
         local_ret = processed_gerror(funcname, from, &gerr);
@@ -2112,7 +2129,7 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
         return processed_gerror("dav_create: ", path, &gerr);
     }
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "dav_create: created \"%s\"", path);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_create: created \"%s\"", path);
 
     return 0;
 }
