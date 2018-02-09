@@ -444,6 +444,7 @@ static void getdir_cache_callback(__unused const char *path_prefix, const char *
 }
 
 static void update_directory(const char *path, bool attempt_progressive_update, GError **gerr) {
+    const char *funcname = "update_directory";
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
     bool needs_update = true;
@@ -455,11 +456,12 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         time_t last_updated;
         timestamp = time(NULL);
         last_updated = stat_cache_read_updated_children(config->cache, path, &tmpgerr);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: last_updated: %s at %lu", funcname, path, last_updated);
         if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
             return;
         }
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Freshening directory data: %s", path);
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: Freshening directory data: %s", funcname, path);
 
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, last_updated - CLOCK_SKEW,
             getdir_propfind_callback, NULL, &tmpgerr);
@@ -469,18 +471,18 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         // If error is injected, it falls through to final else
         BUMP(propfind_progressive_cache);
         if (propfind_result == 0 && !inject_error(fusedav_error_updatepropfind1)) {
-            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND success");
+            log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: progressive PROPFIND success", funcname);
             needs_update = false;
         }
         else if (propfind_result == -ESTALE && !inject_error(fusedav_error_updatepropfind1)) {
-            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: progressive PROPFIND Precondition Failed.");
+            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: progressive PROPFIND Precondition Failed.", funcname);
         }
         else if (tmpgerr) { // if injecting errors, process this error in preference to fusedav_error_updatepropfind1
-            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
             return;
         }
         else {
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: progressive propfind errored: ");
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: progressive propfind errored: ", funcname);
             return;
         }
     }
@@ -490,7 +492,8 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         unsigned long min_generation;
 
         // If attempt_progressive_update is false, it means this is new data being uploaded
-        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Doing complete PROPFIND (attempt_progressive_update=%d): %s", attempt_progressive_update, path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: Doing complete PROPFIND (attempt_progressive_update=%d): %s", 
+                funcname, attempt_progressive_update, path);
         timestamp = time(NULL);
         // min_generation gets value here
         min_generation = stat_cache_get_local_generation();
@@ -498,28 +501,28 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         propfind_result = simple_propfind_with_redirect(path, PROPFIND_DEPTH_ONE, 0, getdir_propfind_callback, NULL, &tmpgerr);
         BUMP(propfind_complete_cache);
         if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
             return;
         }
         else if (propfind_result < 0 || inject_error(fusedav_error_updatepropfind2)) {
-            g_set_error(gerr, fusedav_quark(), ENETDOWN, "update_directory: Complete PROPFIND failed on %s", path);
+            g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: Complete PROPFIND failed on %s", funcname, path);
             return;
         }
 
         // All files in propfind list will have local_generation > min_generation and will not be subject to deletion
-        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "update_directory: Complete PROPFIND, calling stat_cache_delete_older): %s", path);
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: Complete PROPFIND, calling stat_cache_delete_older): %s", funcname, path);
         stat_cache_delete_older(config->cache, path, min_generation, &tmpgerr);
         if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+            g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
             return;
         }
     }
 
     // Mark the directory contents as updated.
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "update_directory: Marking directory %s as updated at timestamp %lu.", path, timestamp);
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: Marking directory %s as updated at timestamp %lu.", funcname, path, timestamp);
     stat_cache_updated_children(config->cache, path, timestamp, &tmpgerr);
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "update_directory: ");
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
         return;
     }
     return;
