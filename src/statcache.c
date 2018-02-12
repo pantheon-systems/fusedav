@@ -975,6 +975,7 @@ bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path) {
             break;
         }
         free(entry);
+        stat_cache_iter_next(iter);
     }
     stat_cache_iterator_free(iter);
 
