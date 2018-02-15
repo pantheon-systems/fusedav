@@ -74,11 +74,11 @@ do
     echo "$iter: before make: $res"
     echo "$iter: before make: $res" >> $pprof_out
     
-    echo "$iter: make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests"
-    echo "$iter: make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests" >> $pprof_out
+    echo "$iter: make -f /root/pantheon/$fusedavdir/tests/Makefile run-continual-tests testdir=/root/pantheon/$fusedavdir/tests"
+    echo "$iter: make -f /root/pantheon/$fusedavdir/tests/Makefile run-continual-tests testdir=/root/pantheon/$fusedavdir/tests" >> $pprof_out
     
     # run the tests
-    make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests
+    make -f /root/pantheon/$fusedavdir/tests/Makefile run-continual-tests testdir=/root/pantheon/$fusedavdir/tests
 
     if [ $iter -gt 0 ]; then
         # get the most recent heap to use as base to pprof
@@ -94,8 +94,8 @@ do
     
     if [ $iter -gt 0 ]; then
         # do a pprof comparison between latest and previous heap filees
-        echo "pprof --text --lines --inuse_space --base=$prevheap /opt/$fusedavdir/src/fusedav $newheap >> $pprof_out 2>&1"
-        pprof --text --lines --inuse_space --base=$prevheap /opt/$fusedavdir/src/fusedav $newheap >> $pprof_out 2>&1
+        echo "pprof --text --lines --inuse_space --base=$prevheap /root/pantheon/$fusedavdir/src/fusedav $newheap >> $pprof_out 2>&1"
+        pprof --text --lines --inuse_space --base=$prevheap /root/pantheon/$fusedavdir/src/fusedav $newheap >> $pprof_out 2>&1
     fi
     
     res=$(ps aux | grep valhalla | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
