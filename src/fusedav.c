@@ -703,6 +703,7 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
     // If st_mode is 0, this is a negative (non-existing) entry
     else if (response->st.st_mode == 0) {
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "get_stat_from_cache: negative entry response from stat_cache_value_get for path %s.", path);
+        free(response);
         return -ENOENT;
     }
 
@@ -1657,7 +1658,7 @@ static int dav_release(const char *path, __unused struct fuse_file_info *info) {
         else {
             st_size = value->st.st_size;
         }
-        free(value);
+        if (value) free(value);
 
         // sdata now carries a has_error field. If we detect an error on the file,
         // we carry it forward. filecache_sync will detect and cause gerr if it sees an error.

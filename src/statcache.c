@@ -394,6 +394,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
             directory = path_parent(path);
             if (directory == NULL) {
                 log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Stat entry for directory %s is NULL.", path);
+                free(value);
                 stats_counter("statcache_stale", 1, pfsamplerate);
                 return NULL;
             }
@@ -690,7 +691,7 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     if (errptr != NULL || inject_error(statcache_error_setldb)) {
         g_set_error (gerr, leveldb_quark(), E_SC_LDBERR, "%s: leveldb_set error: %s", funcname, errptr ? errptr : "inject-error");
         free(errptr);
-        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "%s: leveldb_get error, kill fusedav process", funcname);
+        log_print(LOG_ALERT, SECTION_STATCACHE_CACHE, "%s: leveldb_set error, kill fusedav process", funcname);
         kill(getpid(), SIGTERM);
         return;
     }
