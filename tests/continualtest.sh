@@ -12,7 +12,8 @@ This script runs the command line tests
 OPTIONS:
    -h      Show this message
    -i      Number of iterations
-   -d      Directory name (default is fusedav)
+   -t      Directory name (default is /opt/fusedav/tests)
+   -b      Binary name (default is /opt/fusedav/src/fusedav)
    -p      pid of fusedav instance
    -v      Verbose
 EOF
@@ -23,8 +24,9 @@ pid=0
 iters=64
 verbose=0
 # assuming we are using base fusedav; but allow for override
-fusedavdir="fusedav"
-while getopts "hi:d:p:v" OPTION
+fusedavtestdir="/opt/fusedav/tests"
+fusedavbinary="/opt/fusedav/src/fusedav"
+while getopts "hi:t:b:p:v" OPTION
 do
      case $OPTION in
          h)
@@ -34,8 +36,11 @@ do
          i)
              iters=$OPTARG
              ;;
-         d)
-             fusedavdir=$OPTARG
+         t)
+             fusedavtestdir=$OPTARG
+             ;;
+         b)
+             fusedavbinary=$OPTARG
              ;;
          p)
              pid=$OPTARG
@@ -74,11 +79,11 @@ do
     echo "$iter: before make: $res"
     echo "$iter: before make: $res" >> $pprof_out
     
-    echo "$iter: make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests"
-    echo "$iter: make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests" >> $pprof_out
+    echo "$iter: make -f $fusedavtestdir/Makefile run-continual-tests testdir=$fusedavtestdir"
+    echo "$iter: make -f $fusedavtestdir/Makefile run-continual-tests testdir=$fusedavtestdir" >> $pprof_out
     
     # run the tests
-    make -f /opt/$fusedavdir/tests/Makefile run-continual-tests testdir=/opt/$fusedavdir/tests
+    make -f $fusedavtestdir/Makefile run-continual-tests testdir=$fusedavtestdir
 
     if [ $iter -gt 0 ]; then
         # get the most recent heap to use as base to pprof
@@ -94,8 +99,8 @@ do
     
     if [ $iter -gt 0 ]; then
         # do a pprof comparison between latest and previous heap filees
-        echo "pprof --text --lines --inuse_space --base=$prevheap /opt/$fusedavdir/src/fusedav $newheap >> $pprof_out 2>&1"
-        pprof --text --lines --inuse_space --base=$prevheap /opt/$fusedavdir/src/fusedav $newheap >> $pprof_out 2>&1
+        echo "pprof --text --lines --inuse_space --base=$prevheap $fusedavbinary $newheap >> $pprof_out 2>&1"
+        pprof --text --lines --inuse_space --base=$prevheap $fusedavbinary $newheap >> $pprof_out 2>&1
     fi
     
     res=$(ps aux | grep valhalla | grep -v grep | grep $pid | awk '{printf "%5d %d\n", $2, $6}')
