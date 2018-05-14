@@ -188,6 +188,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, progressive_propfind, BOOL),
         keytuple(fusedav, refresh_dir_for_file_stat, BOOL),
         keytuple(fusedav, grace, BOOL),
+        keytuple(fusedav, nodaemon, BOOL),
         keytuple(fusedav, cache_uri, STRING),
         keytuple(fusedav, ca_certificate, STRING),
         keytuple(fusedav, client_certificate, STRING),
