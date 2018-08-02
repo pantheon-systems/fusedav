@@ -72,6 +72,7 @@ outfile=/tmp/propfind-negative-entry-backoff.out
 missingfile=files/basic-ops/missing-file.file
 # We could use ${<file>##/} notation, but that would likely complicate it
 basemissingfile=missing-file.file
+missingpath=basic-ops
 
 # The fibonacci sequence; if fewer than this many seconds have passed
 # since last ENOENT propfind on the missing file, no propfind is generated
@@ -136,7 +137,7 @@ fi
 journalctl -a -u srv-bindings-$bid-files.mount --since "$since" --no-pager > $outfile
 
 # If the log level is not high enough, we won't get any output. This is an error.
-gjctl=$(grep "requires_propfind.*$basemissingfile" $outfile)
+gjctl=$(grep "requires_propfind.*$missingpath" $outfile)
 if [ $? -ne 0 ]; then
     fail=$((fail + 1))
     echo "FAIL: TEST 1: gjctl"
@@ -203,7 +204,7 @@ done
 echo "journalctl -a -u srv-bindings-$bid-files.mount --since $since --no-pager > $outfile"
 journalctl -a -u srv-bindings-$bid-files.mount --since "$since" --no-pager > $outfile
 
-gjctl=$(grep "requires_propfind.*$basemissingfile" $outfile)
+gjctl=$(grep "requires_propfind.*$missingpath" $outfile)
 if [ $? -ne 0 ]; then
     fail=$((fail + 1))
     echo "FAIL: TEST 2: gjctl"
