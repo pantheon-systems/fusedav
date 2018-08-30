@@ -51,9 +51,6 @@ struct fuse* fuse = NULL;
 
 #define CLOCK_SKEW 10 // seconds
 
-// Run cache cleanup once a day.
-#define CACHE_CLEANUP_INTERVAL 86400
-
 // 'Soft" limit for core dump to ensure we get them
 #define NEW_RLIM_CUR (512 * 1024*1024)
 
@@ -2237,14 +2234,18 @@ static int write_package_version_file(char *cache_path) {
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
     GError *gerr = NULL;
+    // We would like to do cleanup on startup, to resolve issues
+    // from errant stat and file caches
     bool first = true;
+    // Run cache cleanup once a day by default (24 * 60 * 60)
+    time_t cache_cleanup_interval = 86400
+    const time_t three_hours = 3 * 60 * 60;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "enter cache_cleanup");
 
     while (true) {
-        // We would like to do cleanup on startup, to resolve issues
-        // from errant stat and file caches
-        filecache_cleanup(config->cache, config->cache_path, first, &gerr);
+        bool reduce_interval;
+        reduce_interval = filecache_cleanup(config->cache, config->cache_path, first, &gerr);
         if (gerr) {
             processed_gerror("cache_cleanup: ", config->cache_path, &gerr);
         }
@@ -2252,8 +2253,17 @@ static void *cache_cleanup(void *ptr) {
         if (!first) {
             binding_busyness_stats();
         }
+        // If the filecache_cleanup indicates a site which is filling up file cache quickly,
+        // set it to cleanup more frequently
+        // Don't reduce the interval if this was called on startup
+        if (!first && reduce_interval) {
+            // Let's not be too aggressive; min interval should be 3 hours here
+            if (cache_cleanup_interval > three_hours) {
+                cache_cleanup_interval /= 2;
+            }
+        }
         first = false;
-        if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
+        if ((sleep(cache_cleanup_interval)) != 0) {
             log_print(LOG_CRIT, SECTION_FUSEDAV_DEFAULT, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
         }
