@@ -2238,7 +2238,7 @@ static void *cache_cleanup(void *ptr) {
     // from errant stat and file caches
     bool first = true;
     // Run cache cleanup once a day by default (24 * 60 * 60)
-    time_t cache_cleanup_interval = 86400
+    time_t cache_cleanup_interval = 86400;
     const time_t three_hours = 3 * 60 * 60;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "enter cache_cleanup");

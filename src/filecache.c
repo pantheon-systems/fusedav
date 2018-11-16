@@ -1707,12 +1707,12 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     int issues = 0;
     int pruned_files = 0;
     bool done = false;
-    int total_size = 0;
+    unsigned long total_size = 0;
     time_t earliest = 0;
     // By default, keep any file younger than 8 days old
-    time_t age_out = 691200
-    // Take evasive action if there are more than 128GB in the file cache
-    const int max_cache_size = 128 * 1024 * 1024 * 1024;
+    time_t age_out = 691200;
+    // Take evasive action if there are more than 16GB in the file cache
+    const unsigned long max_cache_size = (unsigned long) (16) *  (1024 * 1024 * 1024);
     bool reduce_interval = false;
 
     BUMP(filecache_cleanup);
