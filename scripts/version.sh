@@ -31,8 +31,8 @@ function gittag {
   git push origin --tags
 }
 
-BUILD=$CIRCLE_BUILD_NUM
-if [ -z "$CIRCLE_BUILD_NUM" ] ; then
+BUILD=${CIRCLE_BUILD_NUM:-}
+if [ -z "$BUILD" ] ; then
   BUILD=0
 fi
 

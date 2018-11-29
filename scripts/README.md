@@ -4,11 +4,11 @@ The scripts herein are invoked by CircleCI via the circle.yml. They use docker c
 
 ## Environment Variables
 * CIRCLE_BUILD_NUM - Used to determine the build iterator. Defaults to 0 if not present
-* BUILD_VERSIONS - a shell array of fedora versions to build for. Defaults to (20 22)
+* BUILD_VERSIONS - a shell array of fedora versions to build for.
 * BUILD_DEBUG - If present triggers the build scripts to drop you into a shell for the docker container.
 
 ## Local building of dev packages
-Building local is simple, first invoke the version.sh to generate the VERSION and CHANNEL files, and call docker-outter.sh. This assumes you have a working docker setup.
+Building local is simple, first invoke the version.sh to generate the VERSION and CHANNEL files, and call docker-outer.sh. This assumes you have a working docker setup.
 
 ```
   ./scripts/version.sh
@@ -16,7 +16,7 @@ Building local is simple, first invoke the version.sh to generate the VERSION an
 ```
 
 ## Debuging Builds
-To get a shell in a docker build container use `BUILD_DEBUG=1` `BUILD_VERSIONS` and invoke `docker-outter.sh`
+To get a shell in a docker build container use `BUILD_DEBUG=1` `BUILD_VERSIONS` and invoke `docker-outer.sh`
 
 ```
 BUILD_DEBUG=1 BUILD_VERSIONS=22 ./scripts/docker-outer.sh
@@ -49,7 +49,7 @@ If you want to get into a container for debugging you can export BUILD_DEBUG wit
 ...
 Digest: sha256:b0f4562429925a8be579eb7b86fea8fe8e676b7a962bba8d6bf372fb68b396d7
 Status: Image is up to date for quay.io/getpantheon/rpmbuild-fusedav:20
-Running: docker run --rm -ti          -e "build=0"         -w /src         -v /Users/jnelson/orgs/pantheon/fusedav/scripts/../:/src         quay.io/getpantheon/rpmbuild-fusedav:20  /bin/bash
+Running: docker run --rm -ti -e "build=0" -w /src -v /Users/jnelson/orgs/pantheon/fusedav/scripts/../:/src quay.io/getpantheon/rpmbuild-fusedav:20 /bin/bash
 [root@d868541bc6ae src]#
 ```
 
