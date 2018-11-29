@@ -4,7 +4,7 @@ bin="$(cd -P -- "$(dirname -- "$0")" && pwd -P)"
 docker=$(which docker)
 
 # which fedora distros to build this rpm for
-BUILD_VERSIONS=${BUILD_VERSIONS:-22}
+BUILD_VERSIONS=${BUILD_VERSIONS:-22 28}
 
 echo "==> Running RPM builds for these Fedora version(s): $BUILD_VERSIONS"
 

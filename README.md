@@ -8,7 +8,6 @@ This is a fuse-based DAV client with extensions for performance.
 This will run against any standard DAV implementation, i.e.
 `pywebdav` (see tests).
 
-
 Installation
 ------------
 
@@ -18,16 +17,14 @@ Installation
 Usage
 -----
 
-Use the ```-v``` flag to see libraries.
+Use the ```-V``` flag to see libraries.
 ```
-$ src/fusedav -v
-fusedav version 2.0.5e59b8c
-LevelDB version 1.12
-libcurl/7.29.0 NSS/3.15.2 zlib/1.2.7 libidn/1.26 libssh2/1.4.3
-FUSE library version: 2.9.3
-using FUSE kernel interface version 7.19
+$ src/fusedav -V
+fusedav version 2.0.42-bccf93b
+LevelDB version 1.20
+libcurl/7.59.0 OpenSSL/1.1.0i zlib/1.2.11 libidn2/2.0.5 libpsl/0.20.2 (+libidn2/2.0.4) libssh/0.8.5/openssl/zlib nghttp2/1.32.1
+FUSE library version: 2.9.7
 ```
-
 
 Debug/Develop
 -----
@@ -35,6 +32,13 @@ Running this docker script in debug mode will build a fedora-22 container with t
 ```
 BUILD_VERSIONS=22 BUILD_DEBUG=1  ./scripts/docker-outer.sh
 ```
+
+libcurl and OpenSSL
+-------------------
+
+FuseDAV requires libcurl linked with OpenSSL. On Fedora versions before 27 the
+provided libcurl is linked against NSS and you need to provide your own libcurl
+linked against OpenSSL.
 
 Contributing
 ------------
