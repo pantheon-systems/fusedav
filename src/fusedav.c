@@ -1090,6 +1090,7 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
         return processed_gerror("dav_fgetattr: ", path, &gerr);
     }
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s)", path?path:"null path");
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
 }
@@ -1113,6 +1114,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     }
     print_stat(stbuf, "dav_getattr", path);
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s)", path);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
 }
