@@ -627,7 +627,10 @@ static void get_fresh_fd(filecache_t *cache,
         // deleted once no more file descriptors reference it.
         if (unlink_old) {
             unlink(old_filename);
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: 200: unlink old filename %s", funcname, old_filename);
+            log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: 200: unlink old filename %s", funcname, old_filename);
+            // The file has changed, the stat values might have too. Delete the entry. It will have to
+            // be reconstituted on the next access
+            stat_cache_delete(cache, path, NULL);
         }
 
         if (fstat(sdata->fd, &st)) {
