@@ -1022,7 +1022,11 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
-    assert(info != NULL || path != NULL);
+    if (info == NULL && path == NULL) {
+        log_print(LOG_ERR, SECTION_FUSEDAV_STAT, "common_getattr(both info and path are NULL)");
+        g_set_error(gerr, fusedav_quark(), EINVAL, "common_getattr(boht info and path are NULL)");
+        return;
+    }
 
     if (path != NULL) {
         /* If the thread is not in saint mode, but get_stat triggers ENETDOWN, the
@@ -1074,17 +1078,29 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
 }
 
 static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
-    int fd = filecache_fd(info);
+    GError *gerr = NULL;
 
     BUMP(dav_fgetattr);
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s); (%d)", path?path:"null path", fd);
-    if (fstat(fd, stbuf)) {
-        GError *gerr = NULL;
-        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_unlink: %s aborted; in readonly mode", path);
-        g_set_error(&gerr, fusedav_quark(), errno, "fstat failed on fd %d", fd);
-        return processed_gerror("dav_fgetattr: ", path, &gerr);
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
+    // We expect an fd, which is embedded in info, so info should be non-NULL.
+    // But if it isn't use path
+    if (info != NULL) {
+        common_getattr(NULL, stbuf, info, &gerr);
+    } else {
+        common_getattr(path, stbuf, NULL, &gerr);
     }
+    if (gerr) {
+        // Don't print error on ENOENT; that's what get_attr is for
+        if (gerr->code == ENOENT) {
+            int res = -gerr->code;
+            log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "dav_getattr(%s): ENOENT", path?path:"null path");
+            g_clear_error(&gerr);
+            return res;
+        }
+        return processed_gerror("dav_getattr: ", path, &gerr);
+    }
+    print_stat(stbuf, "dav_fgetattr", path);
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
@@ -1108,8 +1124,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         return processed_gerror("dav_getattr: ", path, &gerr);
     }
     print_stat(stbuf, "dav_getattr", path);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s)", path);
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s); size: %d", path?path:"null path", stbuf->st_size);
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
 }
