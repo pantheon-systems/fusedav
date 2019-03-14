@@ -1074,23 +1074,18 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
 }
 
 static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_info *info) {
-    GError *gerr = NULL;
+    int fd = filecache_fd(info);
 
     BUMP(dav_fgetattr);
 
-    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
-    common_getattr(path, stbuf, info, &gerr);
-    if (gerr) {
-        if (gerr->code == ENOENT) {
-            int res = -gerr->code;
-            log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "dav_fgetattr(%s): ENOENT", path?path:"null path");
-            g_clear_error(&gerr);
-            return res;
-        }
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s); (%d)", path?path:"null path", fd);
+    if (fstat(fd, stbuf)) {
+        GError *gerr = NULL;
+        log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_unlink: %s aborted; in readonly mode", path);
+        g_set_error(&gerr, fusedav_quark(), errno, "fstat failed on fd %d", fd);
         return processed_gerror("dav_fgetattr: ", path, &gerr);
     }
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s)", path?path:"null path");
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s); size: %d", path?path:"null path", stbuf->st_size);
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
 }
