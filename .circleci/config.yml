@@ -20,29 +20,25 @@ jobs:
         command: /sbin/init
     steps:
       - checkout
-      # Prepare for artifact and test results  collection equivalent to how it was done on 1.0.
-      # In many cases you can simplify this from what is generated here.
-      # 'See docs on artifact collection here https://circleci.com/docs/2.0/artifacts/'
       - run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_TEST_REPORTS
-      # This is based on your 1.0 configuration file or project settings
       - run:
-        working_directory: ~/pantheon-systems/fusedav
-        name: Start Docker
-        command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
+          working_directory: ~/pantheon-systems/fusedav
+          name: Start Docker
+          command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
       - run:
-        working_directory: ~/pantheon-systems/fusedav
-        name: Install Dependencies
-        command: if ["2.7.5" == "system"] || pyenv versions --bare | grep -x -q '2.7.5'; then pyenv global version;else pyenv install --skip-existing  2.7.5 && pyenv global version && pyenv rehash && pip install virtualenv && pip install nose && pip install pep8 && pyenv rehash;fi
+          working_directory: ~/pantheon-systems/fusedav
+          name: Install Dependencies
+          command: if ["2.7.5" == "system"] || pyenv versions --bare | grep -x -q '2.7.5'; then pyenv global version;else pyenv install --skip-existing  2.7.5 && pyenv global version && pyenv rehash && pip install virtualenv && pip install nose && pip install pep8 && pyenv rehash;fi
       - run:
-        working_directory: ~/pantheon-systems/fusedav
-        name: Establish ruby version
-        command: rm -f pantheon-systems/fusedav/.rvmrc; echo 2.4.0 > pantheon-systems/fusedav/.ruby-version; rvm use 2.4.0 --default
+          working_directory: ~/pantheon-systems/fusedav
+          name: Establish ruby version
+          command: rm -f pantheon-systems/fusedav/.rvmrc; echo 2.4.0 > pantheon-systems/fusedav/.ruby-version; rvm use 2.4.0 --default
       - run: 
-        name: Install cpplint
-        command: pip install cpplint
+          name: Install cpplint
+          command: pip install cpplint
       - run: 
-        name: Set up version
-        command: bash scripts/version.sh
+          name: Set up version
+          command: bash scripts/version.sh
       - *persist-to-workspace
 
   test:
@@ -58,20 +54,20 @@ jobs:
       - attach_workspace:
           at: .
       - run:
-        name: Install Package Cloud
-        command: |
-          gem install package_cloud
-          bash scripts/push_packagecloud.sh internal
+          name: Install Package Cloud
+          command: |
+            gem install package_cloud
+            bash scripts/push_packagecloud.sh internal
 
   deploy-prod:
     steps:
       - attach_workspace:
           at: .
       - run:
-        command: |
-          gem install package_cloud
-          git push --tags
-          bash scripts/push_packagecloud.sh internal
+          command: |
+            gem install package_cloud
+            git push --tags
+            bash scripts/push_packagecloud.sh internal
 
 workflows:
   version: 2
@@ -79,11 +75,11 @@ workflows:
     jobs:
       - build
       - test
-        requires:
-          - build
+          requires:
+            - build
       - deploy-dev
-        requires:
-          - test
+          requires:
+            - test
         filters:
           branches:
             only:
@@ -91,9 +87,9 @@ workflows:
               - yolo
               - stage
       - deploy-prod:
-        requires:
-          - test
-        filters:
-          branches:
-            only:
-              -master
+          requires:
+            - test
+          filters:
+            branches:
+              only:
+                -master
