@@ -77,12 +77,12 @@ workflows:
       - deploy-dev
           requires:
             - test
-        filters:
-          branches:
-            only:
-              - dev
-              - yolo
-              - stage
+          filters:
+            branches:
+              only:
+                - dev
+                - yolo
+                - stage
       - deploy-prod:
           requires:
             - test
