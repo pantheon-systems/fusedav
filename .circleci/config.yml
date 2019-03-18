@@ -8,6 +8,7 @@ persist-to-workspace: &persist-to-workspace
 
 version: 2.1
 
+# consolidate
 executors:
   base-executor:
     working_directory: ~/pantheon-systems/fusedav
