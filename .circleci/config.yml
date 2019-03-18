@@ -12,15 +12,11 @@ jobs:
     working_directory: ~/pantheon-systems/fusedav
     parallelism: 1
     shell: /bin/bash --login
-    environment:
-      CIRCLE_ARTIFACTS: /tmp/circleci-artifacts
-      CIRCLE_TEST_REPORTS: /tmp/circleci-test-results
     docker:
       - image: circleci/python:2.7.15-stretch
         command: /sbin/init
     steps:
       - checkout
-      - run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_TEST_REPORTS
       - run:
           name: Start Docker
           command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
