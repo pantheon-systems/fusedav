@@ -22,15 +22,12 @@ jobs:
       - checkout
       - run: mkdir -p $CIRCLE_ARTIFACTS $CIRCLE_TEST_REPORTS
       - run:
-          working_directory: ~/pantheon-systems/fusedav
           name: Start Docker
           command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
       - run:
-          working_directory: ~/pantheon-systems/fusedav
           name: Install Dependencies
           command: if ["2.7.5" == "system"] || pyenv versions --bare | grep -x -q '2.7.5'; then pyenv global version;else pyenv install --skip-existing  2.7.5 && pyenv global version && pyenv rehash && pip install virtualenv && pip install nose && pip install pep8 && pyenv rehash;fi
       - run:
-          working_directory: ~/pantheon-systems/fusedav
           name: Establish ruby version
           command: rm -f pantheon-systems/fusedav/.rvmrc; echo 2.4.0 > pantheon-systems/fusedav/.ruby-version; rvm use 2.4.0 --default
       - run: 
