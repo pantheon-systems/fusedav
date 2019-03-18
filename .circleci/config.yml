@@ -6,13 +6,14 @@ persist-to-workspace: &persist-to-workspace
     paths:
       - ./
 
+version: 2
+
 executors:
   base-executor:
     working_directory: ~/pantheon-systems/fusedav
     docker:
       - image: circleci/python:2.7.15-stretch
 
-version: 2
 jobs:
   build:
     executor: base-executor
