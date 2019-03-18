@@ -6,15 +6,18 @@ persist-to-workspace: &persist-to-workspace
     paths:
       - ./
 
+executors:
+  base-executor:
+    working_directory: ~/pantheon-systems/fusedav
+    docker:
+      - image: circleci/python:2.7.15-stretch
+
 version: 2
 jobs:
   build:
-    working_directory: ~/pantheon-systems/fusedav
+    executor: base-executor
     parallelism: 1
     shell: /bin/bash --login
-    docker:
-      - image: circleci/python:2.7.15-stretch
-        command: /sbin/init
     steps:
       - checkout
       - run:
@@ -35,6 +38,7 @@ jobs:
       - *persist-to-workspace
 
   test:
+    executor: base-executor
     steps:
       - attach_workspace:
           at: .
@@ -43,6 +47,7 @@ jobs:
       - *persist-to-workspace
 
   deploy-dev:
+    executor: base-executor
     steps:
       - attach_workspace:
           at: .
@@ -53,6 +58,7 @@ jobs:
             bash scripts/push_packagecloud.sh internal
 
   deploy-prod:
+    executor: base-executor
     steps:
       - attach_workspace:
           at: .
