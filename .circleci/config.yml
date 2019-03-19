@@ -23,7 +23,7 @@ jobs:
       - checkout
       - run:
           name: Establish ruby version
-          command: rm -f pantheon-systems/fusedav/.rvmrc; echo 2.4.0 > pantheon-systems/fusedav/.ruby-version; rvm use 2.4.0 --default
+          command: rm -f ~/pantheon-systems/fusedav/.rvmrc; echo 2.4.0 > ~/pantheon-systems/fusedav/.ruby-version; rvm use 2.4.0 --default
       - run: 
           name: Install cpplint
           command: pip install cpplint
