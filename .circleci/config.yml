@@ -37,7 +37,7 @@ jobs:
            set +eo pipefail
            /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
            true
-      - run
+      - run:
         name: Start Docker
         command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
       - run:
