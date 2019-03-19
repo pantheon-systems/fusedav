@@ -1,7 +1,7 @@
 ---
 # all-purpose workspace persister
-persist-to-workspace: &persist-to-workspace
-  persist-to-workspace:
+persist_to_workspace: &persist_to_workspace
+  persist_to_workspace:
     root: .
     paths:
       - ./
@@ -37,7 +37,7 @@ jobs:
       - run: 
           name: Set up version
           command: bash scripts/version.sh
-      - *persist-to-workspace
+      - *persist_to_workspace
 
   test:
     executor: base-executor
@@ -46,7 +46,7 @@ jobs:
           at: .
       - run: cpplint --filter=-whitespace/line_length src/* ; true
       - run: bash scripts/docker-outer.sh
-      - *persist-to-workspace
+      - *persist_to_workspace
 
   deploy-dev:
     executor: base-executor
