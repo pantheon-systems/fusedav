@@ -33,7 +33,10 @@ jobs:
           command: bash scripts/version.sh
       - run:
          name: Call cpplint
-         command: /usr/local/bin/cpplint --filter=-whitespace/line_length src/* ; true
+         command: |
+           set +eo pipefail
+           /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
+           true
       - run:
          name: Build the image
          command: bash scripts/docker-outer.sh
@@ -45,7 +48,7 @@ jobs:
       - attach_workspace:
           at: .
       - run:
-          name: Install Package Cloud
+          name: Install and Push to Package Cloud
           command: |
             gem install package_cloud
             bash scripts/push_packagecloud.sh internal
@@ -56,6 +59,7 @@ jobs:
       - attach_workspace:
           at: .
       - run:
+          name: Install and Push to Package Cloud
           command: |
             gem install package_cloud
             git push --tags
