@@ -22,9 +22,6 @@ jobs:
     steps:
       - checkout
       - run:
-          name: Install Dependencies
-          command: if ["2.7.5" == "system"] || pyenv versions --bare | grep -x -q '2.7.5'; then pyenv global version;else pyenv install --skip-existing  2.7.5 && pyenv global version && pyenv rehash && pip install virtualenv && pip install nose && pip install pep8 && pyenv rehash;fi
-      - run:
           name: Establish ruby version
           command: rm -f pantheon-systems/fusedav/.rvmrc; echo 2.4.0 > pantheon-systems/fusedav/.ruby-version; rvm use 2.4.0 --default
       - run: 
