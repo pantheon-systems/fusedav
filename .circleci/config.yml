@@ -38,6 +38,9 @@ jobs:
            /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
            true
       - run:
+        name: Start Docker
+        command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
+      - run:
          name: Build the image
          command: bash scripts/docker-outer.sh
       - *persist_to_workspace
