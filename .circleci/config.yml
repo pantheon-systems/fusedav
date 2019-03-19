@@ -39,7 +39,7 @@ jobs:
            true
       - run:
          name: Start Docker
-         command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
+         command: 'sudo docker info >/dev/null 2>&1 || sudo systemctl docker start; '
       - run:
          name: Build the image
          command: bash scripts/docker-outer.sh
