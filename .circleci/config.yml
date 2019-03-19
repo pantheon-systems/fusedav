@@ -10,20 +10,21 @@ version: 2.1
 
 # consolidate
 executors:
-  base-executor:
+  python-executor:
     working_directory: ~/pantheon-systems/fusedav
     docker:
       - image: circleci/python:2.7.15-stretch
+  ruby-executor:
+    working_directory: ~/pantheon-systems/fusedav
+    docker:
+      - image: circleci/ruby:2.4
 
 jobs:
   build:
-    executor: base-executor
+    executor: python-executor
     parallelism: 1
     steps:
       - checkout
-      - run:
-          name: Establish ruby version
-          command: rm -f ~/pantheon-systems/fusedav/.rvmrc; echo 2.4.0 > ~/pantheon-systems/fusedav/.ruby-version; rvm use 2.4.0 --default
       - run: 
           name: Install cpplint
           command: pip install cpplint
@@ -33,7 +34,7 @@ jobs:
       - *persist_to_workspace
 
   test:
-    executor: base-executor
+    executor: python-executor
     steps:
       - attach_workspace:
           at: .
@@ -42,7 +43,7 @@ jobs:
       - *persist_to_workspace
 
   deploy-dev:
-    executor: base-executor
+    executor: ruby-executor
     steps:
       - attach_workspace:
           at: .
@@ -53,7 +54,7 @@ jobs:
             bash scripts/push_packagecloud.sh internal
 
   deploy-prod:
-    executor: base-executor
+    executor: ruby-executor
     steps:
       - attach_workspace:
           at: .
