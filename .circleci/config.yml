@@ -27,7 +27,7 @@ jobs:
       - checkout
       - run: 
           name: Install cpplint
-          command: pip install cpplint
+          command: sudo pip install cpplint
       - run: 
           name: Set up version
           command: bash scripts/version.sh
