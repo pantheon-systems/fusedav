@@ -32,14 +32,14 @@ jobs:
           name: Set up version
           command: bash scripts/version.sh
       - run:
-         name: Call cpplint
+         name: Call cpplint; expected to fail, so set things up to pass
          command: |
            set +eo pipefail
            /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
            true
       - run:
-        name: Start Docker
-        command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
+         name: Start Docker
+         command: 'sudo docker info >/dev/null 2>&1 || sudo service docker start; '
       - run:
          name: Build the image
          command: bash scripts/docker-outer.sh
