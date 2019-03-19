@@ -38,7 +38,7 @@ jobs:
     steps:
       - attach_workspace:
           at: .
-      - run: cpplint --filter=-whitespace/line_length src/* ; true
+      - run: /usr/bin/cpplint --filter=-whitespace/line_length src/* ; true
       - run: bash scripts/docker-outer.sh
       - *persist_to_workspace
 
