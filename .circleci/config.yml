@@ -13,7 +13,7 @@ executors:
   python-executor:
     working_directory: ~/pantheon-systems/fusedav
     docker:
-      - image: circleci/python:2.7.15-stretch
+      - image: circleci/python:2.7.15
   ruby-executor:
     working_directory: ~/pantheon-systems/fusedav
     docker:
@@ -25,6 +25,8 @@ jobs:
     parallelism: 1
     steps:
       - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
       - run:
           name: Install cpplint
           command: sudo pip install cpplint
@@ -37,9 +39,6 @@ jobs:
            set +eo pipefail
            /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
            true
-      - run:
-         name: Start Docker
-         command: 'sudo docker info >/dev/null 2>&1 || sudo systemctl docker start; '
       - run:
          name: Build the image
          command: bash scripts/docker-outer.sh
