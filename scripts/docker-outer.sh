@@ -17,7 +17,13 @@ fi
 CIRCLE_BUILD_NUM=${CIRCLE_BUILD_NUM:-0}
 
 # location to mount the source in the container
-inner_mount="/src"
+inner_mount="/fusedav"
+
+echo "==> Creating docker volume for fusedav files"
+$docker volume create fusedav_vol
+$docker run --name cp-vol -v fusedav_vol:/fusedav busybox true
+$docker cp $bin/../. cp-vol:/fusedav/
+$docker rm cp-vol
 
 # epoch to use for -revision
 epoch=$(date +%s)
@@ -39,11 +45,13 @@ for ver in $BUILD_VERSIONS; do
       $docker run $RUN_ARGS \
         -e "build=$CIRCLE_BUILD_NUM" \
         -w $inner_mount \
-        -v $bin/../:$inner_mount \
+        -v fusedav_vol:$inner_mount \
         $build_image $exec_cmd
 EOL
 
-
     echo "Running: $docker_cmd"
     $docker_cmd
+
 done
+
+$docker volume rm fusedav_vol
