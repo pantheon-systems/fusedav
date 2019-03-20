@@ -39,12 +39,6 @@ jobs:
            /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
            true
       - run:
-         name: Debug 1
-         command: ls -l ~/pantheon-systems/fusedav
-      - run:
-         name: Debug 2
-         command: ls -l ~/pantheon-systems/fusedav/scripts
-      - run:
          name: Build the image
          command: bash scripts/docker-outer.sh
       - *persist_to_workspace
