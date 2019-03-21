@@ -9,9 +9,6 @@ BUILD_VERSIONS=${BUILD_VERSIONS:-22 28}
 echo "==> Running RPM builds for these Fedora version(s): $BUILD_VERSIONS"
 
 RUN_ARGS="--rm"
-if [[ -n "$CIRCLECI"  ]] ; then
-  RUN_ARGS=""
-fi
 
 # set a default build -> 0 for when it doesn't exist
 CIRCLE_BUILD_NUM=${CIRCLE_BUILD_NUM:-0}
