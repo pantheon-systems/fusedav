@@ -50,5 +50,3 @@ EOL
     $docker_cmd
 
 done
-
-$docker volume rm fusedav_vol
