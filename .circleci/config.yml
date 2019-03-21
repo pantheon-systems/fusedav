@@ -1,0 +1,89 @@
+---
+# all-purpose workspace persister
+persist_to_workspace: &persist_to_workspace
+  persist_to_workspace:
+    root: .
+    paths:
+      - ./
+
+version: 2.1
+
+# consolidate
+executors:
+  python-executor:
+    working_directory: ~/pantheon-systems/fusedav
+    docker:
+      - image: circleci/python:2.7.15
+  ruby-executor:
+    working_directory: ~/pantheon-systems/fusedav
+    docker:
+      - image: circleci/ruby:2.4
+
+jobs:
+  build-test:
+    executor: python-executor
+    parallelism: 1
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Install cpplint
+          command: sudo pip install cpplint
+      - run:
+          name: Set up version
+          command: bash scripts/version.sh
+      - run:
+         name: Call cpplint; expected to fail, so set things up to pass
+         command: |
+           set +eo pipefail
+           /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
+           true
+      - run:
+         name: Build the image
+         command: bash scripts/docker-outer.sh
+      - *persist_to_workspace
+
+  deploy-dev:
+    executor: ruby-executor
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install and Push to Package Cloud
+          command: |
+            gem install package_cloud
+            bash scripts/push_packagecloud.sh internal
+
+  deploy-prod:
+    executor: ruby-executor
+    steps:
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install and Push to Package Cloud
+          command: |
+            gem install package_cloud
+            git push --tags
+            bash scripts/push_packagecloud.sh internal
+
+workflows:
+  version: 2
+  build-test-deploy:
+    jobs:
+      - build-test
+      - deploy-dev:
+          requires:
+            - build-test
+          filters:
+            branches:
+              only:
+                - dev
+                - yolo
+                - stage
+      - deploy-prod:
+          requires:
+            - build-test
+          filters:
+            branches:
+              only:
+                -master
