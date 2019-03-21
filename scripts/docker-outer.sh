@@ -20,7 +20,6 @@ echo "==> Creating docker volume for fusedav files"
 $docker volume create fusedav_vol
 $docker run --name cp-vol -v fusedav_vol:/fusedav busybox true
 $docker cp $bin/../. cp-vol:/fusedav/
-$docker rm cp-vol
 
 # epoch to use for -revision
 epoch=$(date +%s)
