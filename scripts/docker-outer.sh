@@ -51,4 +51,6 @@ EOL
 
 done
 
+$docker cp cp-vol:/fusedav/pkg $bin/../pkg/
+$docker rm cp-vol
 $docker volume rm fusedav_vol
