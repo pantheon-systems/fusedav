@@ -303,33 +303,6 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
     return pdata;
 }
 
-/*  Return the size of the cached file */
-void filecache_cached_file_size(filecache_t *cache, const char *path, off_t *size, GError **gerr) {
-    struct stat sbuf;
-    struct filecache_pdata *pdata;
-    GError *tmpgerr = NULL;
-    int ret;
-
-    pdata = filecache_pdata_get(cache, path, &tmpgerr);
-    if (tmpgerr) {
-        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_cached_file_size: error on filecache_pdata_get on %s", path);
-        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cached_file_size: ");
-        return;
-    }
-    if (pdata == NULL) {
-        g_set_error(gerr, system_quark(), E_FC_PDATANULL, "filecache_cached_file_size: pdata is NULL)");
-        return;
-    }
-    ret = stat(pdata->filename, &sbuf);
-    if (ret < 0) {
-        g_set_error(gerr, system_quark(), errno, "common_getattr(both info and path are NULL)");
-        return;
-    }
-    free(pdata);
-    *size = sbuf.st_size;
-    return;
-}
-
 // Stores the header value into into *userdata if it's "ETag."
 static size_t capture_etag(void *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t real_size = size * nmemb;
