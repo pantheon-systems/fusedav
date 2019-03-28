@@ -1030,16 +1030,6 @@ finish:
     return;
 }
 
-static void cached_file_size(const char *path, off_t *size, GError **gerr) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-    GError *tmpgerr = NULL;
-    filecache_cached_file_size(config->cache, path, size, &tmpgerr);
-    if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "cached_file_size: ");
-    }
-    return;
-}
-
 static void common_getattr(const char *path, struct stat *stbuf, struct fuse_file_info *info, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
@@ -1076,56 +1066,6 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
         if (S_ISREG(stbuf->st_mode))
             stbuf->st_mode |= S_IFREG;
 
-        // Skip this extra work on directories; we're only concerned about keeping file size sync'ed
-        if (!S_ISDIR(stbuf->st_mode)) {
-            off_t size;
-            // Get the size of the cached file
-            // This will access the file as cached and do a stat.
-            cached_file_size(path, &size, &tmpgerr);
-            // If we get an error back, log and move on. We'll just use size from the stat cache
-            // If no error, we'll use size from the cached file
-            if (tmpgerr) {
-                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "common_getattr: Can't get cached file size on %s", path);
-            } else {
-                // It's interesting if the two sizes don't match. Log it.
-                // But use the cached file size in preference to what is in the stat cache
-                if (stbuf->st_size != size || inject_error(fusedav_error_sizemismatch)) {
-                    struct stat_cache_value *value = NULL;
-                    bool skip_freshness_check = true;
-                    GError *subgerr = NULL;
-                    log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, 
-                            "common_getattr: size mismatch, stat cache and cached file on %s; old size: %d, new size: %d", 
-                            path, stbuf->st_size, size);
-                    // Update size in the stbuf
-                    stbuf->st_size = size;
-                    // Get the entry from the stat cache
-                    value = stat_cache_value_get(config->cache, path, skip_freshness_check, &subgerr);
-                    if (subgerr) {
-                        // Without a value, we can't update the value; but just continue
-                        // Log the error, but continue.
-                        // If we error out here, we'll just leave the stat cache in the same state as
-                        // if we just exit normally
-                        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "common_getattr: failed to get value from statcache on  %s", path);
-                        // Process, display, and clear the subgerr, but don't return it
-                        processed_gerror("common_getattr: ", path, &subgerr);
-                    } else {
-                        // Update the stbuf
-                        value->st = *stbuf;
-                        // Put the value back in the stat cache
-                        stat_cache_value_set(config->cache, path, value, &subgerr);
-                        if (subgerr) {
-                            // Log the error, but continue.
-                            // If we error out here, we'll just leave the stat cache in the same state as
-                            // if we just exit normally
-                            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "common_getattr: failed to get value from statcache on  %s", path);
-                            // Process, display, and clear the subgerr, but don't return it
-                            processed_gerror("common_getattr: ", path, &subgerr);
-                        }
-                    }
-                    free(value);
-                }
-            }
-        }
     }
     else {
         int fd = filecache_fd(info);
