@@ -59,6 +59,7 @@ void *inject_error_mechanism(void *ptr);
 #define fusedav_error_cunlinkcurl 8
 #define fusedav_error_propfindsession 9
 #define fusedav_error_propfindhead 10
+#define fusedav_error_sizemismatch 11
 
 #define filecache_error_init1 20
 #define filecache_error_init2 21

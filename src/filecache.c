@@ -303,6 +303,33 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
     return pdata;
 }
 
+/*  Return the size of the cached file */
+void filecache_cached_file_size(filecache_t *cache, const char *path, off_t *size, GError **gerr) {
+    struct stat sbuf;
+    struct filecache_pdata *pdata;
+    GError *tmpgerr = NULL;
+    int ret;
+
+    pdata = filecache_pdata_get(cache, path, &tmpgerr);
+    if (tmpgerr) {
+        log_print(LOG_NOTICE, SECTION_FILECACHE_CACHE, "filecache_cached_file_size: error on filecache_pdata_get on %s", path);
+        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cached_file_size: ");
+        return;
+    }
+    if (pdata == NULL) {
+        g_set_error(gerr, system_quark(), E_FC_PDATANULL, "filecache_cached_file_size: pdata is NULL)");
+        return;
+    }
+    ret = stat(pdata->filename, &sbuf);
+    if (ret < 0) {
+        g_set_error(gerr, system_quark(), errno, "common_getattr(both info and path are NULL)");
+        return;
+    }
+    free(pdata);
+    *size = sbuf.st_size;
+    return;
+}
+
 // Stores the header value into into *userdata if it's "ETag."
 static size_t capture_etag(void *ptr, size_t size, size_t nmemb, void *userdata) {
     size_t real_size = size * nmemb;
@@ -1706,12 +1733,12 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     int issues = 0;
     int pruned_files = 0;
     bool done = false;
-    unsigned long total_size = 0;
-    time_t earliest = 0;
+    int round;
     // By default, keep any file younger than 8 days old
     time_t age_out = 691200;
     // Take evasive action if there are more than 16GB in the file cache
     const unsigned long max_cache_size = (unsigned long) (16) *  (1024 * 1024 * 1024);
+    unsigned long max_delete = max_cache_size / 2;
     bool reduce_interval = false;
 
     BUMP(filecache_cleanup);
@@ -1720,15 +1747,23 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
     options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(options, false);
-    iter = leveldb_create_iterator(cache, options);
-
-    leveldb_iter_seek(iter, filecache_prefix, strlen(filecache_prefix));
 
     starttime = time(NULL);
+    round = 0;
 
+    // Round 1: delete all cached files older than the base age out value (8 days)
+    // If there's still more than max cache size ...
+    // Round 2: Pick a "halfway" point
+    //   Calculate how much need to be deleted to meet max cache size
+    //   Don't delete more than that much
     while (!done) {
-        total_size = 0;
-        earliest = 0;
+        unsigned long total_size = 0;
+        unsigned long deleted_size = 0;
+        iter = leveldb_create_iterator(cache, options);
+        leveldb_iter_seek(iter, filecache_prefix, strlen(filecache_prefix));
+
+        round++;
+
         while (leveldb_iter_valid(iter)) {
             const struct filecache_pdata *pdata;
             const char *iterkey;
@@ -1749,7 +1784,6 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 
                 if (stat(fname, &stbuf) != -1) {
                     total_size += stbuf.st_size;
-                    if (stbuf.st_atime < earliest) earliest = stbuf.st_atime;
                 }
 
                 // If the cache file doesn't exist, delete the entry from the level_db cache
@@ -1767,17 +1801,28 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 }
                 else if ((first && pdata->last_server_update == 0) ||
                          ((pdata->last_server_update != 0) && (starttime - pdata->last_server_update > age_out))) {
-                    log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Unlinking %s", fname);
-                    filecache_delete(cache, path, true, &tmpgerr);
-                    if (tmpgerr) {
-                        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup on aged out: ");
-                        ++issues;
-                        goto finish;
-                    }
-                    else {
-                        // Not specifically true. We could succeed at unlink in filecache_delete
-                        // but return non-zero; still, close enough.
-                        ++unlinked_files;
+                    // Track how much has been deleted, and limit the amount to half the max cache size
+                    // on rounds other than the first. This is a precaution; if a site's files all got updated
+                    // in a short time period, this might avoid deleting almost all files in the cache.
+                    // Note that if total_size is still too great, we will still trigger a new round. Eventually
+                    // total_size will be less the max cache size
+                    if (round > 1 && deleted_size > max_delete) {
+                        // Avoid the delete
+                        log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
+                    } else {
+                        log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Unlinking %s", fname);
+                        deleted_size += stbuf.st_size;
+                        filecache_delete(cache, path, true, &tmpgerr);
+                        if (tmpgerr) {
+                            g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup on aged out: ");
+                            ++issues;
+                            goto finish;
+                        }
+                        else {
+                            // Not specifically true. We could succeed at unlink in filecache_delete
+                            // but return non-zero; still, close enough.
+                            ++unlinked_files;
+                        }
                     }
                 }
                 else {
@@ -1796,19 +1841,33 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
             leveldb_iter_next(iter);
         }
         if (total_size < max_cache_size) { 
+            // If the size of files when we started was already less than max ...
             done = true;
         } else {
-            // On the next round, age_out at a point halfway between current earliest and current time
-            time_t time_diff;
             const time_t two_hours = 2 * 60 * 60;
-            time_diff = time(NULL) - earliest;
-            // Avoid being too aggressive. Leave one hour's worth of files in the cache.
-            if (age_out > two_hours) {
-                age_out = earliest + (time_diff / 2);
-            } else {
+            unsigned long new_total_size = total_size - deleted_size;
+
+            if (new_total_size < max_cache_size) {
+                // If the file size is now less than max cache size, exit
                 done = true;
+            } else if (age_out <= two_hours) {
+                // Avoid being too aggressive. Leave two hours worth of files in the cache.
+                // If the age out is less than two hours, exit even if file size is greater than max
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Stopping, age_out less than 2 hours: %lu", age_out);
+                done = true;
+            } else {
+                age_out /= 2;
+                if (total_size - deleted_size < max_delete) {
+                    max_delete = total_size - deleted_size;
+                }
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: new age_out: %lu;", age_out);
             }
+            // If when we started there was more file content than max cache size, inform the caller so it can
+            // check the size more frequently
             reduce_interval = true;
+            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                    "filecache_cleanup: Completed round %d; total_size: %lu, max: %lu, ageout: %lu, new max_delete: %lu, done: %d", 
+                    round, total_size, max_cache_size, age_out, max_delete, done);
         }
     }
 

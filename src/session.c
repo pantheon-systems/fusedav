@@ -206,7 +206,8 @@ int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace
     }
     else {
         // If using shortnames, make the cluster the same as the domain.
-        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: no cluster name in base: %s", base);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: no cluster name in base: %s, using domain: %s", 
+            base, filesystem_domain);
         filesystem_cluster = g_strdup(filesystem_domain);
     }
     uriFreeUriMembersA(&uri);
