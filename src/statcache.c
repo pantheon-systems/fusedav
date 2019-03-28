@@ -678,8 +678,8 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     value->local_generation = stat_cache_get_local_generation();
 
     key = path2key(path, false);
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: %s (mode %04o: updated %lu: loc_gen %lu: atime %lu: mtime %lu)",
-        funcname, key, value->st.st_mode, value->updated, value->local_generation, value->st.st_atime, value->st.st_mtime);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: %s (mode %04o: size: %d; updated %lu: loc_gen %lu: atime %lu: mtime %lu)",
+        funcname, key, value->st.st_mode, value->st.st_size, value->updated, value->local_generation, value->st.st_atime, value->st.st_mtime);
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
