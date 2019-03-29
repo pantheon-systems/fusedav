@@ -144,30 +144,6 @@ static void leveldb_error_test(void) {
     }
 }
 
-/* test what happens on file size mismatch */
-static void sizemismatch_test(void) {
-    static int fdx = no_error;
-    static int tdx = no_error;
-    const int iters = 4096; // @TODO I just made this number up; figure out a better one!
-
-    for (int iter = 0; iter < iters; iter++) {
-        // Sleep 11 seconds between injections
-        sleep(11);
-
-        // flop between mismatch and no_error
-
-        if (tdx == no_error) tdx = fusedav_error_sizemismatch;
-        else tdx = no_error;
-
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "fce: %d Uninjecting %d; injecting %d", inject_error_count, fdx, tdx);
-
-        // Make the new location true but turn off the locations for the old location.
-        inject_error_list[tdx] = true;
-        inject_error_list[fdx] = false;
-        fdx = tdx;
-    }
-}
-
 /* test what happens on a write error */
 static void writewrite_test(void) {
     static int fdx = no_error;
@@ -347,7 +323,6 @@ void *inject_error_mechanism(__unused void *ptr) {
 
     while (true) {
 
-        /*
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting rand_test");
         rand_test();
 
@@ -368,10 +343,6 @@ void *inject_error_mechanism(__unused void *ptr) {
 
         log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting curl error capture test");
         curl_error_capture_test();
-        */
-
-        log_print(LOG_NOTICE, SECTION_UTIL_DEFAULT, "inject_error_mechanism: Starting file size mismatch test");
-        sizemismatch_test();
     }
 
     free(inject_error_list);
