@@ -1732,6 +1732,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     while (!done) {
         unsigned long total_size = 0;
         unsigned long deleted_size = 0;
+        bool pmsg = true;
         iter = leveldb_create_iterator(cache, options);
         leveldb_iter_seek(iter, filecache_prefix, strlen(filecache_prefix));
 
@@ -1754,7 +1755,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 // We delete the entry, making pdata invalid, before we might need the filename to unlink,
                 // so store it in fname
                 strncpy(fname, pdata->filename, PATH_MAX);
-                
+
                 if (stat(fname, &stbuf) != -1) {
                     total_size += stbuf.st_size;
                 }
@@ -1781,9 +1782,14 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                     // total_size will be less the max cache size
                     if (round > 1 && deleted_size > max_delete) {
                         // Avoid the delete
-                        log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
+                        log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
+                        // Print once per round that we've hit the limit
+                        if (pmsg) {
+                            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
+                            pmsg = false;
+                        }
                     } else {
-                        log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Unlinking %s", fname);
+                        log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Unlinking %s", fname);
                         deleted_size += stbuf.st_size;
                         filecache_delete(cache, path, true, &tmpgerr);
                         if (tmpgerr) {
@@ -1813,7 +1819,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
             }
             leveldb_iter_next(iter);
         }
-        if (total_size < max_cache_size) { 
+        if (total_size <= max_cache_size) { 
             // If the size of files when we started was already less than max ...
             done = true;
         } else {
@@ -1822,6 +1828,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
             if (new_total_size < max_cache_size) {
                 // If the file size is now less than max cache size, exit
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Stopping, new total size is less than max: %lu", new_total_size);
                 done = true;
             } else if (age_out <= two_hours) {
                 // Avoid being too aggressive. Leave two hours worth of files in the cache.
@@ -1830,17 +1837,24 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 done = true;
             } else {
                 age_out /= 2;
-                if (total_size - deleted_size < max_delete) {
-                    max_delete = total_size - deleted_size;
+                // Generally, max_delete is half of max_cache_size, but limit deletes so that it doesn't go below max_cache_size
+                if (new_total_size < max_cache_size + max_delete) {
+                    max_delete = new_total_size - max_cache_size;
                 }
                 log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: new age_out: %lu;", age_out);
             }
             // If when we started there was more file content than max cache size, inform the caller so it can
             // check the size more frequently
             reduce_interval = true;
-            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+            log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, 
                     "filecache_cleanup: Completed round %d; total_size: %lu, max: %lu, ageout: %lu, new max_delete: %lu, done: %d", 
                     round, total_size, max_cache_size, age_out, max_delete, done);
+            // In order to allow log searching to find sites which required a second or later round, log at NOTICE
+            if (round > 1) {
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                        "filecache_cleanup: Completed round %d; total_size: %lu, max: %lu, ageout: %lu, new max_delete: %lu, done: %d", 
+                        round, total_size, max_cache_size, age_out, max_delete, done);
+            }
         }
     }
 
