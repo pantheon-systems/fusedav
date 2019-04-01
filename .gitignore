@@ -33,6 +33,11 @@ config.h.in
 tests/perfanalysis-read
 tests/perfanalysis-write
 tests/one-open-many-writes
+tests/stat-fstat
+tests/stat-fstat-unlink
+tests/stat-stat
+tests/stat-stat-unlink
+tests/stat-vs-fstat
 /src/*.plist
 _trial_temp*
 
