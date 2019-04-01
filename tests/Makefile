@@ -90,6 +90,36 @@ trunc = $(testdir)/trunc
 # number of write iters 'trunc-flags=-v -r 8 -f 8 -s 32 -i 16'
 trunc-flags =
 
+# Needs to be run from outside of files directory since it accesses the file cache in the binding directory
+stat-vs-fstat = $(testdir)/stat-vs-fstat
+# -v for verbose, -r# for number of rounds, -f# for number of files, -s# for size of write, -i# for
+# number of write iters 'stat-vs-fstat-flags=-v -r 8 -f 8 -s 32 -i 16'
+stat-vs-fstat-flags =
+
+# Needs to be run from outside of files directory since it accesses the file cache in the binding directory
+stat-stat = $(testdir)/stat-stat
+# -v for verbose, -r# for number of rounds, -f# for number of files, -s# for size of write, -i# for
+# number of write iters 'stat-stat-flags=-v -s 32 -i 16'
+stat-stat-flags =
+
+# Needs to be run from outside of files directory since it accesses the file cache in the binding directory
+stat-fstat = $(testdir)/stat-fstat
+# -v for verbose, -r# for number of rounds, -f# for number of files, -s# for size of write, -i# for
+# number of write iters 'stat-fstat-flags=-v -s 32 -i 16'
+stat-fstat-flags =
+
+# Needs to be run from outside of files directory since it accesses the file cache in the binding directory
+stat-fstat-unlink = $(testdir)/stat-fstat-unlink
+# -v for verbose, -r# for number of rounds, -f# for number of files, -s# for size of write, -i# for
+# number of write iters 'stat-fstat-unlink-flags=-v -s 32 -i 16'
+stat-fstat-unlink-flags =
+
+# Needs to be run from outside of files directory since it accesses the file cache in the binding directory
+stat-stat-unlink = $(testdir)/stat-stat-unlink
+# -v for verbose, -r# for number of rounds, -f# for number of files, -s# for size of write, -i# for
+# number of write iters 'stat-stat-unlink-flags=-v -s 32 -i 16'
+stat-stat-unlink-flags =
+
 pfbackoff = $(testdir)/pfbackoff.sh
 # -v for verbose, -n# for number of rounds
 # number of iters 'pfbackoff-flags=-v -n 8'
@@ -108,7 +138,7 @@ saintmode-writes-nginx = $(testdir)/saintmode-writes-nginx.sh
 saintmode-writes-nginx-flags =
 
 unhealthy-haproxy = $(testdir)/unhealthy-haproxy.sh
-# -v for verbose, -i# for number of write iters'trunc-flags=-v -i 16'
+# -v for verbose, -i# for number of write iters'unhealthy-haproxy-flags=-v -i 16'
 unhealthy-haproxy-flags =
 
 # to run this test by invoking the Makefile, add binding=<binding id> to the make line
@@ -286,6 +316,36 @@ run-trunc: $(trunc)
 	$(trunc) $(trunc-flags)
 
 $(trunc): $(testdir)/trunc.c
+	cc $< -std=c99 -g -o $@
+
+run-stat-vs-fstat: $(stat-vs-fstat)
+	$(stat-vs-fstat) $(stat-vs-fstat-flags)
+
+$(stat-vs-fstat): $(testdir)/stat-vs-fstat.c
+	cc $< -std=c99 -g -o $@
+
+run-stat-stat: $(stat-stat)
+	$(stat-stat) $(stat-stat-flags)
+
+$(stat-stat): $(testdir)/stat-stat.c
+	cc $< -std=c99 -g -o $@
+
+run-stat-fstat: $(stat-fstat)
+	$(stat-fstat) $(stat-fstat-flags)
+
+$(stat-fstat): $(testdir)/stat-fstat.c
+	cc $< -std=c99 -g -o $@
+
+run-stat-fstat-unlink: $(stat-fstat-unlink)
+	$(stat-fstat-unlink) $(stat-fstat-unlink-flags)
+
+$(stat-fstat-unlink): $(testdir)/stat-fstat-unlink.c
+	cc $< -std=c99 -g -o $@
+
+run-stat-stat-unlink: $(stat-stat-unlink)
+	$(stat-stat-unlink) $(stat-stat-unlink-flags)
+
+$(stat-stat-unlink): $(testdir)/stat-stat-unlink.c
 	cc $< -std=c99 -g -o $@
 
 run-timestamptest:

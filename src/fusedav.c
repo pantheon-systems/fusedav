@@ -51,9 +51,6 @@ struct fuse* fuse = NULL;
 
 #define CLOCK_SKEW 10 // seconds
 
-// Run cache cleanup once a day.
-#define CACHE_CLEANUP_INTERVAL 86400
-
 // 'Soft" limit for core dump to ensure we get them
 #define NEW_RLIM_CUR (512 * 1024*1024)
 
@@ -165,13 +162,25 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
     st->st_blksize = 4096;
 
     if (fd >= 0) {
-        st->st_size = lseek(fd, 0, SEEK_END);
-        st->st_blocks = (st->st_size+511)/512;
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", fd, st->st_size, errno, strerror(errno));
+        struct stat sbuf;
+        int ret;
+        ret = fstat(fd, &sbuf);
+        if (ret < 0) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "fill_stat_generic: fstat failed: fd = %d : %d %s", 
+                    fd, errno, strerror(errno));
+            // If fstat fails do the lseek as previously...
+            st->st_size = lseek(fd, 0, SEEK_END);
+        } else {
+            // ... otherwise use the new size value from the fstat call
+            st->st_size = sbuf.st_size;
+        }
         if (st->st_size < 0 || inject_error(fusedav_error_fillstsize)) {
             g_set_error(gerr, fusedav_quark(), errno, "fill_stat_generic failed lseek");
             return;
         }
+        st->st_blocks = (st->st_size+511)/512;
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", 
+                fd, st->st_size, errno, strerror(errno));
     }
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done with fill_stat_generic: fd = %d : size = %d", fd, st->st_size);
@@ -487,7 +496,7 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         }
     }
 
-    // If we had *no data* or freshening failed, rebuild the cache with a full PROPFIND.
+    // If we had *no data* or freshening failed, rebuild the cache with a complete PROPFIND.
     if (needs_update) {
         unsigned long min_generation;
 
@@ -1025,7 +1034,11 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
-    assert(info != NULL || path != NULL);
+    if (info == NULL && path == NULL) {
+        log_print(LOG_ERR, SECTION_FUSEDAV_STAT, "common_getattr(both info and path are NULL)");
+        g_set_error(gerr, fusedav_quark(), EINVAL, "common_getattr(both info and path are NULL)");
+        return;
+    }
 
     if (path != NULL) {
         /* If the thread is not in saint mode, but get_stat triggers ENETDOWN, the
@@ -1052,6 +1065,7 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
             stbuf->st_mode |= S_IFDIR;
         if (S_ISREG(stbuf->st_mode))
             stbuf->st_mode |= S_IFREG;
+
     }
     else {
         int fd = filecache_fd(info);
@@ -1082,8 +1096,15 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     BUMP(dav_fgetattr);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
-    common_getattr(path, stbuf, info, &gerr);
+    // We expect an fd, which is embedded in info, so info should be non-NULL.
+    // But if it isn't use path
+    if (info != NULL) {
+        common_getattr(NULL, stbuf, info, &gerr);
+    } else {
+        common_getattr(path, stbuf, NULL, &gerr);
+    }
     if (gerr) {
+        // Don't print error on ENOENT; that's what get_attr is for
         if (gerr->code == ENOENT) {
             int res = -gerr->code;
             log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "dav_fgetattr(%s): ENOENT", path?path:"null path");
@@ -1092,7 +1113,8 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
         }
         return processed_gerror("dav_fgetattr: ", path, &gerr);
     }
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s)", path?path:"null path");
+    print_stat(stbuf, "dav_fgetattr", path);
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
 }
@@ -1115,7 +1137,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         return processed_gerror("dav_getattr: ", path, &gerr);
     }
     print_stat(stbuf, "dav_getattr", path);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s)", path);
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
 }
@@ -2237,14 +2259,19 @@ static int write_package_version_file(char *cache_path) {
 static void *cache_cleanup(void *ptr) {
     struct fusedav_config *config = (struct fusedav_config *)ptr;
     GError *gerr = NULL;
+    // We would like to do cleanup on startup, to resolve issues
+    // from errant stat and file caches
     bool first = true;
+    // Run cache cleanup once a day by default (24 * 60 * 60)
+    const time_t original_interval = 86400;
+    time_t cache_cleanup_interval = original_interval;
+    const time_t three_hours = 3 * 60 * 60;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "enter cache_cleanup");
 
     while (true) {
-        // We would like to do cleanup on startup, to resolve issues
-        // from errant stat and file caches
-        filecache_cleanup(config->cache, config->cache_path, first, &gerr);
+        bool reduce_interval;
+        reduce_interval = filecache_cleanup(config->cache, config->cache_path, first, &gerr);
         if (gerr) {
             processed_gerror("cache_cleanup: ", config->cache_path, &gerr);
         }
@@ -2252,8 +2279,26 @@ static void *cache_cleanup(void *ptr) {
         if (!first) {
             binding_busyness_stats();
         }
+        // If the filecache_cleanup indicates a site which is filling up file cache quickly,
+        // set it to cleanup more frequently
+        if (reduce_interval) {
+            // Let's not be too aggressive; min interval should be 3 hours here
+            if (cache_cleanup_interval > three_hours) {
+                cache_cleanup_interval /= 2;
+                log_print(LOG_WARNING, SECTION_FUSEDAV_DEFAULT, "reduced cache_cleanup interval to %lu", cache_cleanup_interval);
+            }
+        } else {
+            // If a site stops overfilling its cache, reset its interval to original value
+            if (cache_cleanup_interval < original_interval) {
+                cache_cleanup_interval *= 2;
+                if (cache_cleanup_interval > original_interval) {
+                    cache_cleanup_interval = original_interval;
+                }
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "reupped cache_cleanup interval to %lu", cache_cleanup_interval);
+            }
+        }
         first = false;
-        if ((sleep(CACHE_CLEANUP_INTERVAL)) != 0) {
+        if ((sleep(cache_cleanup_interval)) != 0) {
             log_print(LOG_CRIT, SECTION_FUSEDAV_DEFAULT, "cache_cleanup: sleep interrupted; exiting ...");
             return NULL;
         }

@@ -200,13 +200,15 @@ int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace
     filesystem_domain = strndup(uri.hostText.first, uri.hostText.afterLast - uri.hostText.first);
     filesystem_port = strndup(uri.portText.first, uri.portText.afterLast - uri.portText.first);
     firstdot = strchr(uri.hostText.first, '.');
+    // If we change the format of the base, this logic might no longer find the cluster
     if (firstdot) {
         filesystem_cluster = strndup(uri.hostText.first, firstdot - uri.hostText.first);
     }
     else {
-        /* Failure */
-        log_print(LOG_CRIT, SECTION_SESSION_DEFAULT, "session_config_init: error on uriParse finding cluster name: %s", base);
-        asprintf(&filesystem_cluster, "unknown");
+        // If using shortnames, make the cluster the same as the domain.
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "session_config_init: no cluster name in base: %s, using domain: %s", 
+            base, filesystem_domain);
+        filesystem_cluster = g_strdup(filesystem_domain);
     }
     uriFreeUriMembersA(&uri);
 
