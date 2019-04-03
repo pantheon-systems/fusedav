@@ -41,7 +41,6 @@
 #include "fusedav_config.h"
 #include "fusedav-statsd.h"
 
-#define REFRESH_INTERVAL 3
 #define CACHE_FILE_ENTROPY 20
 
 // Remove filecache files older than 8 days
@@ -390,7 +389,7 @@ static void get_fresh_fd(filecache_t *cache,
     // If we're in saint mode, don't go to the server
     if (pdata != NULL &&
             ((flags & O_TRUNC) || use_local_copy ||
-            (pdata->last_server_update == 0) || (time(NULL) - pdata->last_server_update) <= REFRESH_INTERVAL)) {
+            (pdata->last_server_update == 0) || (time(NULL) - pdata->last_server_update) <= STAT_CACHE_NEGATIVE_TTL)) {
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: file is fresh or being truncated: %s::%s", 
                 funcname, path, pdata->filename);
 
@@ -630,7 +629,7 @@ static void get_fresh_fd(filecache_t *cache,
         // deleted once no more file descriptors reference it.
         if (unlink_old) {
             unlink(old_filename);
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: 200: unlink old filename %s", funcname, old_filename);
+            log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: 200: unlink old filename %s", funcname, old_filename);
         }
 
         if (fstat(sdata->fd, &st)) {

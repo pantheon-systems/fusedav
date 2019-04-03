@@ -165,9 +165,22 @@ static void fill_stat_generic(struct stat *st, mode_t mode, bool is_dir, int fd,
     st->st_blksize = 4096;
 
     if (fd >= 0) {
-        st->st_size = lseek(fd, 0, SEEK_END);
+        struct stat sbuf;
+        int ret;
+        ret = fstat(fd, &sbuf);
+        if (ret < 0) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "fill_stat_generic: fstat failed: fd = %d : %d %s", 
+                    fd, errno, strerror(errno));
+            // If fstat fails do the lseek as previously...
+            st->st_size = lseek(fd, 0, SEEK_END);
+        } else {
+            // ... otherwise use the new size value from the fstat call
+            st->st_size = sbuf.st_size;
+        }
+
         st->st_blocks = (st->st_size+511)/512;
-        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", fd, st->st_size, errno, strerror(errno));
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "fill_stat_generic: seek: fd = %d : size = %d : %d %s", 
+                fd, st->st_size, errno, strerror(errno));
         if (st->st_size < 0 || inject_error(fusedav_error_fillstsize)) {
             g_set_error(gerr, fusedav_quark(), errno, "fill_stat_generic failed lseek");
             return;
@@ -487,7 +500,7 @@ static void update_directory(const char *path, bool attempt_progressive_update, 
         }
     }
 
-    // If we had *no data* or freshening failed, rebuild the cache with a full PROPFIND.
+    // If we had *no data* or freshening failed, rebuild the cache with a complete PROPFIND.
     if (needs_update) {
         unsigned long min_generation;
 
@@ -1025,7 +1038,11 @@ static void common_getattr(const char *path, struct stat *stbuf, struct fuse_fil
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
-    assert(info != NULL || path != NULL);
+    if (info == NULL && path == NULL) {
+        log_print(LOG_ERR, SECTION_FUSEDAV_STAT, "common_getattr(both info and path are NULL)");
+        g_set_error(gerr, fusedav_quark(), EINVAL, "common_getattr(both info and path are NULL)");
+        return;
+    }
 
     if (path != NULL) {
         /* If the thread is not in saint mode, but get_stat triggers ENETDOWN, the
@@ -1082,8 +1099,15 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     BUMP(dav_fgetattr);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
-    common_getattr(path, stbuf, info, &gerr);
+    // We expect an fd, which is embedded in info, so info should be non-NULL.
+    // But if it isn't use path
+    if (info != NULL) {
+        common_getattr(NULL, stbuf, info, &gerr);
+    } else {
+        common_getattr(path, stbuf, NULL, &gerr);
+    }
     if (gerr) {
+        // Don't print error on ENOENT; that's what get_attr is for
         if (gerr->code == ENOENT) {
             int res = -gerr->code;
             log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "dav_fgetattr(%s): ENOENT", path?path:"null path");
@@ -1092,7 +1116,8 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
         }
         return processed_gerror("dav_fgetattr: ", path, &gerr);
     }
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s)", path?path:"null path");
+    print_stat(stbuf, "dav_fgetattr", path);
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_fgetattr(%s); size: %d", path?path:"null path", stbuf->st_size);
 
     return 0;
 }
@@ -1115,7 +1140,7 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         return processed_gerror("dav_getattr: ", path, &gerr);
     }
     print_stat(stbuf, "dav_getattr", path);
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s)", path);
+    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s)", path);
 
     return 0;
 }
