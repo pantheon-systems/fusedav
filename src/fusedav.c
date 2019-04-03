@@ -1099,7 +1099,6 @@ static int dav_fgetattr(const char *path, struct stat *stbuf, struct fuse_file_i
     BUMP(dav_fgetattr);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "CALLBACK: dav_fgetattr(%s)", path?path:"null path");
-    common_getattr(path, stbuf, info, &gerr);
     // We expect an fd, which is embedded in info, so info should be non-NULL.
     // But if it isn't use path
     if (info != NULL) {
