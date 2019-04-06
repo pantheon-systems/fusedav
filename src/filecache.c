@@ -1707,12 +1707,13 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     int issues = 0;
     int pruned_files = 0;
     bool done = false;
-    unsigned long total_size = 0;
-    time_t earliest = 0;
+    int round;
     // By default, keep any file younger than 8 days old
     time_t age_out = 691200;
     // Take evasive action if there are more than 16GB in the file cache
     const unsigned long max_cache_size = (unsigned long) (16) *  (1024 * 1024 * 1024);
+    // max_delete irrelevant on first round; on subsequent rounds it will have been set to a new value
+    unsigned long max_delete = 0;
     bool reduce_interval = false;
 
     BUMP(filecache_cleanup);
@@ -1721,27 +1722,46 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
     options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(options, false);
-    iter = leveldb_create_iterator(cache, options);
-
-    leveldb_iter_seek(iter, filecache_prefix, strlen(filecache_prefix));
 
     starttime = time(NULL);
+    round = 0;
 
+    // Round 1: delete unconditionally all cached files older than the base age out value (8 days)
+    // If there's still more than max cache size ...
+    // Round 2: Pick a "halfway" point
+    //   Calculate how much needs to be deleted to meet max cache size
+    //   Delete all files aloder than the new halfway point, but don't delete so much that
+    //   what remains is less than max_cache_size
+    // Last round: if our halfway point is now less than 2 hours, exit even if we still have
+    //   more than max_cache_size remaining
     while (!done) {
-        total_size = 0;
-        earliest = 0;
+        // When we get to the end of the round, total_size will be all of the files we saw,
+        // whether we deleted them or not
+        unsigned long total_size = 0;
+        // size of files actually deleted
+        unsigned long deleted_size = 0;
+        bool pmsg = true;
+        iter = leveldb_create_iterator(cache, options);
+        leveldb_iter_seek(iter, filecache_prefix, strlen(filecache_prefix));
+
+        round++;
+        deleted_size = 0;
+
+        // New round
         while (leveldb_iter_valid(iter)) {
             const struct filecache_pdata *pdata;
             const char *iterkey;
             const char *path;
             struct stat stbuf;
+
             // We need the key to get the path in case we need to remove the entry from the filecache
             iterkey = leveldb_iter_key(iter, &klen);
             path = key2path(iterkey);
             // if path is null, we've gone past the filecache entries
             if (path == NULL) break;
             pdata = (const struct filecache_pdata *)leveldb_iter_value(iter, &klen);
-            log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Visiting %s :: %s", path, pdata ? pdata->filename : "no pdata");
+            log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, 
+                    "filecache_cleanup: Visiting %s :: %s", path, pdata ? pdata->filename : "no pdata");
             if (pdata) {
                 ++cached_files;
                 // We delete the entry, making pdata invalid, before we might need the filename to unlink,
@@ -1750,7 +1770,6 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
                 if (stat(fname, &stbuf) != -1) {
                     total_size += stbuf.st_size;
-                    if (stbuf.st_atime < earliest) earliest = stbuf.st_atime;
                 }
 
                 // If the cache file doesn't exist, delete the entry from the level_db cache
@@ -1768,17 +1787,35 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 }
                 else if ((first && pdata->last_server_update == 0) ||
                          ((pdata->last_server_update != 0) && (starttime - pdata->last_server_update > age_out))) {
-                    log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Unlinking %s", fname);
-                    filecache_delete(cache, path, true, &tmpgerr);
-                    if (tmpgerr) {
-                        g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup on aged out: ");
-                        ++issues;
-                        goto finish;
-                    }
-                    else {
-                        // Not specifically true. We could succeed at unlink in filecache_delete
-                        // but return non-zero; still, close enough.
-                        ++unlinked_files;
+                    // Track how much has been deleted, and limit the amount to half the max cache size
+                    // on rounds other than the first. This is a precaution; if a site's files all got updated
+                    // in a short time period, this might avoid deleting almost all files in the cache.
+                    // Note that if total_size is still too great, we will still trigger a new round. Eventually
+                    // total_size will be less the max cache size
+                    if (round > 1 && deleted_size > max_delete) {
+                        // Avoid the delete
+                        log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, 
+                                "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
+                        // Print once per round that we've hit the limit
+                        if (pmsg) {
+                            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                                    "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
+                            pmsg = false;
+                        }
+                    } else {
+                        log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "filecache_cleanup: Unlinking %s", fname);
+                        deleted_size += stbuf.st_size;
+                        filecache_delete(cache, path, true, &tmpgerr);
+                        if (tmpgerr) {
+                            g_propagate_prefixed_error(gerr, tmpgerr, "filecache_cleanup on aged out: ");
+                            ++issues;
+                            goto finish;
+                        }
+                        else {
+                            // Not specifically true. We could succeed at unlink in filecache_delete
+                            // but return non-zero; still, close enough.
+                            ++unlinked_files;
+                        }
                     }
                 }
                 else {
@@ -1792,28 +1829,57 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 }
             }
             else {
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: pulled NULL pdata out of cache for %s", path);
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                        "filecache_cleanup: pulled NULL pdata out of cache for %s", path);
             }
             leveldb_iter_next(iter);
         }
-        if (total_size < max_cache_size) { 
+        if (round == 1 && total_size <= max_cache_size) { 
+            // If the size of files when we started the first round was already less than max ...
             done = true;
         } else {
-            // On the next round, age_out at a point halfway between current earliest and current time
-            time_t time_diff;
             const time_t two_hours = 2 * 60 * 60;
-            time_diff = time(NULL) - earliest;
-            // Avoid being too aggressive. Leave one hour's worth of files in the cache.
-            if (age_out > two_hours) {
-                age_out = earliest + (time_diff / 2);
-            } else {
+            unsigned long new_total_size = total_size - deleted_size;
+
+            if (new_total_size <= max_cache_size) {
+                // If the file size is now less than max cache size, exit
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                        "filecache_cleanup: Stopping, new total size is less than max: %lu", 
+                        new_total_size);
                 done = true;
+            } else if (age_out <= two_hours) {
+                // Avoid being too aggressive. Leave two hours worth of files in the cache.
+                // If the age out is less than two hours, exit even if file size is greater than max
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                        "filecache_cleanup: Stopping, age_out less than 2 hours: %lu", age_out);
+                done = true;
+            } else {
+                // All files older than half the previous age-out now subject to deletion
+                age_out /= 2;
+                // But always leave max_cache_size in the cache
+                max_delete = new_total_size - max_cache_size;
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                        "filecache_cleanup: new age_out: %lu and max_delete: %lu;", age_out, max_delete);
             }
+            // If when we started there was more file content than max cache size, inform the caller so it can
+            // check the size more frequently
             reduce_interval = true;
+            // In order to allow log searching to find sites which required a second or later round, log at NOTICE
+            if (round > 1) {
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                        "filecache_cleanup: Completed round %d; new total_size: %lu, max: %lu, ageout: %lu, "
+                        "new max_delete: %lu, done: %d", 
+                        round, new_total_size, max_cache_size, age_out, max_delete, done);
+            } else {
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                        "filecache_cleanup: Completed first round; new total_size: %lu, max: %lu, ageout: %lu, "
+                        "new max_delete: %lu, done: %d", 
+                        new_total_size, max_cache_size, age_out, max_delete, done);
+            }
         }
+        leveldb_iter_destroy(iter);
     }
 
-    leveldb_iter_destroy(iter);
     leveldb_readoptions_destroy(options);
 
     // check filestamps on each file in directory. Set back a second to avoid unlikely but
@@ -1827,7 +1893,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
     }
 
 finish:
-    log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues",
+    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "filecache_cleanup: visited %d cache entries; unlinked %d, pruned %d, had %d issues",
         cached_files, unlinked_files, pruned_files, issues);
     return reduce_interval;
 }

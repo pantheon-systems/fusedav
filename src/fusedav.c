@@ -2238,7 +2238,8 @@ static void *cache_cleanup(void *ptr) {
     // from errant stat and file caches
     bool first = true;
     // Run cache cleanup once a day by default (24 * 60 * 60)
-    time_t cache_cleanup_interval = 86400;
+    const time_t original_interval = 86400;
+    time_t cache_cleanup_interval = original_interval;
     const time_t three_hours = 3 * 60 * 60;
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_DEFAULT, "enter cache_cleanup");
@@ -2255,11 +2256,20 @@ static void *cache_cleanup(void *ptr) {
         }
         // If the filecache_cleanup indicates a site which is filling up file cache quickly,
         // set it to cleanup more frequently
-        // Don't reduce the interval if this was called on startup
         if (reduce_interval) {
             // Let's not be too aggressive; min interval should be 3 hours here
             if (cache_cleanup_interval > three_hours) {
                 cache_cleanup_interval /= 2;
+                log_print(LOG_WARNING, SECTION_FUSEDAV_DEFAULT, "reduced cache_cleanup interval to %lu", cache_cleanup_interval);
+            }
+        } else {
+            // If a site stops overfilling its cache, reset its interval to original value
+            if (cache_cleanup_interval < original_interval) {
+                cache_cleanup_interval *= 2;
+                if (cache_cleanup_interval > original_interval) {
+                    cache_cleanup_interval = original_interval;
+                }
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_DEFAULT, "reupped cache_cleanup interval to %lu", cache_cleanup_interval);
             }
         }
         first = false;
