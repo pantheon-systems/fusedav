@@ -239,12 +239,15 @@ static void update_session_count(bool add) {
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
         const CURLcode res, const long response_code, const long elapsed_time, const char *path) {
     char *error_str = NULL;
+    char *metric_str = NULL;
     bool slow_request = false;
     float samplerate = 1.0;
+    char *curl_status_str = "000"
 
     if (res != CURLE_OK) {
         asprintf(&error_str, "%s :: %s", curl_errorbuffer(res), "no rc");
     } else if (response_code >= 500) {
+        asprintf(&curl_status_str, "%d", response_code)
         asprintf(&error_str, "%s :: %lu", "no curl error", response_code);
     } else if (elapsed_time >= 0) {
         asprintf(&error_str, "%s :: %lu", "slow_request", elapsed_time);
