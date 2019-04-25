@@ -122,6 +122,9 @@ static int simple_propfind_with_redirect(
     elapsed_time = ((now.tv_sec - start_time.tv_sec) * 1000) + ((now.tv_nsec - start_time.tv_nsec) / (1000 * 1000));
     stats_counter("propfind-count", 1, samplerate);
     stats_timer("propfind-latency", elapsed_time);
+    // Explicitly account for progressive vs complete propfinds distinctly.
+    // TODO: Eliminate the other metrics in this function if the use of Prometheus histograms pans out.
+    stats_timer(last_updated > 0 ? "progressive-propfind-latency" : "complete-propfind-latency", elapsed_time);
     if (elapsed_time > propfind_time_allotment) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "simple_propfind_with_redirect: (%s) PROPFIND exceeded time allotment of %u ms; took %u ms.",
             last_updated > 0 ? "progressive" : "complete", propfind_time_allotment, elapsed_time);
