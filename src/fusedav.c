@@ -2376,7 +2376,7 @@ int main(int argc, char *argv[]) {
         goto finish;
     }
 
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "Startup complete. Entering main FUSE loop.");
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_MAIN, "JB. Startup complete. Entering main FUSE loop.");
 
     if (config.singlethread) {
         log_print(LOG_DEBUG, SECTION_FUSEDAV_MAIN, "...singlethreaded");
