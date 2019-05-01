@@ -57,6 +57,7 @@ jobs:
   deploy-prod:
     executor: ruby-executor
     steps:
+      - checkout
       - attach_workspace:
           at: .
       - run:
