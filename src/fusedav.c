@@ -299,7 +299,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 bool tmp_session = true;
                 long elapsed_time = 0;
 
-                if (!(session = session_request_init(path, NULL, tmp_session)) || inject_error(fusedav_error_propfindsession)) {
+                if (!(session = session_request_init(path, NULL, tmp_session, false)) || inject_error(fusedav_error_propfindsession)) {
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                     // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                     try_release_request_outstanding();
@@ -1131,7 +1131,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             struct curl_slist *slist = NULL;
             long elapsed_time = 0;
 
-            if (!(session = session_request_init(path, NULL, false)) || inject_error(fusedav_error_cunlinksession)) {
+            if (!(session = session_request_init(path, NULL, false, true)) || inject_error(fusedav_error_cunlinksession)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                 // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                 try_release_request_outstanding();
@@ -1263,7 +1263,7 @@ static int dav_rmdir(const char *path) {
         struct curl_slist *slist = NULL;
         long elapsed_time = 0;
 
-        if (!(session = session_request_init(fn, NULL, false))) {
+        if (!(session = session_request_init(fn, NULL, false, true))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): failed to get session", funcname, path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1338,7 +1338,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
         struct curl_slist *slist = NULL;
         long elapsed_time = 0;
 
-        if (!(session = session_request_init(fn, NULL, false))) {
+        if (!(session = session_request_init(fn, NULL, false, true))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): failed to get session", funcname, path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1431,7 +1431,7 @@ static int dav_rename(const char *from, const char *to) {
         char *escaped_to;
         long elapsed_time = 0;
 
-        if (!(session = session_request_init(from, NULL, false))) {
+        if (!(session = session_request_init(from, NULL, false, true))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "%s: failed to get session for %d:%s", funcname, fd, from);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();

@@ -394,7 +394,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         if (last_updated > 0) {
             asprintf(&query_string, "changes_since=%lu", last_updated);
         }
-        session = session_request_init(path, query_string, false);
+        session = session_request_init(path, query_string, false, false);
         if (!session || inject_error(props_error_spropfindsession)) {
             g_set_error(gerr, props_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
             free(query_string);
