@@ -36,7 +36,6 @@
 #include "stats.h"
 #include "fusedav-statsd.h"
 
-#define CACHE_TIMEOUT 3
 // The version of the data stored in the stat cache
 const uint64_t STAT_CACHE_DATA_VERSION = 2;
 static uint64_t data_version = 0;
@@ -383,7 +382,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
 
         // Keep stats for each second 0-6, then bucket everything over 6
         stats_histo("sc_value_get", time_since, 6, pfsamplerate);
-        if (time_since > CACHE_TIMEOUT) {
+        if (time_since > STAT_CACHE_NEGATIVE_TTL) {
             char *directory;
             time_t directory_updated;
 
@@ -411,7 +410,7 @@ struct stat_cache_value *stat_cache_value_get(stat_cache_t *cache, const char *p
             log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "stat_cache_value_get: Directory contents for %s are %lu seconds old.", 
                     directory, time_since);
             free(directory);
-            if (time_since > CACHE_TIMEOUT) {
+            if (time_since > STAT_CACHE_NEGATIVE_TTL) {
                 log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, 
                         "stat_cache_value_get: Parent directory for %s is too old (%lu seconds).", 
                         path, time_since);
@@ -679,8 +678,9 @@ void stat_cache_value_set(stat_cache_t *cache, const char *path, struct stat_cac
     value->local_generation = stat_cache_get_local_generation();
 
     key = path2key(path, false);
-    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: %s (mode %04o: updated %lu: loc_gen %lu: atime %lu: mtime %lu)",
-        funcname, key, value->st.st_mode, value->updated, value->local_generation, value->st.st_atime, value->st.st_mtime);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_CACHE, "%s: %s (mode %04o: size: %d; updated %lu: loc_gen %lu: atime %lu: mtime %lu)",
+        funcname, key, value->st.st_mode, value->st.st_size, value->updated, value->local_generation, value->st.st_atime, 
+        value->st.st_mtime);
 
     options = leveldb_writeoptions_create();
     leveldb_put(cache, options, key, strlen(key) + 1, (char *) value, sizeof(struct stat_cache_value), &errptr);
@@ -747,7 +747,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
         }
         else {
-            stat_cache_updated_children(cache, p, time(NULL) - CACHE_TIMEOUT - 1, &tmpgerr);
+            stat_cache_updated_children(cache, p, time(NULL) - STAT_CACHE_NEGATIVE_TTL - 1, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: ");
             }
@@ -762,7 +762,7 @@ void stat_cache_delete_parent(stat_cache_t *cache, const char *path, GError **ge
             g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
         }
         else {
-            stat_cache_updated_children(cache, path, time(NULL) - CACHE_TIMEOUT - 1, &tmpgerr);
+            stat_cache_updated_children(cache, path, time(NULL) - STAT_CACHE_NEGATIVE_TTL - 1, &tmpgerr);
             if (tmpgerr) {
                 g_propagate_prefixed_error(gerr, tmpgerr, "stat_cache_delete_parent: no parent path");
             }
@@ -902,7 +902,7 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
 
         // Check for cache values which are too old; but timestamp = 0 needs to trigger below
         current_time = time(NULL);
-        if (current_time - timestamp > CACHE_TIMEOUT) {
+        if (current_time - timestamp > STAT_CACHE_NEGATIVE_TTL) {
             log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
             return -STAT_CACHE_OLD_DATA;
         }
