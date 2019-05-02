@@ -239,7 +239,6 @@ static void update_session_count(bool add) {
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
         const CURLcode res, const long response_code, const long elapsed_time, const char *path) {
     char *error_str = NULL;
-    char *metric_str = NULL;
     bool slow_request = false;
     float samplerate = 1.0;
 
@@ -1027,8 +1026,7 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
     bool non_retriable_error = false; // default to retry
     float samplerate = 1.0;
 
-    asprintf(&curl_status_str, "%lu", response_code);
-    char *curl_status_str = NULL;
+    char *metric_str = NULL;
 
     stats_counter("attempts", 1, samplerate);
 
