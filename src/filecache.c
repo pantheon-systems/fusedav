@@ -464,7 +464,7 @@ static void get_fresh_fd(filecache_t *cache,
         if (response_fd >= 0) close(response_fd);
         if (response_filename[0] != '\0') unlink(response_filename);
 
-        session = session_request_init(path, NULL, false);
+        session = session_request_init(path, NULL, false, false);
         if (!session || inject_error(filecache_error_freshsession)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: Failed session_request_init on GET", funcname);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
@@ -506,7 +506,7 @@ static void get_fresh_fd(filecache_t *cache,
 
         if (slist) curl_slist_free_all(slist);
 
-        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status("get", session, res, response_code, elapsed_time, idx, path, false);
         // Some errors should not be retried. (Non-errors will fail the
         // for loop test and fall through naturally)
         if (non_retriable_error) break;
@@ -1062,9 +1062,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
         // REVIEW: We didn't use to check for sesssion == NULL, so now we 
         // also call try_release_request_outstanding. Is this OK?
-        session = session_request_init(path, NULL, false);
+        session = session_request_init(path, NULL, false, true);
         if (!session || inject_error(filecache_error_freshsession)) {
-            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: Failed session_request_init on GET", funcname);
+            g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: Failed session_request_init on PUT", funcname);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
             goto finish;
@@ -1089,7 +1089,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
         if (slist) curl_slist_free_all(slist);
 
-        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status("put", session, res, response_code, elapsed_time, idx, path, false);
         // Some errors should not be retried. (Non-errors will fail the
         // for loop test and fall through naturally)
         if (non_retriable_error) break;
