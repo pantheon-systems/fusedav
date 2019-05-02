@@ -242,13 +242,10 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
     char *metric_str = NULL;
     bool slow_request = false;
     float samplerate = 1.0;
-    const char *curl_empty_status_str = "000";
-    char *curl_status_str = curl_empty_status_str;
 
     if (res != CURLE_OK) {
         asprintf(&error_str, "%s :: %s", curl_errorbuffer(res), "no rc");
     } else if (response_code >= 500) {
-        asprintf(&curl_status_str, "%d", response_code);
         asprintf(&error_str, "%s :: %lu", "no curl error", response_code);
     } else if (elapsed_time >= 0) {
         asprintf(&error_str, "%s :: %lu", "slow_request", elapsed_time);
@@ -261,17 +258,12 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
     log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
         "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s",
         fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
-
-    asprintf(&metric_str, "%s.%s", fcn_name, curl_status_str);
-    stats_timer(metric_str, elapsed_time);
-    free(metric_str);
-    free(curl_status_str);
     // Don't treat slow requests as 'failures'; it messes up the failure/recovery stats
     if (!slow_request) {
+        // Is this the first, second, or third failure for this request?
         char *failure_str = NULL;
         asprintf(&failure_str, "%d_failures", iter + 1);
 
-        // Is this the first, second, or third failure for this request?
         stats_counter(failure_str, 1, samplerate);
 
         free(failure_str);
@@ -1035,6 +1027,9 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
     bool non_retriable_error = false; // default to retry
     float samplerate = 1.0;
 
+    asprintf(&curl_status_str, "%lu", response_code);
+    char *curl_status_str = NULL;
+
     stats_counter("attempts", 1, samplerate);
 
     if (res != CURLE_OK) {
@@ -1044,13 +1039,23 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
         } else {
             print_errors(iter, "curl_failures", fcn_name, res, response_code, elapsed_time, path);
         }
+        // set the response code part of the metric str to 000 because that's what commandline curl does,
+        // and we need some kind of value for path globbing to be well-behaved.
+        asprintf(&metric_str, "%s.%s", fcn_name, "000");
+        stats_timer(metric_str, elapsed_time);
+        free(metric_str);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
         delete_session(session, tmp_session);
         return non_retriable_error;
     }
 
+    // We want to count the outcome and latency for every response code, regardless of whether its an error.
+    asprintf(&metric_str, "%s.%lu", fcn_name, response_code);
+    stats_timer(metric_str, elapsed_time);
+    free(metric_str);
     if (response_code >= 500) {
         // We could treat 50x errors differently here
+
         print_errors(iter, "status500_failures", fcn_name, res, response_code, elapsed_time, path);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
         delete_session(session, tmp_session);
