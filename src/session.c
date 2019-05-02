@@ -239,7 +239,6 @@ static void update_session_count(bool add) {
 static void print_errors(const int iter, const char *type_str, const char *fcn_name, 
         const CURLcode res, const long response_code, const long elapsed_time, const char *path) {
     char *error_str = NULL;
-    char *metric_str = NULL;
     bool slow_request = false;
     float samplerate = 1.0;
 
