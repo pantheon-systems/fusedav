@@ -242,13 +242,10 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
     char *metric_str = NULL;
     bool slow_request = false;
     float samplerate = 1.0;
-    const char *curl_empty_status_str = "000";
-    char *curl_status_str = curl_empty_status_str;
 
     if (res != CURLE_OK) {
         asprintf(&error_str, "%s :: %s", curl_errorbuffer(res), "no rc");
     } else if (response_code >= 500) {
-        asprintf(&curl_status_str, "%d", response_code);
         asprintf(&error_str, "%s :: %lu", "no curl error", response_code);
     } else if (elapsed_time >= 0) {
         asprintf(&error_str, "%s :: %lu", "slow_request", elapsed_time);
