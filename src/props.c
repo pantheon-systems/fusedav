@@ -372,6 +372,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         void *userdata, GError **gerr) {
     static const char *funcname = "simple_propfind";
     char *description = NULL;
+    asprintf(&description, "%s-propfind", last_updated > 0 ? "progressive" : "complete");
     // Local variables for cURL.
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
@@ -393,7 +394,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         if (last_updated > 0) {
             asprintf(&query_string, "changes_since=%lu", last_updated);
         }
-        session = session_request_init(path, query_string, false);
+        session = session_request_init(path, query_string, false, false);
         if (!session || inject_error(props_error_spropfindsession)) {
             g_set_error(gerr, props_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
             free(query_string);
@@ -451,7 +452,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         free(query_string);
         query_string = NULL;
 
-        bool non_retriable_error = process_status(funcname, session, res, response_code, elapsed_time, idx, path, false);
+        bool non_retriable_error = process_status(description, session, res, response_code, elapsed_time, idx, path, false);
         // Some errors should not be retried. (Non-errors will fail the
         // for loop test and fall through naturally)
         if (non_retriable_error) break;
@@ -538,8 +539,6 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     ret = 0;
 
 finish:
-    asprintf(&description, "%s-propfinds", last_updated > 0 ? "progressive" : "complete");
-    stats_counter(description, 1, pfsamplerate);
     free(description);
     XML_ParserFree(parser);
     return ret;
