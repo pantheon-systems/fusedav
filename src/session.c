@@ -257,13 +257,12 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
     log_print(LOG_ERR, SECTION_SESSION_DEFAULT,
         "%s: curl iter %d on path %s; %s -- fusedav.%s.server-%s.%s",
         fcn_name, iter, path, error_str, filesystem_cluster, nodeaddr, type_str);
-
     // Don't treat slow requests as 'failures'; it messes up the failure/recovery stats
     if (!slow_request) {
+        // Is this the first, second, or third failure for this request?
         char *failure_str = NULL;
         asprintf(&failure_str, "%d_failures", iter + 1);
 
-        // Is this the first, second, or third failure for this request?
         stats_counter(failure_str, 1, samplerate);
 
         free(failure_str);
@@ -1027,6 +1026,8 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
     bool non_retriable_error = false; // default to retry
     float samplerate = 1.0;
 
+    char *metric_str = NULL;
+
     stats_counter("attempts", 1, samplerate);
 
     if (res != CURLE_OK) {
@@ -1036,13 +1037,23 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
         } else {
             print_errors(iter, "curl_failures", fcn_name, res, response_code, elapsed_time, path);
         }
+        // set the response code part of the metric str to 000 because that's what commandline curl does,
+        // and we need some kind of value for path globbing to be well-behaved.
+        asprintf(&metric_str, "%s.%s", fcn_name, "000");
+        stats_timer(metric_str, elapsed_time);
+        free(metric_str);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
         delete_session(session, tmp_session);
         return non_retriable_error;
     }
 
+    // We want to count the outcome and latency for every response code, regardless of whether its an error.
+    asprintf(&metric_str, "%s.%lu", fcn_name, response_code);
+    stats_timer(metric_str, elapsed_time);
+    free(metric_str);
     if (response_code >= 500) {
         // We could treat 50x errors differently here
+
         print_errors(iter, "status500_failures", fcn_name, res, response_code, elapsed_time, path);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
         delete_session(session, tmp_session);
@@ -1224,7 +1235,7 @@ static CURL *get_session(bool tmp_session) {
     return session;
 }
 
-CURL *session_request_init(const char *path, const char *query_string, bool tmp_session) {
+CURL *session_request_init(const char *path, const char *query_string, bool tmp_session, bool rw) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
@@ -1234,6 +1245,11 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
     // Calls to this function, on detecting this error, set ENETDOWN, which is appropriate
     if (use_saint_mode()) {
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: already in saint mode", funcname);
+        if (rw) {
+            stats_counter("saint_write", 1, 1.0);
+            return NULL;
+        }
+        stats_counter("saint_read", 1, 1.0);
         return NULL;
     }
 
