@@ -71,7 +71,7 @@ static G_DEFINE_QUARK("FUSEDAV", fusedav)
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
     GError *gerr = *pgerr;
-    float samplerate = 1.0; // Always sample these stats
+    const float samplerate = 1.0; // Always sample these stats
 
     log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s",
         prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
@@ -803,6 +803,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     int ret = -ENOENT;
     enum ignore_freshness skip_freshness_check = OFF;
     time_t time_since;
+    const float samplerate = 1.0; // Always sample these stats
 
     memset(stbuf, 0, sizeof(struct stat));
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -847,10 +848,14 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         // Not quite true. With ALREADY_FRESH, ENOENT means not in cache;
         // but a negative entry will return ENOENT, but NOT as an error, just
         // as a return code
+        // Use samplerate for the unexpected results, but continue to use pfsamplerate for the common ones
+        // This will improve the count of the unexpected counters but not overwhelm the system in the common case
         if (tmpgerr->code == ENETDOWN) {
-            stats_counter_local("propfind-saintmode-failure", 1, pfsamplerate);
+            stats_counter_local("propfind_saint_mode_failure", 1, samplerate);
+            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "%s: propfind_saint_mode_failure on file %s", funcname, path);
         } else {
-            stats_counter_local("propfind-error", 1, pfsamplerate);
+            stats_counter_local("propfind_error", 1, samplerate);
+            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "%s: propfind_error on file %s", funcname, path);
         }
         return;
     }
@@ -858,10 +863,12 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         // if in saint mode, we skip the freshness check. The return will be either
         // not in the cache, which is ENETDOWN above, or cache hit, stale or not.
         if (skip_freshness_check == SAINT_MODE) {
-            stats_counter_local("propfind-saintmode-success", 1, pfsamplerate);
+            stats_counter_local("propfind_saint_mode_success", 1, samplerate);
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: propfind_saint_mode_success on file %s", funcname, path);
         } else {
             // cache is fresh, no propfind will be issued, reuse negative cache designator from elsewhere
             stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
+            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: propfind-negative-cache on file %s", funcname, path);
         }
         return;
     }

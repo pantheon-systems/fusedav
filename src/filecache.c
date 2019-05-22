@@ -387,7 +387,7 @@ static void get_fresh_fd(filecache_t *cache,
     if (pdata != NULL &&
             ((flags & O_TRUNC) || use_local_copy ||
             (pdata->last_server_update == 0) || (time(NULL) - pdata->last_server_update) <= STAT_CACHE_NEGATIVE_TTL)) {
-        float samplerate = 1.0; // always sample stat
+        const float samplerate = 1.0; // always sample stat
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: file is fresh or being truncated: %s::%s", 
                 funcname, path, pdata->filename);
 
@@ -401,20 +401,20 @@ static void get_fresh_fd(filecache_t *cache,
             // use_local_copy means we're in saint mode
             // otherwise we failed on something we expected based on last_server_update
             if (use_local_copy) {
-                stats_counter("get-saintmode-failure", 1, samplerate);
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: failure saint mode on file: %s::%s", funcname, path, pdata->filename);
+                stats_counter("get_saint_mode_failure", 1, samplerate);
+                log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_failure on file: %s::%s", funcname, path, pdata->filename);
             } else {
-                stats_counter("get-cache-failure", 1, samplerate);
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: failure finding file in cache: %s::%s", funcname, path, pdata->filename);
+                stats_counter("get_cache_failure", 1, samplerate);
+                log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_cache_failure on file in cache: %s::%s", funcname, path, pdata->filename);
             }
             goto finish;
         } else {
             if (use_local_copy) {
-                stats_counter("get-saintmode-success", 1, samplerate);
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: success saint mode on file: %s::%s", funcname, path, pdata->filename);
+                stats_counter("get_saint_mode_success", 1, samplerate);
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_success on file: %s::%s", funcname, path, pdata->filename);
             } else {
-                stats_counter("get-cache-success", 1, samplerate);
-                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: success finding file in cache: %s::%s", funcname, path, pdata->filename);
+                stats_counter("get_cache_success", 1, samplerate);
+                log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "%s: get_cache_success on file in cache: %s::%s", funcname, path, pdata->filename);
             }
         }
 
@@ -602,7 +602,7 @@ static void get_fresh_fd(filecache_t *cache,
         char old_filename[PATH_MAX];
         const char *sz;
         bool unlink_old = false;
-        float samplerate = 1.0; // always sample stat
+        const float samplerate = 1.0; // always sample stat
 
         if (pdata == NULL) {
             *pdatap = calloc(1, sizeof(struct filecache_pdata));
@@ -1032,7 +1032,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     // Somewhat arbitrary
     static const unsigned small_time_allotment = 4000; // 4 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
-    float samplerate = 1.0; // always sample stats
+    const float samplerate = 1.0; // always sample stats
 
     BUMP(filecache_return_etag);
 
