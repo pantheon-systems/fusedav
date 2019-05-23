@@ -71,7 +71,7 @@ static G_DEFINE_QUARK("FUSEDAV", fusedav)
 static int processed_gerror(const char *prefix, const char *path, GError **pgerr) {
     int ret;
     GError *gerr = *pgerr;
-    float samplerate = 1.0; // Always sample these stats
+    const float samplerate = 1.0; // Always sample these stats
 
     log_print(LOG_ERR, SECTION_FUSEDAV_DEFAULT, "%s on %s: %s -- %d: %s",
         prefix, path ? path : "null path", gerr->message, gerr->code, g_strerror(gerr->code));
@@ -333,7 +333,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
             delete_tmp_session(session);
 
             if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_propfindhead)) {
-                trigger_saint_event(CLUSTER_FAILURE);
+                trigger_saint_event(CLUSTER_FAILURE, "propfind-head");
                 set_dynamic_logging();
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: curl failed: %s : rc: %ld\n",
                     funcname, curl_easy_strerror(res), response_code);
@@ -341,7 +341,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 free(existing);
                 return;
             } else {
-                trigger_saint_event(CLUSTER_SUCCESS);
+                trigger_saint_event(CLUSTER_SUCCESS, "propfind-head");
             }
 
             // fileserver doesn't think the file exists, so delete it locally
@@ -803,6 +803,7 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     int ret = -ENOENT;
     enum ignore_freshness skip_freshness_check = OFF;
     time_t time_since;
+    const float samplerate = 1.0; // Always sample these stats
 
     memset(stbuf, 0, sizeof(struct stat));
     memset(&value, 0, sizeof(struct stat_cache_value));
@@ -840,12 +841,39 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
     // Unless we change the logic in get_stat_from_cache, it will return ENOENT or ENETDOWN
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+        // Count this also as already in saint mode, and failed
+        // if other error (leveldb, bad len), then something something
+        // NB: we can't get ENOENT here, only below when we send in ALREADY_FRESH,
+        // which means we did the propfind, and the item still didn't exist
+        // Not quite true. With ALREADY_FRESH, ENOENT means not in cache;
+        // but a negative entry will return ENOENT, but NOT as an error, just
+        // as a return code
+        // Use samplerate for the unexpected results, but continue to use pfsamplerate for the common ones
+        // This will improve the count of the unexpected counters but not overwhelm the system in the common case
+        if (tmpgerr->code == ENETDOWN) {
+            stats_counter_local("propfind_saint_mode_failure", 1, samplerate);
+            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "%s: propfind_saint_mode_failure on file %s", funcname, path);
+        } else {
+            stats_counter_local("propfind_error", 1, samplerate);
+            log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "%s: propfind_error on file %s", funcname, path);
+        }
         return;
     }
     else if (ret == 0) {
+        // if in saint mode, we skip the freshness check. The return will be either
+        // not in the cache, which is ENETDOWN above, or cache hit, stale or not.
+        if (skip_freshness_check == SAINT_MODE) {
+            stats_counter_local("propfind_saint_mode_success", 1, samplerate);
+            log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: propfind_saint_mode_success on file %s", funcname, path);
+        } else {
+            // cache is fresh, no propfind will be issued, reuse negative cache designator from elsewhere
+            stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
+            log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: propfind-negative-cache on file %s", funcname, path);
+        }
         return;
     }
     // else fall through, this would be for EKEYEXPIRED, indicating statcache miss
+    // It could also mean negative entry, ENOENT, which is processed well below
 
     log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, "%s: STAT-CACHE-MISS", funcname);
 
@@ -937,6 +965,8 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         goto fail;
     }
 
+    // If we're not doing a propfind, it means that the entry is a negative entry, and too recently
+    // accessed to try again. The get_stat_from_cache will be ENOENT.
     if (needs_propfind) {
         log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: Calling update_directory: %s; attempt_progressive_update will be %d",
             funcname, parent_path, (parent_children_update_ts > 0));
@@ -1177,12 +1207,12 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
         }
 
         if(res != CURLE_OK || response_code >= 500 || inject_error(fusedav_error_cunlinkcurl)) {
-            trigger_saint_event(CLUSTER_FAILURE);
+            trigger_saint_event(CLUSTER_FAILURE, "unlink");
             set_dynamic_logging();
             g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s: DELETE failed: %s", funcname, curl_easy_strerror(res));
             return;
         } else {
-            trigger_saint_event(CLUSTER_SUCCESS);
+            trigger_saint_event(CLUSTER_SUCCESS, "unlink");
         }
     }
 
@@ -1308,12 +1338,12 @@ static int dav_rmdir(const char *path) {
     }
 
     if (res != CURLE_OK || response_code >= 500) {
-        trigger_saint_event(CLUSTER_FAILURE);
+        trigger_saint_event(CLUSTER_FAILURE, "rmdir");
         set_dynamic_logging();
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): DELETE failed: %s", funcname, path, curl_easy_strerror(res));
         return -ENETDOWN;
     } else {
-        trigger_saint_event(CLUSTER_SUCCESS);
+        trigger_saint_event(CLUSTER_SUCCESS, "rmdir");
     }
 
     log_print(LOG_NOTICE, SECTION_FUSEDAV_DIR, "%s: removed(%s)", funcname, path);
@@ -1383,12 +1413,12 @@ static int dav_mkdir(const char *path, mode_t mode) {
     }
 
     if (res != CURLE_OK || response_code >= 500) {
-        trigger_saint_event(CLUSTER_FAILURE);
+        trigger_saint_event(CLUSTER_FAILURE, "mkdir");
         set_dynamic_logging();
         log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): MKCOL failed: %s", funcname, path, curl_easy_strerror(res));
         return -ENETDOWN;
     } else {
-        trigger_saint_event(CLUSTER_SUCCESS);
+        trigger_saint_event(CLUSTER_SUCCESS, "mkdir");
     }
 
     // Zero-out structure; some fields we don't populate but want to be 0, e.g. st_atim.tv_nsec
@@ -1495,12 +1525,12 @@ static int dav_rename(const char *from, const char *to) {
      * fails, not 404: error, exit
      */
     if(res != CURLE_OK || response_code >= 500) {
-        trigger_saint_event(CLUSTER_FAILURE);
+        trigger_saint_event(CLUSTER_FAILURE, "rename");
         set_dynamic_logging();
         log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "%s: MOVE failed: %s", funcname, curl_easy_strerror(res));
         goto finish;
     } else {
-        trigger_saint_event(CLUSTER_SUCCESS);
+        trigger_saint_event(CLUSTER_SUCCESS, "rename");
         if (response_code >= 400) {
             if (response_code == 404) {
                 // We allow silent failures because we might have done a rename before the

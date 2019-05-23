@@ -387,6 +387,7 @@ static void get_fresh_fd(filecache_t *cache,
     if (pdata != NULL &&
             ((flags & O_TRUNC) || use_local_copy ||
             (pdata->last_server_update == 0) || (time(NULL) - pdata->last_server_update) <= STAT_CACHE_NEGATIVE_TTL)) {
+        const float samplerate = 1.0; // always sample stat
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: file is fresh or being truncated: %s::%s", 
                 funcname, path, pdata->filename);
 
@@ -397,7 +398,24 @@ static void get_fresh_fd(filecache_t *cache,
                     funcname, path, flags, errno, strerror(errno), ENOENT);
             // If the cachefile named in pdata->filename does not exist, or any other error occurs...
             g_set_error(gerr, system_quark(), errno, "%s: open failed: %s", funcname, strerror(errno));
+            // use_local_copy means we're in saint mode
+            // otherwise we failed on something we expected based on last_server_update
+            if (use_local_copy) {
+                stats_counter("get_saint_mode_failure", 1, samplerate);
+                log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_failure on file: %s::%s", funcname, path, pdata->filename);
+            } else {
+                stats_counter("get_cache_failure", 1, samplerate);
+                log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_cache_failure on file in cache: %s::%s", funcname, path, pdata->filename);
+            }
             goto finish;
+        } else {
+            if (use_local_copy) {
+                stats_counter("get_saint_mode_success", 1, samplerate);
+                log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_success on file: %s::%s", funcname, path, pdata->filename);
+            } else {
+                stats_counter("get_cache_success", 1, samplerate);
+                log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "%s: get_cache_success on file in cache: %s::%s", funcname, path, pdata->filename);
+            }
         }
 
         if (flags & O_TRUNC) {
@@ -510,13 +528,13 @@ static void get_fresh_fd(filecache_t *cache,
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
-        trigger_saint_event(CLUSTER_FAILURE);
+        trigger_saint_event(CLUSTER_FAILURE, "get");
         set_dynamic_logging();
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: curl_easy_perform is not CURLE_OK or 500: %s",
             funcname, curl_easy_strerror(res));
         goto finish;
     } else {
-        trigger_saint_event(CLUSTER_SUCCESS);
+        trigger_saint_event(CLUSTER_SUCCESS, "get");
     }
 
     // If we get a 304, the cache file has the same contents as the file on the server, so
@@ -584,7 +602,7 @@ static void get_fresh_fd(filecache_t *cache,
         char old_filename[PATH_MAX];
         const char *sz;
         bool unlink_old = false;
-        float samplerate = 1.0; // always sample stat
+        const float samplerate = 1.0; // always sample stat
 
         if (pdata == NULL) {
             *pdatap = calloc(1, sizeof(struct filecache_pdata));
@@ -1014,7 +1032,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     // Somewhat arbitrary
     static const unsigned small_time_allotment = 4000; // 4 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
-    float samplerate = 1.0; // always sample stats
+    const float samplerate = 1.0; // always sample stats
 
     BUMP(filecache_return_etag);
 
@@ -1093,7 +1111,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {
-        trigger_saint_event(CLUSTER_FAILURE);
+        trigger_saint_event(CLUSTER_FAILURE, "put");
         set_dynamic_logging();
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: retry_curl_easy_perform is not CURLE_OK: %s", 
                 funcname, curl_easy_strerror(res));
@@ -1106,7 +1124,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         unsigned long count;
         const char *sz;
 
-        trigger_saint_event(CLUSTER_SUCCESS);
+        trigger_saint_event(CLUSTER_SUCCESS, "put");
         log_print(LOG_INFO, SECTION_FILECACHE_COMM, "%s: curl_easy_perform succeeds (fd=%d)", funcname, fd);
 
         // Ensure that it's a 2xx response code.

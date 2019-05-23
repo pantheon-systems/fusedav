@@ -240,7 +240,7 @@ static void print_errors(const int iter, const char *type_str, const char *fcn_n
         const CURLcode res, const long response_code, const long elapsed_time, const char *path) {
     char *error_str = NULL;
     bool slow_request = false;
-    float samplerate = 1.0;
+    const float samplerate = 1.0;
 
     if (res != CURLE_OK) {
         asprintf(&error_str, "%s :: %s", curl_errorbuffer(res), "no rc");
@@ -492,42 +492,66 @@ void action_s2_e2 (void) {
 void action_s2_e3 (void) {}
 void action_s3_e1 (void) {
     struct timespec now;
-    float samplerate = 1.0;
+    const float samplerate = 1.0;
     clock_gettime(CLOCK_MONOTONIC, &now);
     failure_timestamp = now.tv_sec;
     try_release_request_outstanding();
     saint_state = STATE_SAINT_MODE;
-    stats_counter_cluster("saint_mode", 1, samplerate);
-    log_print(LOG_NOTICE, SECTION_ENHANCED, "Setting cluster saint mode for %lu seconds.", saint_mode_duration);
+    // Count this as  separate saint_mode entry, "Still in saint mode!"
+    stats_counter_cluster("saint_mode_still", 1, samplerate);
+    log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "saint_mode_still");
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Event CLUSTER_FAILURE; transitioned to STATE_SAINT_MODE from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
 }
 void action_s3_e2 (void) {}
 void action_s3_e3 (void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
     try_release_request_outstanding();
     saint_state = STATE_HEALTHY;
     log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Event CLUSTER_SUCCESS; transitioned to STATE_HEALTHY from STATE_ATTEMPTING_TO_EXIT_SAINT_MODE.");
+    log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "On exit, saint_mode active for %d seconds", now.tv_sec-unhealthy_since_timestamp);
 }
 
 void trigger_saint_mode_expired_if_needed(void) {
     struct timespec now;
-    float samplerate = 1.0;
+    const float samplerate = 1.0;
     clock_gettime(CLOCK_MONOTONIC, &now);
     if (saint_state == STATE_SAINT_MODE && now.tv_sec >= failure_timestamp + saint_mode_duration) {
         state_table[saint_state][SAINT_MODE_DURATION_EXPIRED]();
         // If we've been in saintmode for longer than saint_mode_warning_threshold, emit a stat saying so.
         if (now.tv_sec >= unhealthy_since_timestamp + saint_mode_warning_threshold) {
             stats_counter_cluster("long_running_saint_mode", 1, samplerate);
-            log_print(LOG_INFO, SECTION_ENHANCED, "saint_mode active for %d seconds", now.tv_sec-unhealthy_since_timestamp);
+            log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "long_running_saint_mode active for %d seconds", now.tv_sec-unhealthy_since_timestamp);
         }
     }
 }
 
-void trigger_saint_event(event_t event) {
+void trigger_saint_event(event_t event, const char *request_type) {
+    char *metric_str = NULL;
     if (!config_grace) return;
     pthread_mutex_lock(&saint_state_mutex);
     trigger_saint_mode_expired_if_needed(); // trigger SAINT_MODE_DURATION_EXPIRED if duration has expired.
     state_table[saint_state][event]();
     pthread_mutex_unlock(&saint_state_mutex);
+    if (event == CLUSTER_FAILURE) {
+        const float samplerate = 1.0;
+        // We want to count the cause for each type of request (propfind, get, put, mkdir, rmdir, rename, unlink)
+        asprintf(&metric_str, "trigger_saint_mode-%s", request_type);
+        // The first will tell us which request type caused it; the second is a value for all
+        stats_counter_cluster(metric_str, 1, samplerate);
+        stats_counter_cluster("saint_mode", 1, samplerate);
+        log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "Triggered CLUSTER_FAILURE on %s", metric_str);
+        free(metric_str);
+    } else {
+        struct timespec now;
+        time_t elapsed_time;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        elapsed_time = now.tv_sec-unhealthy_since_timestamp;
+        asprintf(&metric_str, "exit_saint_mode");
+        stats_timer(metric_str, elapsed_time);
+        free(metric_str);
+        log_print(LOG_INFO, SECTION_SESSION_DEFAULT, "exit_saint_mode after %d seconds", elapsed_time);
+    }
 }
 
 state_t get_saint_state(void) {
@@ -1024,7 +1048,7 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
         const char *path, bool tmp_session) {
 
     bool non_retriable_error = false; // default to retry
-    float samplerate = 1.0;
+    const float samplerate = 1.0;
 
     char *metric_str = NULL;
 
@@ -1068,7 +1092,9 @@ bool process_status(const char *fcn_name, CURL *session, const CURLcode res,
         print_errors(iter, "slow_requests", fcn_name, res, response_code, elapsed_time, path);
         increment_node_failure(nodeaddr, res, response_code, elapsed_time);
         if (health_status_all_nodes() == UNHEALTHY) {
-            trigger_saint_event(CLUSTER_FAILURE);
+            asprintf(&metric_str, "%s-slow", fcn_name);
+            trigger_saint_event(CLUSTER_FAILURE, metric_str);
+            free(metric_str);
             set_dynamic_logging();
         }
         delete_session(session, tmp_session);
