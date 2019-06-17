@@ -55,7 +55,7 @@ void action_s3_e3 (void);
 
 void try_release_request_outstanding(void);
 void trigger_saint_mode_expired_if_needed(void);
-void trigger_saint_event(event_t);
+void trigger_saint_event(event_t event, const char *request_type);
 state_t get_saint_state(void);
 bool use_saint_mode(void);
 void timed_curl_easy_perform(CURL *session, CURLcode *res, long *response_code, long *elapsed_time);

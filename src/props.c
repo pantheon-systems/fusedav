@@ -372,7 +372,6 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         void *userdata, GError **gerr) {
     static const char *funcname = "simple_propfind";
     char *description = NULL;
-    asprintf(&description, "%s-propfind", last_updated > 0 ? "progressive" : "complete");
     // Local variables for cURL.
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
@@ -383,6 +382,7 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
 
     int ret = -1;
 
+    asprintf(&description, "%s-propfind", last_updated > 0 ? "progressive" : "complete");
     for (int idx = 0; idx < num_filesystem_server_nodes && (res != CURLE_OK || response_code >= 500); idx++) {
         CURL *session;
         struct curl_slist *slist = NULL;
@@ -461,12 +461,12 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
     if (res != CURLE_OK || response_code >= 500 || inject_error(props_error_spropfindcurl)) {
         log_print(LOG_ERR, SECTION_PROPS_DEFAULT, "%s: (%s) PROPFIND failed: %s rc: %lu",
             funcname, last_updated > 0 ? "progressive" : "complete", curl_easy_strerror(res), response_code);
-        trigger_saint_event(CLUSTER_FAILURE);
+        trigger_saint_event(CLUSTER_FAILURE, "propfind");
         set_dynamic_logging();
         g_set_error(gerr, props_quark(), ENETDOWN, "%s(%s): failed, ENETDOWN", funcname, path);
         goto finish;
     } else {
-        trigger_saint_event(CLUSTER_SUCCESS);
+        trigger_saint_event(CLUSTER_SUCCESS, "propfind");
     }
 
     // injected error props_error_spropfindunkcode will fall through to the else clause

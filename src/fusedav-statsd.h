@@ -20,19 +20,19 @@
 ***/
 
 // Special sample rate for propfinds so as not to overwhelm statsd transmission
-extern float pfsamplerate;
+extern const float pfsamplerate;
 
 int stats_init(const char *domain, const char *port);
 int stats_close(void);
-int stats_counter(const char *statname, const int value, float samplerate);
-int stats_counter_cluster(const char *statname, const int value, float samplerate);
-int stats_counter_local(const char *statname, const int value, float samplerate);
+int stats_counter(const char *statname, const int value, const float samplerate);
+int stats_counter_cluster(const char *statname, const int value, const float samplerate);
+int stats_counter_local(const char *statname, const int value, const float samplerate);
 int stats_gauge(const char *statname, const int value);
 int stats_gauge_cluster(const char *statname, const int value);
 int stats_gauge_local(const char *statname, const int value);
 int stats_timer(const char *statname, const int value);
 int stats_timer_cluster(const char *statname, const int value);
 int stats_timer_local(const char *statname, const int value);
-int stats_histo(const char *statname, const int value, const int max, float samplerate);
+int stats_histo(const char *statname, const int value, const int max, const float samplerate);
 
 #endif

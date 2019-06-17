@@ -42,7 +42,7 @@ static uint64_t data_version = 0;
 
 static pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
 // Define and initialize pfsamplerate, which will be used across files
-float pfsamplerate = 0.1;
+const float pfsamplerate = 0.1;
 
 struct stat_cache_entry {
     const char *key;
