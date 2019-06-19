@@ -1261,7 +1261,7 @@ static CURL *get_session(bool tmp_session) {
     return session;
 }
 
-CURL *session_request_init(const char *path, const char *query_string, bool tmp_session, bool rw) {
+CURL *session_request_init(const char *path, const char *query_string, bool tmp_session, rwp_t rwp) {
     CURL *session;
     char *full_url = NULL;
     char *escaped_path;
@@ -1271,11 +1271,9 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
     // Calls to this function, on detecting this error, set ENETDOWN, which is appropriate
     if (use_saint_mode()) {
         log_print(LOG_NOTICE, SECTION_SESSION_DEFAULT, "%s: already in saint mode", funcname);
-        if (rw) {
-            stats_counter("saint_write", 1, 1.0);
-            return NULL;
-        }
-        stats_counter("saint_read", 1, 1.0);
+        if (rwp == WRITE) stats_counter("saint_write", 1, 1.0);
+        else if (rwp == READ) stats_counter("saint_read", 1, 1.0);
+        else if (rwp == PROPFIND) stats_counter("saint_propfind", 1, 1.0);
         return NULL;
     }
 

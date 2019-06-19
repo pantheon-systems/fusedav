@@ -389,12 +389,13 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         char *header = NULL;
         char *query_string = NULL;
         long elapsed_time = 0;
+        rwp_t rwp = PROPFIND;
 
         // Set up the request handle.
         if (last_updated > 0) {
             asprintf(&query_string, "changes_since=%lu", last_updated);
         }
-        session = session_request_init(path, query_string, false, false);
+        session = session_request_init(path, query_string, false, rwp);
         if (!session || inject_error(props_error_spropfindsession)) {
             g_set_error(gerr, props_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
             free(query_string);

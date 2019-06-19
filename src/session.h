@@ -24,8 +24,10 @@
 
 extern int num_filesystem_server_nodes;
 
+typedef enum { READ, WRITE, PROPFIND } rwp_t;
+
 int session_config_init(char *base, char *ca_cert, char *client_cert, bool grace);
-CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, bool rw);
+CURL *session_request_init(const char *path, const char *query_string, bool temporary_handle, rwp_t rwp);
 void session_config_free(void);
 bool process_status(const char *fcn_name, CURL *session, const CURLcode res, 
         const long response_code, const long elapsed_time, const int iter, 
