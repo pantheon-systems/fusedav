@@ -177,6 +177,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat_cache_value *existing = NULL;
     struct stat_cache_value value;
+    rwp_t rwp = PROPFIND;
     GError *subgerr1 = NULL ;
 
     log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", funcname, path, status_code);
@@ -309,7 +310,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 bool tmp_session = true;
                 long elapsed_time = 0;
 
-                if (!(session = session_request_init(path, NULL, tmp_session, false)) || inject_error(fusedav_error_propfindsession)) {
+                if (!(session = session_request_init(path, NULL, tmp_session, rwp)) || inject_error(fusedav_error_propfindsession)) {
                     g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                     // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                     try_release_request_outstanding();
@@ -1160,6 +1161,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     struct stat st;
     struct stat_cache_value value;
+    rwp_t rwp = WRITE;
     GError *gerr2 = NULL;
     GError *gerr3 = NULL;
 
@@ -1183,7 +1185,7 @@ static void common_unlink(const char *path, bool do_unlink, GError **gerr) {
             struct curl_slist *slist = NULL;
             long elapsed_time = 0;
 
-            if (!(session = session_request_init(path, NULL, false, true)) || inject_error(fusedav_error_cunlinksession)) {
+            if (!(session = session_request_init(path, NULL, false, rwp)) || inject_error(fusedav_error_cunlinksession)) {
                 g_set_error(gerr, fusedav_quark(), ENETDOWN, "%s(%s): failed to get request session", funcname, path);
                 // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
                 try_release_request_outstanding();
@@ -1271,6 +1273,7 @@ static int dav_rmdir(const char *path) {
     struct stat st;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
+    rwp_t rwp = WRITE;
 
     if (use_readonly_mode()) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_rmdir: %s aborted; in readonly mode", path);
@@ -1315,7 +1318,7 @@ static int dav_rmdir(const char *path) {
         struct curl_slist *slist = NULL;
         long elapsed_time = 0;
 
-        if (!(session = session_request_init(fn, NULL, false, true))) {
+        if (!(session = session_request_init(fn, NULL, false, rwp))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): failed to get session", funcname, path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1372,6 +1375,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
     GError *gerr = NULL;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
+    rwp_t rwp = WRITE;
 
     if (use_readonly_mode()) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_mkdir: %s aborted; in readonly mode", path);
@@ -1390,7 +1394,7 @@ static int dav_mkdir(const char *path, mode_t mode) {
         struct curl_slist *slist = NULL;
         long elapsed_time = 0;
 
-        if (!(session = session_request_init(fn, NULL, false, true))) {
+        if (!(session = session_request_init(fn, NULL, false, rwp))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_DIR, "%s(%s): failed to get session", funcname, path);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1451,6 +1455,7 @@ static int dav_rename(const char *from, const char *to) {
     struct stat_cache_value *entry = NULL;
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
+    rwp_t rwp = WRITE;
 
     if (use_readonly_mode()) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_rename: %s aborted; in readonly mode", from);
@@ -1483,7 +1488,7 @@ static int dav_rename(const char *from, const char *to) {
         char *escaped_to;
         long elapsed_time = 0;
 
-        if (!(session = session_request_init(from, NULL, false, true))) {
+        if (!(session = session_request_init(from, NULL, false, rwp))) {
             log_print(LOG_ERR, SECTION_FUSEDAV_FILE, "%s: failed to get session for %d:%s", funcname, fd, from);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
@@ -1837,23 +1842,6 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     return 0;
 }
 
-static void do_open(const char *path, struct fuse_file_info *info, GError **gerr) {
-    struct fusedav_config *config = fuse_get_context()->private_data;
-    GError *tmpgerr = NULL;
-
-    assert(info);
-
-    filecache_open(config->cache_path, config->cache, path, info, config->grace, &tmpgerr);
-    if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
-        return;
-    }
-
-    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "do_open: after filecache_open");
-
-    return;
-}
-
 static bool write_flag(int flags) {
     // O_RDWR technically belongs in the list, but since it might be used for files
     // which are only read, I leave it out. 
@@ -1863,6 +1851,23 @@ static bool write_flag(int flags) {
         return true;
     }
     return false;
+}
+
+static void do_open(const char *path, struct fuse_file_info *info, GError **gerr) {
+    struct fusedav_config *config = fuse_get_context()->private_data;
+    GError *tmpgerr = NULL;
+
+    assert(info);
+
+    filecache_open(config->cache_path, config->cache, path, info, config->grace, write_flag(info->flags), &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
+        return;
+    }
+
+    log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "do_open: after filecache_open");
+
+    return;
 }
 
 static int dav_open(const char *path, struct fuse_file_info *info) {
@@ -1877,11 +1882,6 @@ static int dav_open(const char *path, struct fuse_file_info *info) {
     }
 
     BUMP(dav_open);
-
-    if (config->grace && use_saint_mode() && ((info->flags & O_TRUNC) || (info->flags & O_APPEND))) {
-        g_set_error(&gerr, fusedav_quark(), ENETDOWN, "trying to write in saint mode");
-        return processed_gerror("dav_open: ", path, &gerr);
-    }
 
     // There are circumstances where we read a write-only file, so if write-only
     // is specified, change to read-write. Otherwise, a read on that file will
@@ -2137,7 +2137,6 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     }
 
     BUMP(dav_create);
-
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);
 
