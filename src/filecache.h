@@ -43,7 +43,8 @@ typedef leveldb_t filecache_t;
 void filecache_print_stats(void);
 void filecache_init(char *cache_path, GError **gerr);
 void filecache_delete(filecache_t *cache, const char *path, bool unlink, GError **gerr);
-void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, bool grace, GError **gerr);
+void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, 
+        bool grace, bool rw, GError **gerr);
 ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_t offset, GError **gerr);
 ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t size, off_t offset, GError **gerr);
 void filecache_close(struct fuse_file_info *info, GError **gerr);
