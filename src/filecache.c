@@ -350,7 +350,7 @@ static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *u
 // Get a file descriptor pointing to the latest full copy of the file.
 static void get_fresh_fd(filecache_t *cache,
         const char *cache_path, const char *path, struct filecache_sdata *sdata,
-        struct filecache_pdata **pdatap, int flags, bool use_local_copy, GError **gerr) {
+        struct filecache_pdata **pdatap, int flags, bool use_local_copy, bool rw, GError **gerr) {
     static const char *funcname = "get_fresh_fd";
     GError *tmpgerr = NULL;
     struct filecache_pdata *pdata;
@@ -400,20 +400,26 @@ static void get_fresh_fd(filecache_t *cache,
             g_set_error(gerr, system_quark(), errno, "%s: open failed: %s", funcname, strerror(errno));
             // use_local_copy means we're in saint mode
             // otherwise we failed on something we expected based on last_server_update
+            // I believe we can get here on a PUT, and succeed in getting a previous copy from the cache
+            // This will eventually fail if we are already in saint mode, but should succeed for now
             if (use_local_copy) {
-                stats_counter("get_saint_mode_failure", 1, samplerate);
+                if (rw ) stats_counter("put_saint_mode_failure", 1, samplerate);
+                else stats_counter("get_saint_mode_failure", 1, samplerate);
                 log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_failure on file: %s::%s", funcname, path, pdata->filename);
             } else {
-                stats_counter("get_cache_failure", 1, samplerate);
+                if (rw) stats_counter("put_cache_failure", 1, samplerate);
+                else stats_counter("get_cache_failure", 1, samplerate);
                 log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_cache_failure on file in cache: %s::%s", funcname, path, pdata->filename);
             }
             goto finish;
         } else {
             if (use_local_copy) {
-                stats_counter("get_saint_mode_success", 1, samplerate);
+                if (rw) stats_counter("put_saint_mode_success", 1, samplerate);
+                else stats_counter("get_saint_mode_success", 1, samplerate);
                 log_print(LOG_NOTICE, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_success on file: %s::%s", funcname, path, pdata->filename);
             } else {
-                stats_counter("get_cache_success", 1, samplerate);
+                if (rw) stats_counter("put_cache_success", 1, samplerate);
+                else stats_counter("get_cache_success", 1, samplerate);
                 log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "%s: get_cache_success on file in cache: %s::%s", funcname, path, pdata->filename);
             }
         }
@@ -474,12 +480,16 @@ static void get_fresh_fd(filecache_t *cache,
         long elapsed_time = 0;
         CURL *session;
         struct curl_slist *slist = NULL;
+        rwp_t rwp;
+
+        if (rw) rwp = WRITE;
+        else rwp = READ;
 
         // These will be -1 and [0] = '\0' on idx 0; but subsequent iterations we need to clean up from previous time
         if (response_fd >= 0) close(response_fd);
         if (response_filename[0] != '\0') unlink(response_filename);
 
-        session = session_request_init(path, NULL, false, false);
+        session = session_request_init(path, NULL, false, rwp);
         if (!session || inject_error(filecache_error_freshsession)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: Failed session_request_init on GET", funcname);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
@@ -791,7 +801,8 @@ finish:
 }
 
 // top-level open call
-void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, bool grace, GError **gerr) {
+void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, 
+        bool grace, bool rw, GError **gerr) {
     struct filecache_pdata *pdata = NULL;
     struct filecache_sdata *sdata = NULL;
     GError *tmpgerr = NULL;
@@ -855,7 +866,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
 
         // Get a file descriptor pointing to a guaranteed-fresh file.
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling get_fresh_fd on %s", path);
-        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, use_local_copy, &tmpgerr);
+        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, use_local_copy, rw, &tmpgerr);
         if (tmpgerr) {
             // If we got a network error (curl_quark is a marker) and we 
             // are using grace, try again but use the local copy
@@ -1033,6 +1044,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     static const unsigned small_time_allotment = 4000; // 4 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
     const float samplerate = 1.0; // always sample stats
+    // If in saint mode and we count this request as a saint_write in get_fresh_fd(), we would be
+    // double counting; but I don't see how we get here at all if we detect saint mode in get_fresh_fd()
+    rwp_t rwp = WRITE;
 
     BUMP(filecache_return_etag);
 
@@ -1077,7 +1091,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
         // REVIEW: We didn't use to check for sesssion == NULL, so now we 
         // also call try_release_request_outstanding. Is this OK?
-        session = session_request_init(path, NULL, false, true);
+        session = session_request_init(path, NULL, false, rwp);
         if (!session || inject_error(filecache_error_freshsession)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: Failed session_request_init on PUT", funcname);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
