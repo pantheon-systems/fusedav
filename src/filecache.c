@@ -1078,15 +1078,40 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         CURL *session;
         struct curl_slist *slist = NULL;
         FILE *fp;
+        GChecksum *checksum;
 
         fp = fdopen(dup(fd), "r");
         if (!fp) {
             g_set_error(gerr, system_quark(), errno, "%s: NULL fp from fdopen on fd %d for path %s", funcname, fd, path);
-            goto finish;
+            goto ifinish;
         }
         if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
             g_set_error(gerr, system_quark(), errno, "%s: fseek error on path %s", funcname, path);
-            goto finish;
+            goto ifinish;
+        }
+
+        int num_read, is_eof, is_ferror;
+        guchar fbytes[1024];
+        num_read = is_eof = is_ferror = 0;
+        checksum = g_checksum_new(G_CHECKSUM_SHA512);
+        while (is_eof == 0) {
+            num_read = fread(fbytes, sizeof(fbytes), 1, fp);
+            if (num_read == 0) {
+                if ((is_ferror = ferror(fp)) != 0) {
+                    g_set_error(gerr, system_quark(), errno, "%s: fread for checksum error on path %s", funcname, path);
+                    goto ifinish;
+                }
+                if ((is_eof = feof(fp)) == 0) {
+                    g_set_error(gerr, system_quark(), errno, "%s: fread for checksum no eof short read on path %s", funcname, path);
+                    goto ifinish;
+                }
+            }
+            g_checksum_update(checksum, fbytes, sizeof(fbytes));
+        }
+
+        if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
+          g_set_error(gerr, system_quark(), errno, "%s: fseek error on path %s", funcname, path);
+          goto ifinish;
         }
 
         // REVIEW: We didn't use to check for sesssion == NULL, so now we 
@@ -1096,13 +1121,18 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: Failed session_request_init on PUT", funcname);
             // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
-            goto finish;
+            goto ifinish;
         }
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
         curl_easy_setopt(session, CURLOPT_UPLOAD, 1L);
         curl_easy_setopt(session, CURLOPT_INFILESIZE, st.st_size);
         curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
+
+        char* sha512_header;
+        asprintf(&sha512_header, "If-None-Match: %s", g_checksum_get_string);
+        slist = curl_slist_append(slist, sha512_header);
+        free(sha512_header);
 
         slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
@@ -1114,15 +1144,21 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
         timed_curl_easy_perform(session, &res, &response_code, &elapsed_time);
 
-        fclose(fp);
-
         if (slist) curl_slist_free_all(slist);
 
         bool non_retriable_error = process_status("put", session, res, response_code, elapsed_time, idx, path, false);
         // Some errors should not be retried. (Non-errors will fail the
         // for loop test and fall through naturally)
         if (non_retriable_error) break;
-    }
+
+   ifinish:
+        // close only if we successfully opened
+        if (fp) {
+          fclose(fp);
+        }
+        g_checksum_free(checksum);
+        goto finish;
+    } // end for loop
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {
         trigger_saint_event(CLUSTER_FAILURE, "put");
@@ -1238,7 +1274,6 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "PUT returns etag: %s", etag);
 
 finish:
-
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "%s: releasing exclusive file lock on fd %d", funcname, fd);
     if (flock(fd, LOCK_UN) || inject_error(filecache_error_etagflock2)) {
         g_set_error(gerr, system_quark(), errno, "%s: error releasing exclusive file lock", funcname);
