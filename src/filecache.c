@@ -1139,6 +1139,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         slist = curl_slist_append(slist, md5_header);
         free(md5_header);
 
+        slist = curl_slist_append(slist, "Content-Type:");
         slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
 
