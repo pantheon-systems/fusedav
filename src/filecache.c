@@ -1097,7 +1097,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         sha512_checksum = g_checksum_new(G_CHECKSUM_SHA512);
         md5_checksum = g_checksum_new(G_CHECKSUM_MD5);
         while (is_eof == 0) {
-            num_read = fread(fbytes, sizeof(fbytes), 1, fp);
+            // not sure of the performance implications of reading one byte out n times.
+            num_read = fread(fbytes, 1, sizeof(fbytes), fp);
             if (num_read == 0) {
                 if ((is_ferror = ferror(fp)) != 0) {
                     g_set_error(gerr, system_quark(), errno, "%s: fread for checksum error on path %s", funcname, path);
@@ -1108,8 +1109,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
                     break;
                 }
             }
-            g_checksum_update(sha512_checksum, fbytes, sizeof(fbytes));
-            g_checksum_update(md5_checksum, fbytes, sizeof(fbytes));
+            g_checksum_update(sha512_checksum, fbytes, num_read);
+            g_checksum_update(md5_checksum, fbytes, num_read);
         }
 
         if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
