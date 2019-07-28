@@ -1084,11 +1084,11 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         fp = fdopen(dup(fd), "r");
         if (!fp) {
             g_set_error(gerr, system_quark(), errno, "%s: NULL fp from fdopen on fd %d for path %s", funcname, fd, path);
-            goto ifinish;
+            break;
         }
         if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
             g_set_error(gerr, system_quark(), errno, "%s: fseek error on path %s", funcname, path);
-            goto ifinish;
+            break;
         }
 
         int num_read, is_eof, is_ferror;
@@ -1101,11 +1101,11 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             if (num_read == 0) {
                 if ((is_ferror = ferror(fp)) != 0) {
                     g_set_error(gerr, system_quark(), errno, "%s: fread for checksum error on path %s", funcname, path);
-                    goto ifinish;
+                    break;
                 }
                 if ((is_eof = feof(fp)) == 0) {
                     g_set_error(gerr, system_quark(), errno, "%s: fread for checksum no eof short read on path %s", funcname, path);
-                    goto ifinish;
+                    break;
                 }
             }
             g_checksum_update(sha512_checksum, fbytes, sizeof(fbytes));
@@ -1114,17 +1114,14 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
         if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
           g_set_error(gerr, system_quark(), errno, "%s: fseek error on path %s", funcname, path);
-          goto ifinish;
+          break;
         }
 
-        // REVIEW: We didn't use to check for sesssion == NULL, so now we 
-        // also call try_release_request_outstanding. Is this OK?
         session = session_request_init(path, NULL, false, rwp);
         if (!session || inject_error(filecache_error_freshsession)) {
             g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: Failed session_request_init on PUT", funcname);
-            // TODO(kibra): Manually cleaning up this lock sucks. We should make sure this happens in a better way.
             try_release_request_outstanding();
-            goto ifinish;
+            break;
         }
 
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PUT");
@@ -1159,15 +1156,17 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         // for loop test and fall through naturally)
         if (non_retriable_error) break;
 
-   ifinish:
-        // close only if we successfully opened
-        if (fp) {
-          fclose(fp);
-        }
-        g_checksum_free(sha512_checksum);
-        g_checksum_free(md5_checksum);
-        goto finish;
     } // end for loop
+    // close only if we successfully opened
+    if (fp) {
+        fclose(fp);
+    }
+    g_checksum_free(sha512_checksum);
+    g_checksum_free(md5_checksum);
+
+    if (gerr) {
+        goto finish;
+    }
 
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {
         trigger_saint_event(CLUSTER_FAILURE, "put");
