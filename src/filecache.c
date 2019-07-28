@@ -1078,7 +1078,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         CURL *session;
         struct curl_slist *slist = NULL;
         FILE *fp;
-        GChecksum *checksum;
+        GChecksum *sha512_checksum;
+        GChecksum *md5_checksum;
 
         fp = fdopen(dup(fd), "r");
         if (!fp) {
@@ -1093,7 +1094,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         int num_read, is_eof, is_ferror;
         guchar fbytes[1024];
         num_read = is_eof = is_ferror = 0;
-        checksum = g_checksum_new(G_CHECKSUM_SHA512);
+        sha512_checksum = g_checksum_new(G_CHECKSUM_SHA512);
+        md5_checksum = g_checksum_new(G_CHECKSUM_MD5);
         while (is_eof == 0) {
             num_read = fread(fbytes, sizeof(fbytes), 1, fp);
             if (num_read == 0) {
@@ -1106,7 +1108,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
                     goto ifinish;
                 }
             }
-            g_checksum_update(checksum, fbytes, sizeof(fbytes));
+            g_checksum_update(sha512_checksum, fbytes, sizeof(fbytes));
+            g_checksum_update(md5_checksum, fbytes, sizeof(fbytes));
         }
 
         if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
@@ -1130,9 +1133,14 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
 
         char* sha512_header;
-        asprintf(&sha512_header, "If-None-Match: %s", g_checksum_get_string(checksum));
+        asprintf(&sha512_header, "X-Valhalla-SHA512: %s", g_checksum_get_string(sha512_checksum));
         slist = curl_slist_append(slist, sha512_header);
         free(sha512_header);
+
+        char* md5_header;
+        asprintf(&md5_header, "If-None-Match: %s", g_checksum_get_string(md5_checksum));
+        slist = curl_slist_append(slist, md5_header);
+        free(md5_header);
 
         slist = enhanced_logging(slist, LOG_DYNAMIC, SECTION_FILECACHE_COMM, "put_return_tag: %s", path);
         if (slist) curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
