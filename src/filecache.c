@@ -1130,7 +1130,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         curl_easy_setopt(session, CURLOPT_READDATA, (void *) fp);
 
         char* sha512_header;
-        asprintf(&sha512_header, "If-None-Match: %s", g_checksum_get_string);
+        asprintf(&sha512_header, "If-None-Match: %s", g_checksum_get_string(checksum));
         slist = curl_slist_append(slist, sha512_header);
         free(sha512_header);
 
