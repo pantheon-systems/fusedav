@@ -1164,7 +1164,8 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         if (fp) {
           fclose(fp);
         }
-        g_checksum_free(checksum);
+        g_checksum_free(sha512_checksum);
+        g_checksum_free(md5_checksum);
         goto finish;
     } // end for loop
 
