@@ -1070,15 +1070,17 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "%s: file size %d", funcname, st.st_size);
 
+    GChecksum *sha512_checksum;
+    GChecksum *md5_checksum;
     FILE *fp;
     fp = fdopen(dup(fd), "r");
     if (!fp) {
       g_set_error(gerr, system_quark(), errno, "%s: NULL fp from fdopen on fd %d for path %s", funcname, fd, path);
-      break;
+      goto finish;
     }
     if (fseek(fp, 0L, SEEK_SET) == (off_t)-1) {
       g_set_error(gerr, system_quark(), errno, "%s: fseek error on path %s", funcname, path);
-      break;
+      goto finish;
     }
 
     // If we're in saint mode, skip the PUT altogether
@@ -1088,8 +1090,6 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
         long elapsed_time = 0;
         CURL *session;
         struct curl_slist *slist = NULL;
-        GChecksum *sha512_checksum;
-        GChecksum *md5_checksum;
         int num_read, is_eof, is_ferror;
         guchar fbytes[1024];
 
