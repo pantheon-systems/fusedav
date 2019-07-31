@@ -386,7 +386,7 @@ static void get_fresh_fd(filecache_t *cache,
     // If we're in saint mode, don't go to the server
     if (pdata != NULL &&
             ((flags & O_TRUNC) || use_local_copy ||
-            (pdata->last_server_update == 0) || (time(NULL) - pdata->last_server_update) <= STAT_CACHE_NEGATIVE_TTL)) {
+            (pdata->last_server_update == 0) || pdata->last_server_update > FILECACHE_INVALIDATED)) {
         const float samplerate = 1.0; // always sample stat
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: file is fresh or being truncated: %s::%s", 
                 funcname, path, pdata->filename);
@@ -403,7 +403,7 @@ static void get_fresh_fd(filecache_t *cache,
             // I believe we can get here on a PUT, and succeed in getting a previous copy from the cache
             // This will eventually fail if we are already in saint mode, but should succeed for now
             if (use_local_copy) {
-                if (rw ) stats_counter("put_saint_mode_failure", 1, samplerate);
+                if (rw) stats_counter("put_saint_mode_failure", 1, samplerate);
                 else stats_counter("get_saint_mode_failure", 1, samplerate);
                 log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_failure on file: %s::%s", funcname, path, pdata->filename);
             } else {
@@ -1047,6 +1047,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     // If in saint mode and we count this request as a saint_write in get_fresh_fd(), we would be
     // double counting; but I don't see how we get here at all if we detect saint mode in get_fresh_fd()
     rwp_t rwp = WRITE;
+    GChecksum *sha512_checksum;
+    GChecksum *md5_checksum;
+    FILE *fp;
 
     BUMP(filecache_return_etag);
 
@@ -1070,9 +1073,6 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "%s: file size %d", funcname, st.st_size);
 
-    GChecksum *sha512_checksum;
-    GChecksum *md5_checksum;
-    FILE *fp;
     fp = fdopen(dup(fd), "r");
     if (!fp) {
       g_set_error(gerr, system_quark(), errno, "%s: NULL fp from fdopen on fd %d for path %s", funcname, fd, path);
@@ -1751,6 +1751,28 @@ finish:
     free(pdata);
 
     return;
+}
+
+// mark filecache stale for path
+void filecache_invalidate(filecache_t* cache, const char* path, GError** gerr) {
+    struct filecache_pdata *pdata = NULL;
+    GError *subgerr = NULL;
+    const char* funcname = "filecache_invalidate";
+
+    pdata = filecache_pdata_get(cache, path, &subgerr);
+    if (gerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+        return;
+    }
+    // We mark the data invalidated by setting the last update very far in the past.
+    // This preserves the etag so we can still try it and get lucky, eg if the file
+    // content was updated, and then updated back to its previous value.
+    pdata->last_server_update = FILECACHE_INVALIDATED;
+    filecache_pdata_set(cache, path, pdata, &subgerr);
+    if (gerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+        return;
+    }
 }
 
 // Does *not* allocate a new string.
