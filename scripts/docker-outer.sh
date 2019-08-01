@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 bin="$(cd -P -- "$(dirname -- "$0")" && pwd -P)"
 docker=$(which docker)
@@ -20,6 +20,8 @@ echo "==> Creating docker volume for fusedav files"
 $docker volume create fusedav_vol
 $docker run --name cp-vol -v fusedav_vol:/fusedav busybox true
 $docker cp $bin/../. cp-vol:/fusedav/
+
+docker login -p "$QUAY_PASSWD" -u "$QUAY_USER" quay.io
 
 # epoch to use for -revision
 epoch=$(date +%s)
@@ -48,8 +50,21 @@ EOL
     echo "Running: $docker_cmd"
     $docker_cmd
 
+    echo "copying the rpm from the container..."
+    mkdir -p "$bin/../pkg"
+    $docker cp "cp-vol:/fusedav/pkg/${ver}/fusedav" "$bin/../pkg/fusedav"
+
+    docker_build="$docker build -t quay.io/getpantheon/fusedav:f${ver}-${CIRCLE_BUILD_NUM} --build-arg VERSION=${ver} ."
+
+    echo "Running: $docker_build"
+    $docker_build
+
+    docker_push="$docker push quay.io/getpantheon/fusedav:f${ver}-${CIRCLE_BUILD_NUM}"
+
+    echo "Running: $docker_push"
+    $docker_push
+
 done
 
-$docker cp cp-vol:/fusedav/pkg $bin/../pkg/
 $docker rm cp-vol
 $docker volume rm fusedav_vol
