@@ -79,6 +79,7 @@ fpm -s dir -t rpm \
   --depends  uriparser \
   --depends fuse-libs \
   --depends leveldb \
+  --depends jemalloc \
   --log=debug \
   $install_prefix \
   /usr/sbin/mount.$name
