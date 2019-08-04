@@ -347,6 +347,28 @@ static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *u
     return real_size;
 }
 
+static time_t get_parent_updated_children_time(filecache_t *cache, const char *path, GError **gerr) {
+    const char* funcname = "get_parent_updated_children_time";
+    time_t parent_children_update_ts;
+    char *parent_path;
+    GError *tmpgerr = NULL;
+
+    parent_path = path_parent(path);
+    if (parent_path == NULL) {
+        g_set_error(tmpgerr, filecache_quark(), EEXIST, "could not get parent path");
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+        return parent_children_update_ts;
+    }
+
+    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: Getting parent path entry: %s", funcname, parent_path);
+    parent_children_update_ts = stat_cache_read_updated_children(cache, parent_path, &tmpgerr);
+
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+    }
+    return parent_children_update_ts;
+}
+
 // Get a file descriptor pointing to the latest full copy of the file.
 static void get_fresh_fd(filecache_t *cache,
         const char *cache_path, const char *path, struct filecache_sdata *sdata,
@@ -365,10 +387,18 @@ static void get_fresh_fd(filecache_t *cache,
     // Somewhat arbitrary
     static const unsigned small_time_allotment = 2000; // 2 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
+    time_t parent_children_update_ts;
+    time_t check_now = time(NULL);
 
     BUMP(filecache_fresh_fd);
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+    parent_children_update_ts = get_parent_updated_children_time(cache, path, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+        return;
+    }
 
     assert(pdatap);
     pdata = *pdatap;
@@ -382,11 +412,17 @@ static void get_fresh_fd(filecache_t *cache,
     // For O_TRUNC, we just want to open a truncated cache file and not bother getting a copy from
     // the server.
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
+    // If the parent directory was recently updated and the cache file wasn't explicitly invalidated, consider it fresh.
     // If the file is in-use (last_server_update = 0) we use the local file and don't go to the server.
     // If we're in saint mode, don't go to the server
-    if (pdata != NULL &&
-            ((flags & O_TRUNC) || use_local_copy ||
-            (pdata->last_server_update == 0) || pdata->last_server_update > FILECACHE_INVALIDATED)) {
+    if (pdata != NULL && (
+            (flags & O_TRUNC) || use_local_copy ||
+            (pdata->last_server_update == 0) ||
+            ((check_now - pdata->last_server_update) <= FILECACHE_ENTRY_TTL) ||
+            (((check_now - parent_children_update_ts) <= FILECACHE_PARENT_UPDATE_GRACE)
+                && (pdata->last_server_update > FILECACHE_INVALIDATED))
+            )
+        ) {
         const float samplerate = 1.0; // always sample stat
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: file is fresh or being truncated: %s::%s", 
                 funcname, path, pdata->filename);

@@ -38,6 +38,8 @@
 #define E_FC_CURLERR ENETDOWN
 #define E_FC_FILETOOLARGE EFBIG
 #define FILECACHE_INVALIDATED 1
+#define FILECACHE_ENTRY_TTL 2
+#define FILECACHE_PARENT_UPDATE_GRACE 2
 
 typedef leveldb_t filecache_t;
 
