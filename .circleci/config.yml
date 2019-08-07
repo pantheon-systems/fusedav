@@ -88,9 +88,14 @@ jobs:
          name: Build the packages
          command: BUILD_VERSIONS=22 DEVEL=-devel bash scripts/docker-outer.sh
       - run:
+          name: git config
+          command: |
+            git config --global user.email "$CIRCLE_USERNAME@users.noreply.github.com"
+            git config --global user.name "$CIRCLE_USERNAME"
+      - run:
           name: trigger integration
           command: |
-            git clone git@github.com/pantheon-systems/fusedav-kube
+            git clone git@github.com:pantheon-systems/fusedav-kube
             cd fusedav-kube
             git tag f22-${CIRCLE_BUILD_NUM}-devel
             git push origin f22-${CIRCLE_BUILD_NUM}-devel
@@ -120,9 +125,14 @@ jobs:
          name: Build the packages
          command: BUILD_VERSIONS=28 DEVEL=-devel bash scripts/docker-outer.sh
       - run:
+          name: git config
+          command: |
+            git config --global user.email "$CIRCLE_USERNAME@users.noreply.github.com"
+            git config --global user.name "$CIRCLE_USERNAME"
+      - run:
           name: trigger integration
           command: |
-            git clone git@github.com/pantheon-systems/fusedav-kube
+            git clone git@github.com:pantheon-systems/fusedav-kube
             cd fusedav-kube
             git tag f28-${CIRCLE_BUILD_NUM}-devel
             git push origin f28-${CIRCLE_BUILD_NUM}-devel
