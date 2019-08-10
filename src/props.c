@@ -89,7 +89,8 @@ static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
     // Verify that we're done with the base path
     // and still have parts left of the main path.
     if (cur == NULL || cur_base != NULL) {
-        return NULL;
+        path = strdup("");
+        return path;
     }
 
     // Iterate through the unique parts.
@@ -146,13 +147,12 @@ static char *get_path_beyond_base(const char *source_url) {
     // Compute the relative path and store it to a string.
     path = get_relative_path(&base_uri, &source_uri);
 
-    // If we've got a NULL, it's just the base path.
-    if (path == NULL) {
-        path = strdup("");
+    path_len = strlen(path);
+
+    // it's just the base path.
+    if (path_len == 0 ) {
         goto finish;
     }
-
-    path_len = strlen(path);
 
     // Drop any trailing slash.
     if (path[path_len - 1] == '/') {

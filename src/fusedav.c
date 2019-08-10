@@ -2021,9 +2021,6 @@ static int dav_write(const char *path, const char *buf, size_t size, off_t offse
         }
         else {
             if (file_too_big(value.st.st_size, config->max_file_size, path)) {
-                // The file will now carry along with it the fact that there has been an error.
-                // Eventually, this will send the file to forensic haven
-                filecache_set_error(info, EFBIG);
                 return (-EFBIG);
             }
             stat_cache_value_set(config->cache, path, &value, &gerr);
