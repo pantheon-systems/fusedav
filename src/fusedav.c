@@ -1846,24 +1846,13 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     return 0;
 }
 
-static bool write_flag(int flags) {
-    // O_RDWR technically belongs in the list, but since it might be used for files
-    // which are only read, I leave it out. 
-    // O_CREAT on a file which already exists is a noop unless O_EXCL is also included.
-    // So, only respond if both are present.
-    if ((flags & O_WRONLY) || ((flags & O_CREAT) && (flags & O_EXCL)) || (flags & O_TRUNC) || (flags & O_APPEND)) {
-        return true;
-    }
-    return false;
-}
-
 static void do_open(const char *path, struct fuse_file_info *info, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
     assert(info);
 
-    filecache_open(config->cache_path, config->cache, path, info, config->grace, write_flag(info->flags), &tmpgerr);
+    filecache_open(config->cache_path, config->cache, path, info, config->grace, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
         return;

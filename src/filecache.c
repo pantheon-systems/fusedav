@@ -60,24 +60,32 @@ static const char * filecache_prefix = "fc:";
 static const char * forensic_haven_dir = "forensic-haven";
 
 // Persistent data stored in leveldb
-struct filecache_pdata {
+typedef struct filecache_http_get_response {
+    long status_code;
+    char etag[ETAG_MAX + 1];
+    CURLcode res;
+    int fd;
+    char filename[PATH_MAX];
+} fc_http_get_response;
+
+// Persistent data stored in leveldb
+typedef struct filecache_pdata {
   char filename[PATH_MAX];
   char etag[ETAG_MAX + 1];
   time_t last_server_update;
-};
-typedef struct filecache_pdata* filecache_pdata_p;
-
+} fc_pdata;
 typedef int fd_t;
 
 // Session data
-struct filecache_sdata {
+typedef struct filecache_sdata {
     fd_t fd; // LOCK_SH for write/truncation; LOCK_EX during PUT
     bool readable;
     bool writable;
     bool modified;
     int error_code;
-    filecache_pdata_p pdatap;
-};
+    filecache_t *cache;
+    char *cache_path;
+} fc_sdata;
 
 // GError mechanisms
 static G_DEFINE_QUARK(FC, filecache)
@@ -187,7 +195,7 @@ static void new_cache_file(const char *cache_path, char *cache_file_path, fd_t *
 
 // adds an entry to the ldb cache
 static void filecache_pdata_set(filecache_t *cache, const char *path,
-        const struct filecache_pdata *pdata, GError **gerr) {
+        const fc_pdata *pdata, GError **gerr) {
     leveldb_writeoptions_t *options;
     char *ldberr = NULL;
     char *key;
@@ -204,7 +212,7 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 
     key = path2key(path);
     options = leveldb_writeoptions_create();
-    leveldb_put(cache, options, key, strlen(key) + 1, (const char *) pdata, sizeof(struct filecache_pdata), &ldberr);
+    leveldb_put(cache, options, key, strlen(key) + 1, (const char *) pdata, sizeof(fc_pdata), &ldberr);
     leveldb_writeoptions_destroy(options);
 
     free(key);
@@ -220,19 +228,20 @@ static void filecache_pdata_set(filecache_t *cache, const char *path,
 }
 
 // Create a new file to write into and set values
-static void create_file(struct filecache_sdata *sdata, const char *cache_path,
+static void create_file(fc_sdata *sdata, const char *cache_path,
         filecache_t *cache, const char *path, GError **gerr) {
 
-    struct filecache_pdata *pdata;
+    fc_pdata *pdata;
     GError *tmpgerr = NULL;
+    const char *funcname = "create_file";
 
     BUMP(filecache_create_file);
 
-    log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "create_file: on %s", path);
+    log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "%s: on %s", funcname, path);
 
-    pdata = calloc(1, sizeof(struct filecache_pdata));
+    pdata = calloc(1, sizeof(fc_pdata));
     if (pdata == NULL || inject_error(filecache_error_createcalloc)) {
-        g_set_error(gerr, system_quark(), errno, "create_file: calloc returns NULL for pdata");
+        g_set_error(gerr, system_quark(), errno, "%s: calloc returns NULL for pdata", funcname);
         free(pdata); // If we get here via inject_error, pdata might in fact have been allocated
         return;
     }
@@ -241,17 +250,17 @@ static void create_file(struct filecache_sdata *sdata, const char *cache_path,
     sdata->writable = true;
     new_cache_file(cache_path, pdata->filename, &sdata->fd, &tmpgerr);
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "create_file: ");
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
         goto finish;
     }
 
     // The local copy currently trumps the server one, no matter how old.
     pdata->last_server_update = 0;
 
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "create_file: Updating file cache for %d : %s : %s : timestamp %lu.", sdata->fd, path, pdata->filename, pdata->last_server_update);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: Updating file cache for %d : %s : %s : timestamp %lu.", funcname, sdata->fd, path, pdata->filename, pdata->last_server_update);
     filecache_pdata_set(cache, path, pdata, &tmpgerr);
     if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "create_file: ");
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
         goto finish;
     }
 
@@ -263,8 +272,8 @@ finish:
 }
 
 // get an entry from the ldb cache
-static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const char *path, GError **gerr) {
-    struct filecache_pdata *pdata = NULL;
+static fc_pdata *filecache_pdata_get(filecache_t *cache, const char *path, GError **gerr) {
+    fc_pdata *pdata = NULL;
     char *key;
     leveldb_readoptions_t *options;
     size_t vallen;
@@ -278,7 +287,7 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
 
     options = leveldb_readoptions_create();
     leveldb_readoptions_set_fill_cache(options, false);
-    pdata = (struct filecache_pdata *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &ldberr);
+    pdata = (fc_pdata *) leveldb_get(cache, options, key, strlen(key) + 1, &vallen, &ldberr);
     leveldb_readoptions_destroy(options);
     free(key);
 
@@ -294,8 +303,8 @@ static struct filecache_pdata *filecache_pdata_get(filecache_t *cache, const cha
         return NULL;
     }
 
-    if (vallen != sizeof(struct filecache_pdata) || inject_error(filecache_error_getvallen)) {
-        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "Length %lu is not expected length %lu.", vallen, sizeof(struct filecache_pdata));
+    if (vallen != sizeof(fc_pdata) || inject_error(filecache_error_getvallen)) {
+        g_set_error(gerr, leveldb_quark(), E_FC_LDBERR, "Length %lu is not expected length %lu.", vallen, sizeof(fc_pdata));
         free(pdata);
         return NULL;
     }
@@ -368,7 +377,7 @@ static time_t get_parent_updated_children_time(filecache_t *cache, const char *p
     return parent_children_update_ts;
 }
 
-static bool filecache_is_fresh(filecache_t *cache, const char *path, struct filecache_pdata *pdata, GError **gerr) {
+static bool filecache_is_fresh(filecache_t *cache, const char *path, fc_pdata *pdata, GError **gerr) {
     time_t parent_children_update_ts;
     time_t check_now = time(NULL);
     GError *tmpgerr = NULL;
@@ -388,14 +397,13 @@ static bool filecache_is_fresh(filecache_t *cache, const char *path, struct file
     return ((check_now - pdata->last_server_update) <= FILECACHE_ENTRY_TTL);
 }
 
-static bool filecache_conditional_http_get(const char *path, const char *etag, char *new_etag, CURLcode *res,
-                                           long *response_code, int response_fd, int idx, rwp_t rwp, GError **gerr) {
+static bool filecache_conditional_http_get(const char *path, const char *etag, fc_http_get_response *resp, int idx, rwp_t rwp, GError **gerr) {
     long elapsed_time = 0;
     CURL *session;
     struct curl_slist *slist = NULL;
 
-    *res = CURLE_OK;
-    *response_code = 500;
+    resp->res = CURLE_OK;
+    resp->status_code = 500;
     session = session_request_init(path, NULL, false, rwp);
     if (!session || inject_error(filecache_error_freshsession)) {
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "Failed session_request_init on GET");
@@ -403,11 +411,11 @@ static bool filecache_conditional_http_get(const char *path, const char *etag, c
         return false;
     }
     // Give cURL the fd and callback for handling the response body.
-    curl_easy_setopt(session, CURLOPT_WRITEDATA, &response_fd);
+    curl_easy_setopt(session, CURLOPT_WRITEDATA, &(resp->fd));
     curl_easy_setopt(session, CURLOPT_WRITEFUNCTION, write_response_to_fd);
     // let cURL capture the etag
     curl_easy_setopt(session, CURLOPT_HEADERFUNCTION, capture_etag);
-    curl_easy_setopt(session, CURLOPT_WRITEHEADER, new_etag);
+    curl_easy_setopt(session, CURLOPT_WRITEHEADER, resp->etag);
     // Set headers
     if (etag[0] != '\0') {
         char *etag_header = NULL;
@@ -420,105 +428,74 @@ static bool filecache_conditional_http_get(const char *path, const char *etag, c
         curl_easy_setopt(session, CURLOPT_HTTPHEADER, slist);
     }
     // Finally do it
-    timed_curl_easy_perform(session, res, response_code, &elapsed_time);
+    timed_curl_easy_perform(session, &(resp->res), &(resp->status_code), &elapsed_time);
     if (slist) {
         curl_slist_free_all(slist);
     }
-    return process_status("get", session, *res, *response_code, elapsed_time, idx, path, false);
+    return process_status("get", session, resp->res, resp->status_code, elapsed_time, idx, path, false);
 }
 
-static void filecache_count_get_timing(off_t st_size, const char *path, long elapsed_time) {
+static void filecache_count_get_timing(off_t st_size, const char *path, long response_code, long elapsed_time) {
     // Not to exceed time for operation, else it's an error. Allow large files a longer time
     // Somewhat arbitrary
     static const unsigned small_time_allotment = 2000; // 2 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
-    const float samplerate = 1.0; // always sample stat
-    unsigned long latency;
-    unsigned long count;
-    const char *sz;
+    char *stats_name;
     if (st_size > XLG) {
         TIMING(filecache_get_xlg_timing, elapsed_time);
         BUMP(filecache_get_xlg_count);
-        latency = FETCH(filecache_get_xlg_timing);
-        count = FETCH(filecache_get_xlg_count);
-        sz = "XLG";
-        stats_counter("large-gets", 1, samplerate);
-        stats_timer("large-get-latency", elapsed_time);
+        asprintf(&stats_name, "large-get-latency.%ld", response_code);
     }
     else if (st_size > LG) {
         TIMING(filecache_get_lg_timing, elapsed_time);
         BUMP(filecache_get_lg_count);
-        latency = FETCH(filecache_get_lg_timing);
-        count = FETCH(filecache_get_lg_count);
-        sz = "LG";
-        stats_counter("large-gets", 1, samplerate);
-        stats_timer("large-get-latency", elapsed_time);
+        asprintf(&stats_name, "large-get-latency.%ld", response_code);
     }
     else if (st_size > MED) {
         TIMING(filecache_get_med_timing, elapsed_time);
         BUMP(filecache_get_med_count);
-        latency = FETCH(filecache_get_med_timing);
-        count = FETCH(filecache_get_med_count);
-        sz = "MED";
-        stats_counter("large-gets", 1, samplerate);
-        stats_timer("large-get-latency", elapsed_time);
+        asprintf(&stats_name, "large-get-latency.%ld", response_code);
     }
     else if (st_size > SM) {
         TIMING(filecache_get_sm_timing, elapsed_time);
         BUMP(filecache_get_sm_count);
-        latency = FETCH(filecache_get_sm_timing);
-        count = FETCH(filecache_get_sm_count);
-        sz = "SM";
-        stats_counter("small-gets", 1, samplerate);
-        stats_timer("small-get-latency", elapsed_time);
+        asprintf(&stats_name, "small-get-latency.%ld", response_code);
     }
     else if (st_size > XSM) {
         TIMING(filecache_get_xsm_timing, elapsed_time);
         BUMP(filecache_get_xsm_count);
-        latency = FETCH(filecache_get_xsm_timing);
-        count = FETCH(filecache_get_xsm_count);
-        sz = "XSM";
-        stats_counter("small-gets", 1, samplerate);
-        stats_timer("small-get-latency", elapsed_time);
+        asprintf(&stats_name, "small-get-latency.%ld", response_code);
     }
     else {
         TIMING(filecache_get_xxsm_timing, elapsed_time);
         BUMP(filecache_get_xxsm_count);
-        latency = FETCH(filecache_get_xxsm_timing);
-        count = FETCH(filecache_get_xxsm_count);
-        sz = "XXSM";
-        stats_counter("small-gets", 1, samplerate);
-        stats_timer("small-get-latency", elapsed_time);
+        asprintf(&stats_name, "small-get-latency.%ld", response_code);
     }
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "GET on size %s (%lu) for %s -- Current:Average latency %lu :: %lu",
-              sz, st_size, path, elapsed_time, (latency / count));
+
+    stats_timer(stats_name, elapsed_time);
+    free(stats_name);
 
     if (st_size >= LG && elapsed_time > large_time_allotment) {
         log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "large (%lu) GET for %s exceeded time allotment %lu with %lu",
                   st_size, path, large_time_allotment, elapsed_time);
-        stats_counter("exceeded-time-large-GET-count", 1, samplerate);
-        stats_timer("exceeded-time-large-GET-latency", elapsed_time);
+        asprintf(&stats_name, "exceeded-time-large-GET-latency.%ld", response_code);
+        stats_timer(stats_name, elapsed_time);
     }
     else if (st_size < LG && elapsed_time > small_time_allotment) {
         log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "small (%lu) GET for %s exceeded time allotment %lu with %lu",
                   st_size, path, small_time_allotment, elapsed_time);
-        stats_counter("exceeded-time-small-GET-count", 1, samplerate);
-        stats_timer("exceeded-time-small-GET-latency", elapsed_time);
+        asprintf(&stats_name, "exceeded-time-small-GET-latency.%ld", response_code);
+        stats_timer(stats_name, elapsed_time);
     }
+    free(stats_name);
     return;
 }
 
-
-static void filecache_get_handle_200(filecache_t *cache, const char *path, struct filecache_sdata *sdata, struct filecache_pdata *pdata,
-                                     const char* etag, const struct timespec *start_time, char *response_filename, int response_fd, GError **gerr) {
-    long elapsed_time;
+static void filecache_get_handle_200(const char *path, fc_sdata *sdata, fc_pdata *pdata, fc_http_get_response *resp, GError **gerr) {
     char old_filename[PATH_MAX] = {'\0'};
-    struct timespec now;
-    struct filecache_pdata **pdatap;
-    struct stat st;
 
     if (pdata == NULL) {
-        pdata = calloc(1, sizeof(struct filecache_pdata));
+        pdata = calloc(1, sizeof(fc_pdata));
         if (pdata == NULL || inject_error(filecache_error_freshpdata)) {
             g_set_error(gerr, system_quark(), errno, "could not allocate pdata");
             return;
@@ -526,15 +503,16 @@ static void filecache_get_handle_200(filecache_t *cache, const char *path, struc
         pdata->filename[0] = '\0';
     }
     strncpy(old_filename, pdata->filename, PATH_MAX);
-    // Fill in ETag.
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "Saving ETag: %s", etag);
-    strncpy(pdata->etag, etag, ETAG_MAX);
+
+    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "Saving ETag: %s", resp->etag);
+    strncpy(pdata->etag, resp->etag, ETAG_MAX);
     pdata->last_server_update = time(NULL);
-    strncpy(pdata->filename, response_filename, PATH_MAX);
-    sdata->fd = response_fd;
-    filecache_pdata_set(cache, path, pdata, gerr);
+    strncpy(pdata->filename, resp->filename, PATH_MAX);
+    sdata->fd = resp->fd;
+
+    filecache_pdata_set(sdata->cache, path, pdata, gerr);
     if (*gerr) {
-        memset(sdata, 0, sizeof(struct filecache_sdata));
+        memset(sdata, 0, sizeof(fc_sdata));
         return;
     }
     log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "Updated file cache for %s : %s : timestamp: %lu.",
@@ -542,6 +520,62 @@ static void filecache_get_handle_200(filecache_t *cache, const char *path, struc
     if (old_filename[0] != '\0') {
         unlink(old_filename);
     }
+    return;
+}
+
+static void filecache_get_handle_304(const char *path, fc_sdata *sdata, fc_pdata *pdata, GError **gerr) {
+    // This should never happen with a well-behaved server.
+    if (pdata == NULL || inject_error(filecache_error_freshcurl2)) {
+        g_set_error(gerr, system_quark(), E_FC_PDATANULL,
+                    "Should not get HTTP 304 from server when pdata is NULL because etag is empty.");
+        return;
+    }
+    // Mark the cache item as revalidated at the current time.
+    pdata->last_server_update = time(NULL);
+    filecache_pdata_set(sdata->cache, path, pdata, gerr);
+    return;
+}
+
+static void filecache_get_handle_404(fc_sdata *sdata, const char *path, GError **gerr) {
+    // A previous propfind showed this file would exist, but between then and now, the path was deleted on the server
+    // We clear the cache entries for this path to prevent the case where the path is forever poisoned
+    // We are subject to a TOCTOU issue where the cache has been updated since we used it, and we clear a valid entry
+    struct stat_cache_value *value;
+    g_set_error(gerr, filecache_quark(), ENOENT, "File %s expected to exist.", path);
+    value = stat_cache_value_get(sdata->cache, path, true, NULL);
+    if (value) {
+        stat_cache_delete(sdata->cache, path, NULL);
+    }
+    free(value);
+    // Delete it from the filecache too
+    filecache_delete(sdata->cache, path, true, NULL);
+    return;
+}
+
+static void filecache_handle_http_get_response(const char *path, fc_sdata *sdata, fc_pdata *pdata, fc_http_get_response *resp,
+                                               const struct timespec *start_time, GError **gerr) {
+    struct timespec now;
+    struct stat st;
+    long elapsed_time;
+    trigger_saint_event(CLUSTER_SUCCESS, "get");
+
+    if (inject_error(filecache_error_fresh400)) resp->status_code = 400;
+
+    if (resp->status_code == 304) {
+        filecache_get_handle_304(path, sdata, pdata, gerr);
+        goto finish;
+    }
+    if (resp->status_code == 200) {
+        filecache_get_handle_200(path, sdata, pdata, resp, gerr);
+        goto finish;
+    }
+    if (resp->status_code == 404 || resp->status_code == 410) {
+        filecache_get_handle_404(sdata, path, gerr);
+        goto finish;
+    }
+    g_set_error(gerr, filecache_quark(), E_FC_CURLERR, "unexpected response code for path %s", path);
+    goto finish;
+finish:
     // Subtract seconds since start_time and multiply by 1000 to get ms.
     // Subtract nanoseconds since start_time and divide by a million to get ms.
     clock_gettime(CLOCK_MONOTONIC, &now);
@@ -550,80 +584,16 @@ static void filecache_get_handle_200(filecache_t *cache, const char *path, struc
         log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "put_return_etag: fstat failed on %s", path);
         return;
     }
-    filecache_count_get_timing(st.st_size, path, elapsed_time);
-    return;
+    filecache_count_get_timing(st.st_size, path, resp->status_code, elapsed_time);
 }
 
-static void filecache_get_handle_304(filecache_t *cache, const char *path, int flags, struct filecache_sdata *sdata, struct filecache_pdata *pdata, GError **gerr) {
-    // This should never happen with a well-behaved server.
-    if (pdata == NULL || inject_error(filecache_error_freshcurl2)) {
-        g_set_error(gerr, system_quark(), E_FC_PDATANULL,
-                    "Should not get HTTP 304 from server when pdata is NULL because etag is empty.");
-        return;
-    }
-    sdata->fd = open(pdata->filename, flags);
-    // delete the entry if it's fd is inoperable
-    if (sdata->fd < 0 || inject_error(filecache_error_freshopen2)) {
-        if (errno == ENOENT) {
-            filecache_delete(cache, path, true, NULL);
-        }
-        g_set_error(gerr, system_quark(), errno, "open for 304 failed: %s", strerror(errno));
-    }
-    // Mark the cache item as revalidated at the current time.
-    pdata->last_server_update = time(NULL);
-    filecache_pdata_set(cache, path, pdata, gerr);
-    return;
-}
-
-static void filecache_get_handle_404(filecache_t *cache, const char *path, GError **gerr) {
-    // A previous propfind showed this file would exist, but between then and now, the path was deleted on the server
-    // We clear the cache entries for this path to prevent the case where the path is forever poisoned
-    // We are subject to a TOCTOU issue where the cache has been updated since we used it, and we clear a valid entry
-    struct stat_cache_value *value;
-    g_set_error(gerr, filecache_quark(), ENOENT, "File %s expected to exist.", path);
-    value = stat_cache_value_get(cache, path, true, NULL);
-    if (value) {
-        stat_cache_delete(cache, path, NULL);
-    }
-    free(value);
-    // Delete it from the filecache too
-    filecache_delete(cache, path, true, NULL);
-    return;
-}
-
-static void filecache_handle_http_get_response(long response_code, filecache_t *cache, const char *path, struct filecache_sdata *sdata,
-                                               struct filecache_pdata *pdata, const char* etag, const struct timespec *start_time,
-                                               char *response_filename, int response_fd, int flags, GError **gerr) {
-    if ((response_code != 200) && (response_fd >= 0)) {
-        close(response_fd);
-    }
-    trigger_saint_event(CLUSTER_SUCCESS, "get");
-
-    if (inject_error(filecache_error_fresh400)) response_code = 400;
-    if (response_code == 304) {
-        filecache_get_handle_304(cache, path, flags, sdata, pdata, gerr);
-        return;
-    }
-    if (response_code == 200) {
-        filecache_get_handle_200(cache, path, sdata, pdata, etag, start_time, response_filename, response_fd, gerr);
-        return;
-    }
-    if (response_code == 404 || response_code == 410) {
-        filecache_get_handle_404(cache, path, gerr);
-        return;
-    }
-    // Not sure what to do here; goto finish, or try the loop another time?
-    log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "returns %ld; expected 304 or 200; err: %s", response_code, curl_errorbuffer(response_code));
-}
-
-static void _filecache_truncate(struct filecache_sdata *sdata, off_t s, GError **gerr) {
+static void _filecache_truncate(fc_sdata *sdata, off_t s, GError **gerr) {
     static const char* funcname = "_filecache_truncate";
 
     if (sdata == NULL || inject_error(filecache_error_truncsdata)) {
         g_set_error(gerr, filecache_quark(), E_FC_SDATANULL, "%s: sdata is NULL", funcname);
         return;
     }
-
     log_print(LOG_INFO, SECTION_FILECACHE_FILE, "%s(%d)", funcname, sdata->fd);
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "%s: acquiring shared file lock on fd %d", funcname, sdata->fd);
@@ -637,32 +607,21 @@ static void _filecache_truncate(struct filecache_sdata *sdata, off_t s, GError *
         // falling through to release lock ...
         g_set_error(gerr, system_quark(), errno, "%s: ftruncate failed", funcname);
     }
+    if (*gerr == NULL) {
+        sdata->modified = true;
+    }
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_FLOCK, "%s: releasing shared file lock on fd %d", funcname, sdata->fd);
     if (flock(sdata->fd, LOCK_UN) || inject_error(filecache_error_truncflock2)) {
-        if (*gerr) {
-            // If we got an error from ftruncate so don't set one for flock, still report
-            // that releasing the lock failed.
-            log_print(LOG_CRIT, SECTION_FILECACHE_OPEN, "%s: error releasing shared file lock :: %s",
-                      funcname, strerror(errno));
-        }
-        // If we didn't get an error from ftruncate, then set gerr here from flock on error;
-        // If ftruncate did get an error, it will take precedence and we will ignore this error
-        else {
-            g_set_error(gerr, system_quark(), errno, "%s: error releasing shared file lock", funcname);
-        }
+        log_print(LOG_CRIT, SECTION_FILECACHE_OPEN, "%s: error releasing shared file lock :: %s",
+                  funcname, strerror(errno));
+        // If ftruncate got an error, it will take precedence and we will ignore this error
+        g_set_error(gerr, system_quark(), errno, "%s: error releasing shared file lock", funcname);
     }
-
-    // If we got an error on ftruncate, we fell through to flock. If we didn't get an error there, we need
-    // to return before setting sdata modified.
-    if (*gerr) return;
-
-    log_print(LOG_DEBUG, SECTION_FILECACHE_FILE, "%s: released shared file lock on fd %d", funcname, sdata->fd);
-
-    sdata->modified = true;
+    return;
 }
 
-static void filecache_fill(struct filecache_pdata *pdata, struct filecache_sdata *sdata, int flags, GError** gerr) {
+static void filecache_fill(fc_pdata *pdata, fc_sdata *sdata, int flags, GError** gerr) {
     static const char *funcname = "filecache_fill";
     GError *tmpgerr = NULL;
     // Open first with O_TRUNC off to avoid modifying the file without holding the right lock.
@@ -682,23 +641,77 @@ static void filecache_fill(struct filecache_pdata *pdata, struct filecache_sdata
     return;
 }
 
+static void get_fresh_cache_file(const char *path, fc_sdata *sdata, fc_pdata *pdata, rwp_t rwp, GError **gerr) {
+    char etag[ETAG_MAX] = {'\0'};
+    fc_http_get_response *resp = NULL;
+    GError *tmpgerr = NULL;
+    const char *funcname = "get_fresh_cache_file";
+    struct timespec start_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+    resp = calloc(1, sizeof(fc_http_get_response));
+    if (resp == NULL) {
+        g_set_error(gerr, system_quark(), errno, "Failed to calloc fc_http_get_response");
+        return;
+    }
+    resp->etag[0] = '\0';
+    resp->filename[0] = '\0';
+    resp->fd = -1;
+
+    if (pdata) {
+        strncpy(&etag, pdata->etag, ETAG_MAX);
+    }
+    new_cache_file(sdata->cache_path, resp->filename, &(resp->fd), &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+        return;
+    }
+    for (int idx = 0; idx < num_filesystem_server_nodes; idx++) {
+        // clean up from previous iteration
+        if ((lseek(resp->fd, 0, SEEK_SET) == (off_t)-1)) {
+            g_set_error(gerr, system_quark(), errno, "%s: failed lseek on %s", funcname, path);
+            break;
+        }
+        bool non_retriable_error = filecache_conditional_http_get(path, etag, resp, idx, rwp, gerr);
+        if (non_retriable_error || *gerr) {
+            break;
+        }
+    }
+    if (resp->status_code != 200) {
+        close(resp->fd);
+        unlink(resp->filename);
+    }
+    if (*gerr) {
+        return;
+    }
+    if ((resp->res != CURLE_OK || resp->status_code >= 500) || inject_error(filecache_error_freshcurl1)) {
+        trigger_saint_event(CLUSTER_FAILURE, "get");
+        set_dynamic_logging();
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: curl_easy_perform is not CURLE_OK or is 500: %s",
+                    funcname, curl_easy_strerror(resp->res));
+        return;
+    }
+    filecache_handle_http_get_response(path, sdata, pdata, resp, &start_time, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s on %ld: ", funcname, resp->status_code);
+        return;
+    }
+}
+
 // Get a file descriptor pointing to the latest full copy of the file.
-static void get_fresh_fd(filecache_t *cache,
-        const char *cache_path, const char *path, struct filecache_sdata *sdata,
-        struct filecache_pdata **pdatap, int flags, bool use_local_copy, bool rw, GError **gerr) {
+static void get_fresh_fd(const char *path, fc_sdata *sdata, fc_pdata **pdatap, int flags, bool use_local_copy, GError **gerr) {
     static const char *funcname = "get_fresh_fd";
     GError *tmpgerr = NULL;
-    struct filecache_pdata *pdata;
-    char response_filename[PATH_MAX] = "\0";
-    int response_fd = -1;
-    struct timespec start_time;
-    long response_code = 500;
+    fc_pdata *pdata;
     const float samplerate = 1.0; // always sample stat
     char *stats_name_base, *stats_name;
     BUMP(filecache_fresh_fd);
-    CURLcode res = CURLE_OK;
+    bool rw = write_flag(flags);
+    rwp_t rwp = READ;
+    if (rw) {
+        rwp = WRITE;
+    }
 
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
     assert(pdatap);
     pdata = *pdatap;
 
@@ -706,15 +719,14 @@ static void get_fresh_fd(filecache_t *cache,
     // If the file is in-use (last_server_update = 0) or fresh, we use the local file and don't go to the server.
     // If we're in saint mode, don't go to the server
     if (pdata != NULL && (use_local_copy || flags & O_TRUNC || (pdata->last_server_update == 0)
-                          || filecache_is_fresh(cache, path, pdata, &tmpgerr))) {
+                          || filecache_is_fresh(sdata->cache, path, pdata, &tmpgerr))) {
+        // set the prefix of the stat name to something like put_saint_mode or get_cache
+        asprintf(&stats_name_base, "%s_%s", (rw) ? "put" : "get", use_local_copy ? "saint_mode" : "cache");
+
+        asprintf(&stats_name, "%s_%s", stats_name_base, "success");
         filecache_fill(pdata, sdata, flags, &tmpgerr);
         if (tmpgerr) {
             g_propagate_prefixed_error(gerr, tmpgerr, "%s: on path %s: ", funcname, path);
-        }
-        // set the prefix of the stat name to something like put_saint_mode or get_cache
-        asprintf(&stats_name_base, "%s_%s", (rw) ? "put" : "get", use_local_copy ? "saint_mode" : "cache");
-        asprintf(&stats_name, "%s_%s", stats_name_base, "success");
-        if (tmpgerr) {
             asprintf(&stats_name, "%s_%s", stats_name_base, "failure");
         }
         stats_counter(stats_name, 1, samplerate);
@@ -724,83 +736,50 @@ static void get_fresh_fd(filecache_t *cache,
         return;
     }
 
-    rwp_t rwp = READ;
-    if (rw) {
-        rwp = WRITE;
-    }
-    char new_etag[ETAG_MAX] = {'\0'}, etag[ETAG_MAX] = {'\0'};
-    for (int idx = 0; idx < num_filesystem_server_nodes; idx++) {
-        // clean up from previous iteration
-        if (response_fd >= 0) {
-            close(response_fd);
-        }
-        if (response_filename[0] != '\0') {
-            unlink(response_filename);
-        }
-        new_cache_file(cache_path, response_filename, &response_fd, &tmpgerr);
-        if (tmpgerr) {
-            g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
-            break;
-        }
-        if (pdata) {
-            strncpy(&etag, pdata->etag, ETAG_MAX);
-        }
-        bool non_retriable_error = filecache_conditional_http_get(path, etag, new_etag, &res, &response_code, response_fd, idx, rwp, gerr);
-        if (non_retriable_error || gerr) {
-            break;
+    get_fresh_cache_file(path, sdata, pdata, rwp, gerr);
+    if (!*gerr) {
+        sdata->fd = open(pdata->filename, flags);
+        // delete the entry if it's fd is inoperable
+        if (sdata->fd < 0 || inject_error(filecache_error_freshopen2)) {
+            if (errno == ENOENT) {
+                filecache_delete(sdata->cache, path, true, NULL);
+            }
+            g_set_error(gerr, system_quark(), errno, "open for 304 failed: %s", strerror(errno));
         }
     }
-    if (*gerr) {
-        if (response_fd >= 0) {
-            close(response_fd);
-        }
-        if (response_filename[0] != '\0') {
-            unlink(response_filename);
-        }
-        return;
-    }
-    if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_freshcurl1)) {
-        trigger_saint_event(CLUSTER_FAILURE, "get");
-        set_dynamic_logging();
-        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: curl_easy_perform is not CURLE_OK or 500: %s",
-                    funcname, curl_easy_strerror(res));
-        return;
-    }
-    filecache_handle_http_get_response(response_code, cache, path, sdata, pdata, new_etag, &start_time, response_filename, response_fd, flags, &tmpgerr);
-    if (tmpgerr) {
-        g_propagate_prefixed_error(gerr, tmpgerr, "%s on %ld: ", funcname, response_code);
-        return;
-    }
+    return;
 }
 
 // top-level open call
-void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info,
-        bool grace, bool rw, GError **gerr) {
-    struct filecache_pdata *pdata = NULL;
-    struct filecache_sdata *sdata = NULL;
+void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, bool grace, GError **gerr) {
+    fc_pdata *pdata = NULL;
+    fc_sdata *sdata = NULL;
     GError *tmpgerr = NULL;
     int max_retries = 2;
     int flags = info->flags;
     bool use_local_copy = false;
+    const char *funcname = "filecache_open";
 
     BUMP(filecache_open);
 
-    log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "filecache_open: %s", path);
+    log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "%s: %s", funcname, path);
 
     // Don't bother going to server if already in cluster saint mode
     if (use_saint_mode()) {
         use_local_copy = true;
         max_retries = 1; // Only try once if already in saint mode
         log_print(LOG_INFO, SECTION_FILECACHE_OPEN,
-            "filecache_open: already in saint mode, using local copy: %s", path);
+            "%s: already in saint mode, using local copy: %s", funcname, path);
     }
 
     // Allocate and zero-out a session data structure.
-    sdata = calloc(1, sizeof(struct filecache_sdata));
+    sdata = calloc(1, sizeof(fc_sdata));
     if (sdata == NULL || inject_error(filecache_error_opencalloc)) {
-        g_set_error(gerr, system_quark(), errno, "filecache_open: Failed to calloc sdata");
+        g_set_error(gerr, system_quark(), errno, "%s: Failed to calloc sdata", funcname);
         goto fail;
     }
+    sdata->cache = cache;
+    sdata->cache_path = cache_path;
 
     // NB. We call get_fresh_fd; it tries each of the servers. If they all fail
     // we try again but force it to use the local copy. This should make saint mode
@@ -826,20 +805,19 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
                 // of the same name, this outdated entry will still be in the
                 // filecache. Since it's out of date, it's ok to overwrite it.
                 log_print(LOG_INFO, SECTION_FILECACHE_OPEN,
-                    "filecache_open: creating a file that already has a cache entry: %s", path);
+                    "%s: creating a file that already has a cache entry: %s", funcname, path);
             }
-            log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling create_file on %s", path);
             create_file(sdata, cache_path, cache, path, &tmpgerr);
             if (tmpgerr) {
-                g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: ");
+                g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
                 goto fail;
             }
             break;
         }
 
         // Get a file descriptor pointing to a guaranteed-fresh file.
-        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: calling get_fresh_fd on %s", path);
-        get_fresh_fd(cache, cache_path, path, sdata, &pdata, flags, use_local_copy, rw, &tmpgerr);
+        log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: calling get_fresh_fd on %s", funcname, path);
+        get_fresh_fd(path, sdata, &pdata, flags, use_local_copy, &tmpgerr);
         if (tmpgerr) {
             // If we got a network error (curl_quark is a marker) and we 
             // are using grace, try again but use the local copy
@@ -847,12 +825,12 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
             // don't retry
             if (tmpgerr->domain == curl_quark() && grace && !use_local_copy) {
                 log_print(LOG_WARNING, SECTION_FILECACHE_OPEN,
-                    "filecache_open: Retry in saint mode for path %s. Error: %s", path, tmpgerr->message);
+                    "%s: Retry in saint mode for path %s. Error: %s", funcname, path, tmpgerr->message);
                 g_clear_error(&tmpgerr);
                 use_local_copy = true;
                 continue;
             }
-            g_propagate_prefixed_error(gerr, tmpgerr, "filecache_open: Failed on get_fresh_fd: ");
+            g_propagate_prefixed_error(gerr, tmpgerr, "%s: Failed on get_fresh_fd: ", funcname);
             goto fail;
         }
 
@@ -860,7 +838,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         break;
     }
 
-    log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "filecache_open: success on %s", path);
+    log_print(LOG_INFO, SECTION_FILECACHE_OPEN, "%s: success on %s", funcname, path);
 
     if (flags & O_RDONLY || flags & O_RDWR) sdata->readable = 1;
     if (flags & O_WRONLY || flags & O_RDWR) sdata->writable = 1;
@@ -868,19 +846,19 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
     if (sdata->fd >= 0) {
         if (pdata) {
             log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN,
-            "filecache_open: Setting fd to session data structure with fd %d for %s :: %s:%lu.",
+            "%s: Setting fd to session data structure with fd %d for %s :: %s:%lu.", funcname,
             sdata->fd, path, pdata->filename, pdata->last_server_update);
         }
         else {
             log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN,
-            "filecache_open: Setting fd to session data structure with fd %d for %s :: (no pdata).", sdata->fd, path);
+            "%s: Setting fd to session data structure with fd %d for %s :: (no pdata).", funcname, sdata->fd, path);
         }
         info->fh = (uint64_t) sdata;
         goto finish;
     }
 
 fail:
-    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "filecache_open: No valid fd set for path %s. Setting fh structure to NULL.", path);
+    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: No valid fd set for path %s. Setting fh structure to NULL.", funcname, path);
     info->fh = (uint64_t) NULL;
 
     free(sdata);
@@ -891,7 +869,7 @@ finish:
 
 // top-level read call
 ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_t offset, GError **gerr) {
-    struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
+    fc_sdata *sdata = (fc_sdata *)info->fh;
     ssize_t bytes_read;
 
     BUMP(filecache_read);
@@ -915,7 +893,7 @@ ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_
     return bytes_read;
 }
 
-static void set_error(struct filecache_sdata *sdata, int error_code) {
+static void set_error(fc_sdata *sdata, int error_code) {
     if (sdata->error_code == 0) {
         sdata->error_code = error_code;
         log_print(LOG_DEBUG, SECTION_FILECACHE_IO, "set_error: %d.", error_code);
@@ -927,7 +905,7 @@ static void set_error(struct filecache_sdata *sdata, int error_code) {
 
 // top-level write call
 ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t size, off_t offset, GError **gerr) {
-    struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
+    fc_sdata *sdata = (fc_sdata *)info->fh;
     ssize_t bytes_written;
 
     BUMP(filecache_write);
@@ -976,7 +954,7 @@ ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t siz
 
 // close the file
 void filecache_close(struct fuse_file_info *info, GError **gerr) {
-    struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
+    fc_sdata *sdata = (fc_sdata *)info->fh;
 
     BUMP(filecache_close);
 
@@ -1272,11 +1250,11 @@ finish:
 
 // top-level sync call
 bool filecache_sync(filecache_t *cache, const char *path, struct fuse_file_info *info, bool do_put, GError **gerr) {
-    struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
-    struct filecache_pdata *pdata = NULL;
+    fc_sdata *sdata = (fc_sdata *)info->fh;
+    fc_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
     bool wrote_data = false;
-    const char *funcname;
+    const char *funcname = "filecache_sync";
     BUMP(filecache_sync);
 
     // early return for accessing a bare file descriptor (open/unlink/read|write)
@@ -1351,14 +1329,14 @@ finish:
 
 // top-level truncate call
 void filecache_truncate(struct fuse_file_info *info, off_t s, GError **gerr) {
-    struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
+    fc_sdata *sdata = (fc_sdata *)info->fh;
     BUMP(filecache_truncate);
     _filecache_truncate(sdata, s, gerr);
     return;
 }
 
 int filecache_fd(struct fuse_file_info *info) {
-    struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
+    fc_sdata *sdata = (fc_sdata *)info->fh;
 
     BUMP(filecache_get_fd);
 
@@ -1367,7 +1345,7 @@ int filecache_fd(struct fuse_file_info *info) {
 }
 
 void filecache_set_error(struct fuse_file_info *info, int error_code) {
-    struct filecache_sdata *sdata = (struct filecache_sdata *)info->fh;
+    fc_sdata *sdata = (fc_sdata *)info->fh;
 
     BUMP(filecache_set_error);
     set_error(sdata, error_code);
@@ -1375,7 +1353,7 @@ void filecache_set_error(struct fuse_file_info *info, int error_code) {
 
 // deletes entry from ldb cache
 void filecache_delete(filecache_t *cache, const char *path, bool unlink_cachefile, GError **gerr) {
-    struct filecache_pdata *pdata;
+    fc_pdata *pdata;
     leveldb_writeoptions_t *options;
     GError *tmpgerr = NULL;
     char *key;
@@ -1488,7 +1466,7 @@ static int clear_files(const char *filecache_path, time_t stamped_time, GError *
 
 void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const char *path, off_t fsize, GError **gerr) {
     const char *fname = "filecache_forensic_haven";
-    struct filecache_pdata *pdata = NULL;
+    fc_pdata *pdata = NULL;
     char *bpath = NULL;
     char *bname;
     char *newpath = NULL;
@@ -1587,7 +1565,7 @@ finish:
 }
 
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr) {
-    struct filecache_pdata *pdata = NULL;
+    fc_pdata *pdata = NULL;
     GError *tmpgerr = NULL;
 
     BUMP(filecache_pdata_move);
@@ -1629,7 +1607,7 @@ finish:
 
 // mark filecache stale for path
 void filecache_invalidate(filecache_t* cache, const char* path, GError** gerr) {
-    struct filecache_pdata *pdata = NULL;
+    fc_pdata *pdata = NULL;
     GError *subgerr = NULL;
     const char* funcname = "filecache_invalidate";
 
@@ -1725,7 +1703,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
         // New round
         while (leveldb_iter_valid(iter)) {
-            const struct filecache_pdata *pdata;
+            const fc_pdata *pdata;
             const char *iterkey;
             const char *path;
             struct stat stbuf;
@@ -1735,7 +1713,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
             path = key2path(iterkey);
             // if path is null, we've gone past the filecache entries
             if (path == NULL) break;
-            pdata = (const struct filecache_pdata *)leveldb_iter_value(iter, &klen);
+            pdata = (const fc_pdata *)leveldb_iter_value(iter, &klen);
             log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, 
                     "filecache_cleanup: Visiting %s :: %s", path, pdata ? pdata->filename : "no pdata");
             if (pdata) {
