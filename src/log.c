@@ -26,6 +26,7 @@
 #include <syscall.h>
 #include <assert.h>
 #include <stdlib.h>
+#include <glib.h>
 
 #include "log.h"
 #include "log_sections.h"
@@ -182,16 +183,18 @@ int logging(unsigned int log_level, unsigned int section) {
 
 static int print_it(const char const *formatwithtid, const char const *msg, int log_level) {
     if (log_destination == STDOUT) {
+        char * escaped = g_strescape(msg, NULL);
         printf(log_template,
-              formatwithtid, msg,
-              log_level,
-              get_user_agent(),
-              log_key_value[SITE],
-              log_key_value[ENVIRONMENT],
-              log_key_value[HOST_ADDRESS],
-              syscall(SYS_gettid),
-              PACKAGE_VERSION,
-              NULL);
+               formatwithtid, escaped,
+               log_level,
+               get_user_agent(),
+               log_key_value[SITE],
+               log_key_value[ENVIRONMENT],
+               log_key_value[HOST_ADDRESS],
+               syscall(SYS_gettid),
+               PACKAGE_VERSION,
+               NULL);
+        free(escaped);
         return 0;
     }
     return sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
