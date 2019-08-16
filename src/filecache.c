@@ -374,6 +374,8 @@ static time_t get_parent_updated_children_time(filecache_t *cache, const char *p
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
     }
+
+    free(parent_path);
     return parent_children_update_ts;
 }
 
@@ -440,7 +442,7 @@ static void filecache_count_get_timing(off_t st_size, const char *path, long res
     // Somewhat arbitrary
     static const unsigned small_time_allotment = 2000; // 2 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
-    char *stats_name;
+    char *stats_name = NULL;
     if (st_size > XLG) {
         TIMING(filecache_get_xlg_timing, elapsed_time);
         BUMP(filecache_get_xlg_count);
@@ -474,14 +476,18 @@ static void filecache_count_get_timing(off_t st_size, const char *path, long res
 
     stats_timer(stats_name, elapsed_time);
     free(stats_name);
+    stats_name = NULL;
+    if (elapsed_time <= large_time_allotment) {
+        return;
+    }
 
-    if (st_size >= LG && elapsed_time > large_time_allotment) {
+    if (st_size >= LG) {
         log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "large (%lu) GET for %s exceeded time allotment %lu with %lu",
                   st_size, path, large_time_allotment, elapsed_time);
         asprintf(&stats_name, "exceeded-time-large-GET-latency.%ld", response_code);
         stats_timer(stats_name, elapsed_time);
     }
-    else if (st_size < LG && elapsed_time > small_time_allotment) {
+    else {
         log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "small (%lu) GET for %s exceeded time allotment %lu with %lu",
                   st_size, path, small_time_allotment, elapsed_time);
         asprintf(&stats_name, "exceeded-time-small-GET-latency.%ld", response_code);
@@ -664,7 +670,7 @@ static void get_fresh_cache_file(const char *path, fc_sdata *sdata, fc_pdata *pd
     new_cache_file(sdata->cache_path, resp->filename, &(resp->fd), &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
-        return;
+        goto finish;
     }
     for (int idx = 0; idx < num_filesystem_server_nodes; idx++) {
         // clean up from previous iteration
@@ -682,20 +688,23 @@ static void get_fresh_cache_file(const char *path, fc_sdata *sdata, fc_pdata *pd
         unlink(resp->filename);
     }
     if (*gerr) {
-        return;
+        goto finish;
     }
     if ((resp->res != CURLE_OK || resp->status_code >= 500) || inject_error(filecache_error_freshcurl1)) {
         trigger_saint_event(CLUSTER_FAILURE, "get");
         set_dynamic_logging();
         g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: curl_easy_perform is not CURLE_OK or is 500: %s",
                     funcname, curl_easy_strerror(resp->res));
-        return;
+        goto finish;
     }
     filecache_handle_http_get_response(path, sdata, pdata, resp, &start_time, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "%s on %ld: ", funcname, resp->status_code);
-        return;
+        goto finish;
     }
+finish:
+    free(resp);
+    return;
 }
 
 // Get a file descriptor pointing to the latest full copy of the file.

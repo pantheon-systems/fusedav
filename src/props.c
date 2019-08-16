@@ -68,7 +68,7 @@ struct propfind_state {
 
 static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
     char *path = NULL;
-    char *segment;
+    char *segment = NULL;
     size_t segment_len = 0;
     UriPathSegmentA *cur_base = base_uri->pathHead;
     UriPathSegmentA *cur = source_uri->pathHead;
@@ -106,10 +106,10 @@ static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
         else {
             char *oldpath = path;
             asprintf(&path, "%s/%s", oldpath, segment);
-            free(segment);
             free(oldpath);
         }
         cur = cur->next;
+        free(segment);
     }
 
     return path;
