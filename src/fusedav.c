@@ -711,9 +711,11 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
 }
 
 static bool logit(const char *path, struct stat *stbuf) {
+    // If stbuf is NULL, assume the worse, and log it
+    if (stbuf == NULL) return true;
+    // If the path is a directory, don't log it
     if (S_ISDIR(stbuf->st_mode)) return false;
-    if (!strncmp(path, "/css/optimized", strlen("/css/optimized")) 
-            || !strncmp(path, "/js/optimized", strlen("/js/optimized"))) {
+    if (!strcmp(path, "/css/optimized") || !strcmp(path, "/js/optimized")) {
         return true;
     }
     return false;
