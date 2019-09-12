@@ -710,6 +710,15 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
     return 0;
 }
 
+static bool logit(const char *path, struct stat *stbuf) {
+    if (S_ISDIR(stbuf->st_mode)) return false;
+    if (!strncmp(path, "/css/optimized", strlen("/css/optimized")) 
+            || !strncmp(path, "/js/optimized", strlen("/js/optimized"))) {
+        return true;
+    }
+    return false;
+}
+
 // If its a nonnegative entry and outside the TTL, even if 0, then needs_propfind is true
 // If its a negative entry, then the TTL is a fibonacci sequence
 static bool requires_propfind(const char *path, time_t time_since, GError **gerr) {
@@ -870,6 +879,9 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             // cache is fresh, no propfind will be issued, reuse negative cache designator from elsewhere
             stats_counter_local("propfind-negative-cache", 1, pfsamplerate);
             log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: propfind-negative-cache on file %s", funcname, path);
+            if (logit(path, stbuf)) {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "%s: propfind-negative-cache on file %s (not directory)", funcname, path);
+            }
         }
         return;
     }
@@ -1002,6 +1014,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
                 value.st.st_mode = 0; // Make it so, even if it already is
                 log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on if", funcname, path);
                 stat_cache_value_set(config->cache, path, &value, &subgerr);
+                // If the path matches for logit, stbuf will indicate not a directory, and logit will return true
+                if (logit(path, stbuf)) {
+                    log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s (not directory); calling stat_cache_value_set on if", funcname, path);
+                }
             }
             if (subgerr) {
                 g_propagate_prefixed_error(gerr, subgerr, "%s: ENOENT: ", funcname);
@@ -1027,6 +1043,10 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
             value.st.st_mode = 0; // Make it so, even if it already is
             log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s; calling stat_cache_value_set on else", funcname, path);
             stat_cache_value_set(config->cache, path, &value, &subgerr);
+            // If the path matches for logit, stbuf will indicate not a directory, and logit will return true
+            if (logit(path, stbuf)) {
+                log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: ENOENT on %s (not directory); calling stat_cache_value_set on else", funcname, path);
+            }
         }
         if (subgerr) {
             g_propagate_prefixed_error(gerr, subgerr, "%s: ENOENT: ", funcname);
@@ -1034,6 +1054,9 @@ static void get_stat(const char *path, struct stat *stbuf, GError **gerr) {
         }
         g_set_error(gerr, fusedav_quark(), ENOENT, "%s: ENOENT", funcname);
         goto fail;
+    }
+    if (logit(path, stbuf)) {
+        log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "%s: Exiting on %s (not directory); needs_propfind: %d", funcname, path, needs_propfind);
     }
     if (ret == 0) goto finish;
 
@@ -1145,6 +1168,9 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
         if (gerr->code == ENOENT) {
             int res = -gerr->code;
             log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "dav_getattr(%s): ENOENT", path?path:"null path");
+            if (logit(path, stbuf)) {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "dav_getattr(%s (not directory)): ENOENT", path?path:"null path");
+            }
             g_clear_error(&gerr);
             return res;
         }
@@ -1152,6 +1178,9 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
     }
     print_stat(stbuf, "dav_getattr", path);
     log_print(LOG_INFO, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s)", path);
+    if (logit(path, stbuf)) {
+        log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "Done: dav_getattr(%s (not directory))", path);
+    }
 
     return 0;
 }
