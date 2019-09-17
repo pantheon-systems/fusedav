@@ -710,6 +710,16 @@ static int get_stat_from_cache(const char *path, struct stat *stbuf, enum ignore
     return 0;
 }
 
+// This will log all times the css or js directory is accessed.
+// Make sure it is only called in places where this will not
+// happen often
+static bool logit_css(const char *path) {
+    if (!strncmp(path, "/css", strlen("/css")) || !strncmp(path, "/js", strlen("/js"))) {
+        return true;
+    }
+    return false;
+}
+
 static bool logit(const char *path, struct stat *stbuf) {
     // If stbuf is NULL, assume the worse, and log it
     if (stbuf == NULL) return true;
@@ -775,6 +785,11 @@ static bool requires_propfind(const char *path, time_t time_since, GError **gerr
                 BUMP(propfind_negative_cache);
                 log_print(LOG_INFO, SECTION_FUSEDAV_STAT, 
                         "%s: no propfind needed yet on negative entry %s", funcname, path);
+                // This is unlikely, unless somehow the css directory was seen as not existing earlier
+                if (logit_css(path)) {
+                    log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, 
+                            "%s: no propfind needed yet on negative entry %s", funcname, path);
+                }
                 log_print(LOG_DEBUG, SECTION_FUSEDAV_STAT, 
                         "%s: no propfind needed yet on negative entry %s; now:next:upd:made--%lu:%lu:%lu", 
                         funcname, path, current_time, next_time, value->updated);
@@ -1172,6 +1187,10 @@ static int dav_getattr(const char *path, struct stat *stbuf) {
             log_print(LOG_DYNAMIC, SECTION_FUSEDAV_STAT, "dav_getattr(%s): ENOENT", path?path:"null path");
             if (logit(path, stbuf)) {
                 log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "dav_getattr(%s (not directory)): ENOENT", path?path:"null path");
+            }
+            // If we see an ENOENT on a file in the css or js directories, log it
+            if (logit_css(path)) {
+                log_print(LOG_NOTICE, SECTION_FUSEDAV_STAT, "dav_getattr(%s): ENOENT", path?path:"null path");
             }
             g_clear_error(&gerr);
             return res;
