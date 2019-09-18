@@ -24,11 +24,23 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 
 #include "util.h"
 #include "log.h"
 #include "log_sections.h"
+
+bool write_flag(int flags) {
+  // O_RDWR technically belongs in the list, but since it might be used for files
+  // which are only read, I leave it out.
+  // O_CREAT on a file which already exists is a noop unless O_EXCL is also included.
+  // So, only respond if both are present.
+  if ((flags & O_WRONLY) || ((flags & O_CREAT) && (flags & O_EXCL)) || (flags & O_TRUNC) || (flags & O_APPEND)) {
+    return true;
+  }
+  return false;
+}
 
 // Return value is allocated and must be freed.
 char *path_parent(const char *uri) {

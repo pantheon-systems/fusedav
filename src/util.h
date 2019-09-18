@@ -28,6 +28,7 @@
 #include <glib.h>
 #include <stdbool.h>
 
+bool write_flag(int flags);
 char *path_parent(const char *uri);
 
 // For GError
