@@ -309,30 +309,28 @@ static size_t capture_etag(void *ptr, size_t size, size_t nmemb, void *userdata)
     char *header = (char *) ptr;
     char *etag = (char *) userdata; // Allocated to ETAG_MAX length.
     char *value;
+    size_t value_len = 0;
 
+    strcpy(etag, "");
+    if (strncasecmp(header, "ETag", 4) != 0) {
+        return real_size;
+    }
     value = strstr(header, ":");
-
-    if (value == NULL)
-        goto finish;
-
+    if (value == NULL) {
+        return real_size;
+    }
     // Skip the colon and whitespace.
     ++value;
-    while(isspace(value[0]))
+    while(isspace(value[0])) {
         ++value;
-
-    // Is it an ETag? If so, store it.
-    if (strncasecmp(header, "ETag", 4) == 0) {
-        size_t value_len = strlen(value);
-
-        // If the ETag is too long, bail.
-        if (value_len > ETAG_MAX)
-            goto finish;
-
-        strncpy(etag, value, value_len);
-        etag[value_len - 1] = '\0';
     }
-
-finish:
+    value_len = strlen(value);
+    // If the ETag is too long, bail.
+    if (value_len > ETAG_MAX) {
+        return real_size;
+    }
+    strncpy(etag, value, value_len);
+    etag[value_len - 1] = '\0';
     return real_size;
 }
 
