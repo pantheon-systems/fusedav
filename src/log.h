@@ -22,7 +22,13 @@
 
 extern __thread unsigned int LOG_DYNAMIC;
 
-void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent);
+enum log_destination {
+    JOURNAL,
+    STDOUT
+};
+
+
+void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent, const char *destination);
 int log_print(unsigned int log_level, unsigned int section, const char *format, ...);
 int logging(unsigned int log_level, unsigned int section);
 void set_dynamic_logging(void);

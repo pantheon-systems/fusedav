@@ -78,7 +78,7 @@ static int fusedav_opt_proc(void *data, const char *arg, int key, struct fuse_ar
         break;
 
     case KEY_IGNORE:
-	return 0;
+        return 0;
 
     case KEY_HELP:
         fprintf(stderr,
@@ -130,6 +130,7 @@ static void print_config(struct fusedav_config *config) {
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level %d", config->log_level);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level_by_section %s", config->log_level_by_section);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_prefix %s", config->log_prefix);
+    log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_destination %s", config->log_destination);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "max_file_size %d", config->max_file_size);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "statsd_host %s", config->statsd_host);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "statsd_port %s", config->statsd_port);
@@ -156,6 +157,7 @@ run_as_gid=6f7a106722f74cc7bd96d4d06785ed78
 log_level=5
 log_level_by_section=0
 log_prefix=6f7a106722f74cc7bd96d4d06785ed78
+log_destination=journal
 max_file_size=256
 statsd_host=127.0.0.1
 statsd_port=8126
@@ -198,6 +200,7 @@ static void parse_configs(struct fusedav_config *config, GError **gerr) {
         keytuple(fusedav, log_level, INT),
         keytuple(fusedav, log_level_by_section, STRING),
         keytuple(fusedav, log_prefix, STRING),
+        keytuple(fusedav, log_destination, STRING),
         keytuple(fusedav, max_file_size, INT),
         keytuple(fusedav, statsd_host, STRING),
         keytuple(fusedav, statsd_port, STRING),
@@ -290,6 +293,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
     config->nodaemon = false;
     config->max_file_size = 256; // 256M
     config->log_level = 5; // default log_level: LOG_NOTICE
+    config->log_destination = JOURNAL;
     asprintf(&config->statsd_host, "%s", "127.0.0.1");
     asprintf(&config->statsd_port, "%s", "8126");
 
@@ -312,7 +316,7 @@ void configure_fusedav(struct fusedav_config *config, struct fuse_args *args, ch
 
     asprintf(&user_agent, "FuseDAV/%s %s", PACKAGE_VERSION, config->log_prefix);
 
-    log_init(config->log_level, config->log_level_by_section, config->log_prefix);
+    log_init(config->log_level, config->log_level_by_section, config->log_prefix, config->log_destination);
     log_print(LOG_DEBUG, SECTION_CONFIG_DEFAULT, "log_level: %d.", config->log_level);
 
     if (stats_init(config->statsd_host, config->statsd_port) < 0) {
