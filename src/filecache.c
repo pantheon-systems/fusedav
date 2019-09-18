@@ -42,6 +42,7 @@
 #include "fusedav-statsd.h"
 
 #define CACHE_FILE_ENTROPY 20
+#define FILECACHE_INVALIDATED 1
 
 // Keeping track of file sizes processed
 #define XLG 100 * 1024 * 1024
@@ -1704,6 +1705,32 @@ finish:
     free(pdata);
 
     return;
+}
+
+// mark filecache stale for path
+void filecache_invalidate(filecache_t* cache, const char* path, GError** gerr) {
+    fc_pdata *pdata = NULL;
+    GError *subgerr = NULL;
+    const char* funcname = "filecache_invalidate";
+
+    pdata = filecache_pdata_get(cache, path, &subgerr);
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+        return;
+    }
+    if (pdata == NULL) {
+        g_set_error(gerr, filecache_quark(), E_FC_PDATANULL, "%s: path %s does not exist.", funcname, path);
+        return;
+    }
+    // We mark the data invalidated by setting the last update very far in the past.
+    // This preserves the etag so we can still try it and get lucky, eg if the file
+    // content was updated, and then updated back to its previous value.
+    pdata->last_server_update = FILECACHE_INVALIDATED;
+    filecache_pdata_set(cache, path, pdata, &subgerr);
+    if (subgerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+        return;
+    }
 }
 
 // Does *not* allocate a new string.
