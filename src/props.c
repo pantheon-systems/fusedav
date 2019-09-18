@@ -68,7 +68,7 @@ struct propfind_state {
 
 static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
     char *path = NULL;
-    char *segment;
+    char *segment = NULL;
     size_t segment_len = 0;
     UriPathSegmentA *cur_base = base_uri->pathHead;
     UriPathSegmentA *cur = source_uri->pathHead;
@@ -89,12 +89,15 @@ static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
     // Verify that we're done with the base path
     // and still have parts left of the main path.
     if (cur == NULL || cur_base != NULL) {
-        return NULL;
+        path = strdup("");
+        return path;
     }
 
     // Iterate through the unique parts.
     while (cur != NULL) {
         segment_len = cur->text.afterLast - cur->text.first;
+        // we init segment to NULL so that this will always work
+        free(segment);
         segment = malloc(segment_len + 1);
         strncpy(segment, cur->text.first, segment_len);
         segment[segment_len] = '\0';
@@ -105,7 +108,6 @@ static char *get_relative_path(UriUriA *base_uri, UriUriA *source_uri) {
         else {
             char *oldpath = path;
             asprintf(&path, "%s/%s", oldpath, segment);
-            free(segment);
             free(oldpath);
         }
         cur = cur->next;
@@ -146,13 +148,12 @@ static char *get_path_beyond_base(const char *source_url) {
     // Compute the relative path and store it to a string.
     path = get_relative_path(&base_uri, &source_uri);
 
-    // If we've got a NULL, it's just the base path.
-    if (path == NULL) {
-        path = strdup("");
+    path_len = strlen(path);
+
+    // it's just the base path.
+    if (path_len == 0 ) {
         goto finish;
     }
-
-    path_len = strlen(path);
 
     // Drop any trailing slash.
     if (path[path_len - 1] == '/') {

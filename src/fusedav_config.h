@@ -52,6 +52,7 @@ struct fusedav_config {
     int  log_level;
     char *log_level_by_section;
     char *log_prefix;
+    char *log_destination;
     int  max_file_size;
     char *statsd_host;
     char *statsd_port;

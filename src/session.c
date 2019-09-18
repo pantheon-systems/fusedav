@@ -1298,6 +1298,8 @@ CURL *session_request_init(const char *path, const char *query_string, bool tmp_
     curl_errbuf[0] = '\0';
     curl_easy_setopt(session, CURLOPT_ERRORBUFFER, curl_errbuf);
     curl_easy_setopt(session, CURLOPT_VERBOSE, 1L);
+    // accept and decode all encodings with compiled support: let the server decide
+    curl_easy_setopt(session, CURLOPT_ACCEPT_ENCODING, "");
 
     escaped_path = escape_except_slashes(session, path);
     if (escaped_path == NULL) {
