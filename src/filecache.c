@@ -831,7 +831,7 @@ void filecache_open(char *cache_path, filecache_t *cache, const char *path, stru
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: calling get_fresh_fd on %s", funcname, path);
         get_fresh_fd(path, sdata, &pdata, flags, use_local_copy, &tmpgerr);
         if (tmpgerr) {
-            // If we got a network error (curl_quark is a marker) and we 
+            // If we got a network error (curl_quark is a marker) and we
             // are using grace, try again but use the local copy
             // If we are already in saint mode (use_local_copy already true)
             // don't retry
@@ -1052,7 +1052,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
             goto finish;
         }
 
-        // REVIEW: We didn't use to check for sesssion == NULL, so now we 
+        // REVIEW: We didn't use to check for sesssion == NULL, so now we
         // also call try_release_request_outstanding. Is this OK?
         session = session_request_init(path, NULL, false, rwp);
         if (!session || inject_error(filecache_error_freshsession)) {
@@ -1090,7 +1090,7 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     if ((res != CURLE_OK || response_code >= 500) || inject_error(filecache_error_etagcurl1)) {
         trigger_saint_event(CLUSTER_FAILURE, "put");
         set_dynamic_logging();
-        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: retry_curl_easy_perform is not CURLE_OK: %s", 
+        g_set_error(gerr, curl_quark(), E_FC_CURLERR, "%s: retry_curl_easy_perform is not CURLE_OK: %s",
                 funcname, curl_easy_strerror(res));
         goto finish;
     }
@@ -1386,7 +1386,7 @@ static int clear_files(const char *filecache_path, time_t stamped_time, GError *
         snprintf(cachefile_path, PATH_MAX , "%s/%s", filecache_path, diriter->d_name) ;
         if (stat(cachefile_path, &stbuf) == -1)
         {
-            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: Unable to stat file: %s: %d %s", 
+            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: Unable to stat file: %s: %d %s",
                     fname, cachefile_path, errno, strerror(errno));
             --ret;
             continue;
@@ -1410,7 +1410,7 @@ static int clear_files(const char *filecache_path, time_t stamped_time, GError *
             ++visited;
             if (stbuf.st_mtime < stamped_time) {
                 if (unlink(cachefile_path)) {
-                    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: failed to unlink %s: %d %s", 
+                    log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, "%s: failed to unlink %s: %d %s",
                             fname, cachefile_path, errno, strerror(errno));
                     --ret;
                 }
@@ -1418,13 +1418,13 @@ static int clear_files(const char *filecache_path, time_t stamped_time, GError *
                 ++unlinked;
             }
             else {
-                log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "%s: didn't unlink %s: %d %d", 
+                log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "%s: didn't unlink %s: %d %d",
                         fname, cachefile_path, stamped_time, stbuf.st_mtime);
             }
         }
     }
     closedir(dir);
-    log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "%s: visited %d files, unlinked %d, and had %d issues", 
+    log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, "%s: visited %d files, unlinked %d, and had %d issues",
             fname, visited, unlinked, ret);
 
     // return the number of files still left
@@ -1516,14 +1516,14 @@ finish:
     while (files_left >= files_kept && hours > 0) {
         files_left = clear_files(newpath, time(NULL) - (hours * 60 * 60), &subgerr);
         if (subgerr) {
-            log_print(LOG_ERR, SECTION_FILECACHE_FILE, 
-                    "%s: error on clear_files: %s -- %d: %s", 
+            log_print(LOG_ERR, SECTION_FILECACHE_FILE,
+                    "%s: error on clear_files: %s -- %d: %s",
                     fname, subgerr->message, subgerr->code, g_strerror(subgerr->code));
             break;
         }
         hours /= 4;
-        log_print(LOG_NOTICE, SECTION_FILECACHE_FILE, 
-                "%s: files_left: %d; files_kept: %d; hours: %d", 
+        log_print(LOG_NOTICE, SECTION_FILECACHE_FILE,
+                "%s: files_left: %d; files_kept: %d; hours: %d",
                 fname, files_left, files_kept, hours);
     }
     free(newpath);
@@ -1681,7 +1681,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
             // if path is null, we've gone past the filecache entries
             if (path == NULL) break;
             pdata = (const fc_pdata *)leveldb_iter_value(iter, &klen);
-            log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN, 
+            log_print(LOG_DEBUG, SECTION_FILECACHE_CLEAN,
                     "filecache_cleanup: Visiting %s :: %s", path, pdata ? pdata->filename : "no pdata");
             if (pdata) {
                 ++cached_files;
@@ -1715,11 +1715,11 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                     // total_size will be less the max cache size
                     if (round > 1 && deleted_size > max_delete) {
                         // Avoid the delete
-                        log_print(LOG_INFO, SECTION_FILECACHE_CLEAN, 
+                        log_print(LOG_INFO, SECTION_FILECACHE_CLEAN,
                                 "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
                         // Print once per round that we've hit the limit
                         if (pmsg) {
-                            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                            log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
                                     "filecache_cleanup: Too many deletions this round; not deleting %s", fname);
                             pmsg = false;
                         }
@@ -1743,19 +1743,19 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                     // put a timestamp on the file
                     ret = utime(fname, NULL);
                     if (ret) {
-                        log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
-                                "filecache_cleanup: failed to update timestamp on \"%s\" for \"%s\" from ldb cache: %d - %s", 
+                        log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
+                                "filecache_cleanup: failed to update timestamp on \"%s\" for \"%s\" from ldb cache: %d - %s",
                                 fname, path, errno, strerror(errno));
                     }
                 }
             }
             else {
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
                         "filecache_cleanup: pulled NULL pdata out of cache for %s", path);
             }
             leveldb_iter_next(iter);
         }
-        if (round == 1 && total_size <= max_cache_size) { 
+        if (round == 1 && total_size <= max_cache_size) {
             // If the size of files when we started the first round was already less than max ...
             done = true;
         } else {
@@ -1764,14 +1764,14 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
 
             if (new_total_size <= max_cache_size) {
                 // If the file size is now less than max cache size, exit
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
-                        "filecache_cleanup: Stopping, new total size is less than max: %lu", 
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
+                        "filecache_cleanup: Stopping, new total size is less than max: %lu",
                         new_total_size);
                 done = true;
             } else if (age_out <= two_hours) {
                 // Avoid being too aggressive. Leave two hours worth of files in the cache.
                 // If the age out is less than two hours, exit even if file size is greater than max
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
                         "filecache_cleanup: Stopping, age_out less than 2 hours: %lu", age_out);
                 done = true;
             } else {
@@ -1779,7 +1779,7 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
                 age_out /= 2;
                 // But always leave max_cache_size in the cache
                 max_delete = new_total_size - max_cache_size;
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
                         "filecache_cleanup: new age_out: %lu and max_delete: %lu;", age_out, max_delete);
             }
             // If when we started there was more file content than max cache size, inform the caller so it can
@@ -1787,14 +1787,14 @@ bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, G
             reduce_interval = true;
             // In order to allow log searching to find sites which required a second or later round, log at NOTICE
             if (round > 1) {
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
                         "filecache_cleanup: Completed round %d; new total_size: %lu, max: %lu, ageout: %lu, "
-                        "new max_delete: %lu, done: %d", 
+                        "new max_delete: %lu, done: %d",
                         round, new_total_size, max_cache_size, age_out, max_delete, done);
             } else {
-                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN, 
+                log_print(LOG_NOTICE, SECTION_FILECACHE_CLEAN,
                         "filecache_cleanup: Completed first round; new total_size: %lu, max: %lu, ageout: %lu, "
-                        "new max_delete: %lu, done: %d", 
+                        "new max_delete: %lu, done: %d",
                         new_total_size, max_cache_size, age_out, max_delete, done);
             }
         }
