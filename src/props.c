@@ -424,6 +424,8 @@ int simple_propfind(const char *path, size_t depth, time_t last_updated, props_r
         curl_easy_setopt(session, CURLOPT_TIMEOUT, 0);
         curl_easy_setopt(session, CURLOPT_LOW_SPEED_LIMIT, 1024);
         curl_easy_setopt(session, CURLOPT_LOW_SPEED_TIME, 240);
+        // Allow gzipped propfind responses
+        curl_easy_setopt(session, CURLOPT_ACCEPT_ENCODING, "");
 
         // Add the Depth header and PROPFIND verb.
         curl_easy_setopt(session, CURLOPT_CUSTOMREQUEST, "PROPFIND");
