@@ -53,10 +53,19 @@ __thread unsigned int LOG_DYNAMIC = LOG_INFO;
 // max size for strings in log_key_value array
 #define KVITEM_SIZE 64
 
+static const char *log_template = "{\"MESSAGE\": \"%s%s\", "
+                                  "\"PRIORITY\": %d, "
+                                  "\"USER_AGENT\": \"%s\", "
+                                  "\"SITE\": \"%s\", "
+                                  "\"ENVIRONMENT\": \"%s\", "
+                                  "\"HOST_ADDRESS\": \"%s\", "
+                                  "\"TID\": \"%lu\", "
+                                  "\"PACKAGE_VERSION\": \"%s\"}\n";
+
 static unsigned int global_log_level = 5;
 static unsigned int section_log_levels[SECTIONS] = {0};
 static const char *log_key_value[KVITEMS];
-
+static enum log_destination log_destination = JOURNAL;
 static const char *errlevel[] = {"EMERG:  ", "ALERT:  ", "CRIT:   ", "ERR:    ", "WARN:   ", "NOTICE: ", "INFO:   ", "DEBUG:  "};
 
 // From the base url get the site id and site env
@@ -85,7 +94,7 @@ static void initialize_site(void) {
 }
 
 /* The log_prefix comes from fusedav.conf; the base_url from curl and fuse. */
-void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent_abbrev) {
+void log_init(unsigned int log_level, const char *log_level_by_section, const char *user_agent_abbrev, const char *destination) {
 
     unsigned int vlen;
 
@@ -98,6 +107,10 @@ void log_init(unsigned int log_level, const char *log_level_by_section, const ch
     }
     else {
         log_key_value[USER_AGENT_ABBREV] = "(null)";
+    }
+
+    if ((destination != NULL) && strncmp(destination, "stdout", sizeof("stdout")) == 0) {
+        log_destination = STDOUT;
     }
 
     initialize_site();
@@ -168,9 +181,20 @@ int logging(unsigned int log_level, unsigned int section) {
 }
 
 static int print_it(const char const *formatwithtid, const char const *msg, int log_level) {
-    int ret;
-    // fusedav-server standardizing on names BINDING, SITE, and ENVIRONMENT
-    ret = sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
+    if (log_destination == STDOUT) {
+        printf(log_template,
+              formatwithtid, msg,
+              log_level,
+              get_user_agent(),
+              log_key_value[SITE],
+              log_key_value[ENVIRONMENT],
+              log_key_value[HOST_ADDRESS],
+              syscall(SYS_gettid),
+              PACKAGE_VERSION,
+              NULL);
+        return 0;
+    }
+    return sd_journal_send("MESSAGE=%s%s", formatwithtid, msg,
                           "PRIORITY=%d", log_level,
                           "USER_AGENT=%s", get_user_agent(),
                           "SITE=%s", log_key_value[SITE],
@@ -179,7 +203,6 @@ static int print_it(const char const *formatwithtid, const char const *msg, int 
                           "TID=%lu", syscall(SYS_gettid),
                           "PACKAGE_VERSION=%s", PACKAGE_VERSION,
                           NULL);
-    return ret;
 }
 
 #define max_msg_sz 2048
@@ -196,7 +219,7 @@ int log_print(unsigned int log_level, unsigned int section, const char *format, 
         assert(formatwithlevel);
 
         // print the intended message
-        ret = print_it(formatwithlevel, msg, log_level);
+        print_it(formatwithlevel, msg, log_level);
 
         // Check and see if we're no longer doing dynamic logging. If so, it will take effect after this call. Then print a message
         if (turning_off_dynamic_logging()) {

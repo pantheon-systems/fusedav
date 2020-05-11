@@ -347,6 +347,28 @@ static size_t write_response_to_fd(void *ptr, size_t size, size_t nmemb, void *u
     return real_size;
 }
 
+static time_t get_parent_updated_children_time(filecache_t *cache, const char *path, GError **gerr) {
+    const char* funcname = "get_parent_updated_children_time";
+    time_t parent_children_update_ts;
+    char *parent_path;
+    GError *tmpgerr = NULL;
+
+    parent_path = path_parent(path);
+    if (parent_path == NULL) {
+        g_set_error(tmpgerr, filecache_quark(), EEXIST, "could not get parent path");
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+        return parent_children_update_ts;
+    }
+
+    log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: Getting parent path entry: %s", funcname, parent_path);
+    parent_children_update_ts = stat_cache_read_updated_children(cache, parent_path, &tmpgerr);
+
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+    }
+    return parent_children_update_ts;
+}
+
 // Get a file descriptor pointing to the latest full copy of the file.
 static void get_fresh_fd(filecache_t *cache,
         const char *cache_path, const char *path, struct filecache_sdata *sdata,
@@ -365,10 +387,18 @@ static void get_fresh_fd(filecache_t *cache,
     // Somewhat arbitrary
     static const unsigned small_time_allotment = 2000; // 2 seconds
     static const unsigned large_time_allotment = 8000; // 8 seconds
+    time_t parent_children_update_ts;
+    time_t check_now = time(NULL);
 
     BUMP(filecache_fresh_fd);
 
     clock_gettime(CLOCK_MONOTONIC, &start_time);
+
+    parent_children_update_ts = get_parent_updated_children_time(cache, path, &tmpgerr);
+    if (tmpgerr) {
+        g_propagate_prefixed_error(gerr, tmpgerr, "%s: ", funcname);
+        return;
+    }
 
     assert(pdatap);
     pdata = *pdatap;
@@ -382,11 +412,17 @@ static void get_fresh_fd(filecache_t *cache,
     // For O_TRUNC, we just want to open a truncated cache file and not bother getting a copy from
     // the server.
     // If not O_TRUNC, but the cache file is fresh, just reuse it without going to the server.
+    // If the parent directory was recently updated and the cache file wasn't explicitly invalidated, consider it fresh.
     // If the file is in-use (last_server_update = 0) we use the local file and don't go to the server.
     // If we're in saint mode, don't go to the server
-    if (pdata != NULL &&
-            ((flags & O_TRUNC) || use_local_copy ||
-            (pdata->last_server_update == 0) || (time(NULL) - pdata->last_server_update) <= STAT_CACHE_NEGATIVE_TTL)) {
+    if (pdata != NULL && (
+            (flags & O_TRUNC) || use_local_copy ||
+            (pdata->last_server_update == 0) ||
+            ((check_now - pdata->last_server_update) <= FILECACHE_ENTRY_TTL) ||
+            (((check_now - parent_children_update_ts) <= FILECACHE_PARENT_UPDATE_GRACE)
+                && (pdata->last_server_update > FILECACHE_INVALIDATED))
+            )
+        ) {
         const float samplerate = 1.0; // always sample stat
         log_print(LOG_DEBUG, SECTION_FILECACHE_OPEN, "%s: file is fresh or being truncated: %s::%s", 
                 funcname, path, pdata->filename);
@@ -403,7 +439,7 @@ static void get_fresh_fd(filecache_t *cache,
             // I believe we can get here on a PUT, and succeed in getting a previous copy from the cache
             // This will eventually fail if we are already in saint mode, but should succeed for now
             if (use_local_copy) {
-                if (rw ) stats_counter("put_saint_mode_failure", 1, samplerate);
+                if (rw) stats_counter("put_saint_mode_failure", 1, samplerate);
                 else stats_counter("get_saint_mode_failure", 1, samplerate);
                 log_print(LOG_WARNING, SECTION_FILECACHE_OPEN, "%s: get_saint_mode_failure on file: %s::%s", funcname, path, pdata->filename);
             } else {
@@ -1047,6 +1083,9 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
     // If in saint mode and we count this request as a saint_write in get_fresh_fd(), we would be
     // double counting; but I don't see how we get here at all if we detect saint mode in get_fresh_fd()
     rwp_t rwp = WRITE;
+    GChecksum *sha512_checksum;
+    GChecksum *md5_checksum;
+    FILE *fp;
 
     BUMP(filecache_return_etag);
 
@@ -1070,9 +1109,6 @@ static void put_return_etag(const char *path, int fd, char *etag, GError **gerr)
 
     log_print(LOG_DEBUG, SECTION_FILECACHE_COMM, "%s: file size %d", funcname, st.st_size);
 
-    GChecksum *sha512_checksum;
-    GChecksum *md5_checksum;
-    FILE *fp;
     fp = fdopen(dup(fd), "r");
     if (!fp) {
       g_set_error(gerr, system_quark(), errno, "%s: NULL fp from fdopen on fd %d for path %s", funcname, fd, path);
@@ -1751,6 +1787,28 @@ finish:
     free(pdata);
 
     return;
+}
+
+// mark filecache stale for path
+void filecache_invalidate(filecache_t* cache, const char* path, GError** gerr) {
+    struct filecache_pdata *pdata = NULL;
+    GError *subgerr = NULL;
+    const char* funcname = "filecache_invalidate";
+
+    pdata = filecache_pdata_get(cache, path, &subgerr);
+    if (gerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+        return;
+    }
+    // We mark the data invalidated by setting the last update very far in the past.
+    // This preserves the etag so we can still try it and get lucky, eg if the file
+    // content was updated, and then updated back to its previous value.
+    pdata->last_server_update = FILECACHE_INVALIDATED;
+    filecache_pdata_set(cache, path, pdata, &subgerr);
+    if (gerr) {
+        g_propagate_prefixed_error(gerr, subgerr, "%s: ", funcname);
+        return;
+    }
 }
 
 // Does *not* allocate a new string.

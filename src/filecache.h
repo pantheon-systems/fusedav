@@ -37,13 +37,16 @@
 #define E_FC_LDBERR EIO
 #define E_FC_CURLERR ENETDOWN
 #define E_FC_FILETOOLARGE EFBIG
+#define FILECACHE_INVALIDATED 1
+#define FILECACHE_ENTRY_TTL 2
+#define FILECACHE_PARENT_UPDATE_GRACE 2
 
 typedef leveldb_t filecache_t;
 
 void filecache_print_stats(void);
 void filecache_init(char *cache_path, GError **gerr);
 void filecache_delete(filecache_t *cache, const char *path, bool unlink, GError **gerr);
-void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info, 
+void filecache_open(char *cache_path, filecache_t *cache, const char *path, struct fuse_file_info *info,
         bool grace, bool rw, GError **gerr);
 ssize_t filecache_read(struct fuse_file_info *info, char *buf, size_t size, off_t offset, GError **gerr);
 ssize_t filecache_write(struct fuse_file_info *info, const char *buf, size_t size, off_t offset, GError **gerr);
@@ -54,6 +57,7 @@ int filecache_fd(struct fuse_file_info *info);
 void filecache_set_error(struct fuse_file_info *info, int error_code);
 void filecache_forensic_haven(const char *cache_path, filecache_t *cache, const char *path, off_t fsize, GError **gerr);
 void filecache_pdata_move(filecache_t *cache, const char *old_path, const char *new_path, GError **gerr);
+void filecache_invalidate(filecache_t* cache, const char* path, GError** gerr);
 bool filecache_cleanup(filecache_t *cache, const char *cache_path, bool first, GError **gerr);
 struct curl_slist* enhanced_logging(struct curl_slist *slist, int log_level, int section, const char *format, ...);
 
