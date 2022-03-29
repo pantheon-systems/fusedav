@@ -178,7 +178,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     struct stat_cache_value *existing = NULL;
     struct stat_cache_value value;
     rwp_t rwp = PROPFIND;
-    GError *subgerr1 = NULL ;
+    GError *subgerr1 = NULL;
 
     log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", funcname, path, status_code);
 
@@ -417,6 +417,10 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 log_print(LOG_ERR, SECTION_FUSEDAV_PROP, "%s: Unexpected negative entry (2); %s", funcname, path);
             }
             stat_cache_value_set(config->cache, path, &value, &subgerr1);
+            if (subgerr1) {
+                g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
+            }
+            filecache_invalidate(config->cache, path, &subgerr1);
             if (subgerr1) {
                 g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
             }
@@ -1842,24 +1846,13 @@ static int dav_mknod(const char *path, mode_t mode, __unused dev_t rdev) {
     return 0;
 }
 
-static bool write_flag(int flags) {
-    // O_RDWR technically belongs in the list, but since it might be used for files
-    // which are only read, I leave it out. 
-    // O_CREAT on a file which already exists is a noop unless O_EXCL is also included.
-    // So, only respond if both are present.
-    if ((flags & O_WRONLY) || ((flags & O_CREAT) && (flags & O_EXCL)) || (flags & O_TRUNC) || (flags & O_APPEND)) {
-        return true;
-    }
-    return false;
-}
-
 static void do_open(const char *path, struct fuse_file_info *info, GError **gerr) {
     struct fusedav_config *config = fuse_get_context()->private_data;
     GError *tmpgerr = NULL;
 
     assert(info);
 
-    filecache_open(config->cache_path, config->cache, path, info, config->grace, write_flag(info->flags), &tmpgerr);
+    filecache_open(config->cache_path, config->cache, path, info, config->grace, &tmpgerr);
     if (tmpgerr) {
         g_propagate_prefixed_error(gerr, tmpgerr, "do_open: ");
         return;
