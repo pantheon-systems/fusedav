@@ -252,12 +252,12 @@ int main(int argc, char *argv[]) {
 
     ret = mkdir(dirname, 0755);
     if (ret < 0) {
-        printf("FAIL: Couldn't make directory %s. Exiting\n", dirname);
+        printf("FAIL: Couldn't make directory %s (%i). Exiting\n", dirname, errno);
         exit(1);
     }
     ret = chdir(dirname);
     if (ret < 0) {
-        printf("FAIL: Couldn't change to directory %s. Exiting\n", dirname);
+        printf("FAIL: Couldn't change to directory %s (%i). Exiting\n", dirname, errno);
         exit(1);
     }
 
