@@ -50,4 +50,3 @@ Contributing
 3. Commit your changes (`git commit -am "Adding a nice new feature"`)
 4. Push to the branch (`git push origin my_new_feature`)
 5. Open a Pull Request with relevant information
-
