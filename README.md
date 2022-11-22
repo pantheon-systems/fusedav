@@ -13,6 +13,14 @@ This will run against any standard DAV implementation, i.e.
 Installation
 ------------
 
+To compile you'll at least need these libraries:
+* glib2
+* uriparser
+
+Installation of libraries with yum:
+```yum install glib2-devel && yum install uriparser-devel```
+
+Compiling fusedav:
 1. ```git clone git://github.com/pantheon-systems/fusedav.git```
 2. ```git clean -f -x -d && ./autogen.sh && ./configure && make```
 
