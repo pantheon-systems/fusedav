@@ -46,6 +46,8 @@ struct statistics {
     unsigned propfind_progressive_cache;
     unsigned propfind_complete_cache;
 
+    unsigned conflicting_404;
+
     unsigned filecache_cache_file;
     unsigned filecache_pdata_set;
     unsigned filecache_create_file;
