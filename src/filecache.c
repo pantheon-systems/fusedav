@@ -752,6 +752,9 @@ static void get_fresh_fd(filecache_t *cache,
          *  Not sure how to remediate without doing way more work and
          *  introducing way more problems than the fix will fix.
          */
+        const float samplerate = 1.0; // always sample stat
+        stats_counter("unexpected-not-found", 1, samplerate);
+
         struct stat_cache_value *value;
         g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns %ld.", 
                 funcname, path, response_code);
