@@ -178,7 +178,7 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
     struct stat_cache_value *existing = NULL;
     struct stat_cache_value value;
     rwp_t rwp = PROPFIND;
-    GError *subgerr1 = NULL ;
+    GError *subgerr1 = NULL;
 
     log_print(LOG_INFO, SECTION_FUSEDAV_PROP, "%s: %s (%lu)", funcname, path, status_code);
 
@@ -417,6 +417,10 @@ static void getdir_propfind_callback(__unused void *userdata, const char *path, 
                 log_print(LOG_ERR, SECTION_FUSEDAV_PROP, "%s: Unexpected negative entry (2); %s", funcname, path);
             }
             stat_cache_value_set(config->cache, path, &value, &subgerr1);
+            if (subgerr1) {
+                g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
+            }
+            filecache_invalidate(config->cache, path, &subgerr1);
             if (subgerr1) {
                 g_propagate_prefixed_error(gerr, subgerr1, "%s: ", funcname);
             }

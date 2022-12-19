@@ -20,9 +20,8 @@ executors:
       - image: circleci/ruby:2.4
 
 jobs:
-  build-test:
+  build-test-22:
     executor: python-executor
-    parallelism: 1
     steps:
       - checkout
       - setup_remote_docker
@@ -39,8 +38,104 @@ jobs:
            /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
            true
       - run:
-         name: Build the image
-         command: bash scripts/docker-outer.sh
+         name: Build the packages
+         command: BUILD_VERSIONS=22 bash scripts/docker-outer.sh
+      - *persist_to_workspace
+
+  build-test-28:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup_remote_docker
+      - run:
+          name: Install cpplint
+          command: sudo pip install cpplint
+      - run:
+          name: Set up version
+          command: bash scripts/version.sh
+      - run:
+         name: Call cpplint; expected to fail, so set things up to pass
+         command: |
+           set +eo pipefail
+           /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
+           true
+      - run:
+         name: Build the packages
+         command: BUILD_VERSIONS=28 bash scripts/docker-outer.sh
+      - *persist_to_workspace
+
+  build-test-22-devel:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup_remote_docker
+      - add_ssh_keys:
+          fingerprints:
+            - "17:da:1d:21:58:46:74:fc:38:4a:62:2a:32:79:1d:ab"
+      - run:
+          name: Install cpplint
+          command: sudo pip install cpplint
+      - run:
+          name: Set up version
+          command: bash scripts/version.sh
+      - run:
+         name: Call cpplint; expected to fail, so set things up to pass
+         command: |
+           set +eo pipefail
+           /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
+           true
+      - run:
+         name: Build the packages
+         command: BUILD_VERSIONS=22 DEVEL=-devel bash scripts/docker-outer.sh
+      - run:
+          name: git config
+          command: |
+            git config --global user.email "$CIRCLE_USERNAME@users.noreply.github.com"
+            git config --global user.name "$CIRCLE_USERNAME"
+      - run:
+          name: trigger integration
+          command: |
+            git clone git@github.com:pantheon-systems/fusedav-kube
+            cd fusedav-kube
+            git tag f22-${CIRCLE_BUILD_NUM}-devel
+            git push origin f22-${CIRCLE_BUILD_NUM}-devel
+      - *persist_to_workspace
+
+  build-test-28-devel:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup_remote_docker
+      - add_ssh_keys:
+          fingerprints:
+            - "17:da:1d:21:58:46:74:fc:38:4a:62:2a:32:79:1d:ab"
+      - run:
+          name: Install cpplint
+          command: sudo pip install cpplint
+      - run:
+          name: Set up version
+          command: bash scripts/version.sh
+      - run:
+         name: Call cpplint; expected to fail, so set things up to pass
+         command: |
+           set +eo pipefail
+           /usr/local/bin/cpplint --filter=-whitespace/line_length src/*
+           true
+      - run:
+         name: Build the packages
+         command: BUILD_VERSIONS=28 DEVEL=-devel bash scripts/docker-outer.sh
+      - run:
+          name: git config
+          command: |
+            git config --global user.email "$CIRCLE_USERNAME@users.noreply.github.com"
+            git config --global user.name "$CIRCLE_USERNAME"
+      - run:
+          name: trigger integration
+          command: |
+            git clone git@github.com:pantheon-systems/fusedav-kube
+            cd fusedav-kube
+            git tag f28-${CIRCLE_BUILD_NUM}-devel
+            git push origin f28-${CIRCLE_BUILD_NUM}-devel
       - *persist_to_workspace
 
   deploy-dev:
@@ -71,10 +166,28 @@ workflows:
   version: 2
   build-test-deploy:
     jobs:
-      - build-test
+      - build-test-22
+      - build-test-28
+      - build-test-22-devel:
+          filters:
+            branches:
+              ignore:
+                - dev
+                - yolo
+                - stage
+                - master
+      - build-test-28-devel:
+          filters:
+            branches:
+              ignore:
+                - dev
+                - yolo
+                - stage
+                - master
       - deploy-dev:
           requires:
-            - build-test
+            - build-test-22
+            - build-test-28
           filters:
             branches:
               only:
@@ -83,7 +196,8 @@ workflows:
                 - stage
       - deploy-prod:
           requires:
-            - build-test
+            - build-test-22
+            - build-test-28
           filters:
             branches:
               only:
