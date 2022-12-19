@@ -300,11 +300,6 @@ void dump_stats(bool log, const char *cache_path) {
         print_line(log, fd, LOG_NOTICE, SECTION_FILECACHE_OUTPUT, str);
     }
 
-    snprintf(str, MAX_LINE_LEN, "Notable Events:");
-    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-    snprintf(str, MAX_LINE_LEN, "  conflicting 404:  %u", FETCH(conflicting_404));
-    print_line(log, fd, LOG_NOTICE, SECTION_FUSEDAV_OUTPUT, str);
-
     snprintf(str, MAX_LINE_LEN, "Stat Cache Operations:");
     print_line(log, fd, LOG_NOTICE, SECTION_STATCACHE_OUTPUT, str);
     snprintf(str, MAX_LINE_LEN, "  local_gen:        %u", FETCH(statcache_local_gen));

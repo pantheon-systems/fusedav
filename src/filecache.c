@@ -614,9 +614,6 @@ static void get_fresh_fd(filecache_t *cache,
         bool unlink_old = false;
         const float samplerate = 1.0; // always sample stat
 
-        // For testing purposes ONLY, remove before merging!
-        BUMP(conflicting_404);
-
         if (pdata == NULL) {
             *pdatap = calloc(1, sizeof(struct filecache_pdata));
             pdata = *pdatap;
@@ -755,10 +752,13 @@ static void get_fresh_fd(filecache_t *cache,
          *  Not sure how to remediate without doing way more work and
          *  introducing way more problems than the fix will fix.
          */
+        const float samplerate = 1.0; // always sample stat
+        stats_counter("unexpected-not-found", 1, samplerate);
+        log_print(LOG_WARNING, SECTION_FUSEDAV_STAT, "Encountered an unexpected 404/410: Repsonse code: %u: ", response_code);
+
         struct stat_cache_value *value;
         g_set_error(gerr, filecache_quark(), ENOENT, "%s: File %s expected to exist returns %ld.", 
                 funcname, path, response_code);
-        BUMP(conflicting_404);
         /* we get a 404 because the stat_cache returned that the file existed, but it
          * was not on the server. Deleting it from the stat_cache makes the stat_cache
          * consistent, so the next access to the file will be handled correctly.
