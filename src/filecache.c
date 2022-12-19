@@ -614,6 +614,9 @@ static void get_fresh_fd(filecache_t *cache,
         bool unlink_old = false;
         const float samplerate = 1.0; // always sample stat
 
+        // For testing purposes ONLY, remove before merging!
+        BUMP(conflicting_404);
+
         if (pdata == NULL) {
             *pdatap = calloc(1, sizeof(struct filecache_pdata));
             pdata = *pdatap;
