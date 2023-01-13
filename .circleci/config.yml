@@ -68,10 +68,12 @@ jobs:
             bash scripts/push_packagecloud.sh internal
 
 workflows:
-  version: 2
+  version: 2.1
   build-test-deploy:
     jobs:
-      - build-test
+      - build-test:
+          context:
+            - sig-go-release
       - deploy-dev:
           requires:
             - build-test
@@ -84,6 +86,8 @@ workflows:
       - deploy-prod:
           requires:
             - build-test
+          context:
+            - sig-go-release
           filters:
             branches:
               only:
