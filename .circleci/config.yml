@@ -71,10 +71,23 @@ workflows:
   version: 2
   build-test-deploy:
     jobs:
-      - build-test
+      - build-test:
+          name: build-test-dev
+          filters:
+            branches:
+              ignore:
+                - master
+      - build-test:
+          name: build-test-prod
+          context:
+            - sig-go-release
+          filters:
+            branches:
+              only:
+                - master
       - deploy-dev:
           requires:
-            - build-test
+            - build-test-dev
           filters:
             branches:
               only:
@@ -83,7 +96,9 @@ workflows:
                 - stage
       - deploy-prod:
           requires:
-            - build-test
+            - build-test-prod
+          context:
+            - sig-go-release
           filters:
             branches:
               only:
