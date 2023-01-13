@@ -68,7 +68,6 @@ jobs:
             bash scripts/push_packagecloud.sh internal
 
 workflows:
-  version: 2
   build-test-deploy:
     jobs:
       - build-test:
