@@ -4,6 +4,7 @@ pkg
 *.rpm
 *.o
 .deps
+.vscode/
 Makefile.in
 aclocal.m4
 configure
