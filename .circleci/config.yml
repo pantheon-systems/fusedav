@@ -68,7 +68,6 @@ jobs:
           name: Install and Push to Package Cloud
           command: |
             gem install package_cloud
-            git push --tags
             bash scripts/push_packagecloud.sh internal
 
 workflows:
