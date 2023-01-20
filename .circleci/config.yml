@@ -30,6 +30,10 @@ jobs:
           name: Install cpplint
           command: sudo pip install cpplint
       - run:
+          name: Hack GitHub credentials into git URL
+          command: |
+           git config --global url."https://$GITHUB_TOKEN:x-oauth-basic@github.com/pantheon-systems/".insteadOf "https://github.com/pantheon-systems/"
+      - run:
           name: Set up version
           command: bash scripts/version.sh
       - run:
