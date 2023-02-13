@@ -931,6 +931,58 @@ int stat_cache_enumerate(stat_cache_t *cache, const char *path_prefix, void (*f)
     return E_SC_SUCCESS;
 }
 
+// log_dirent_count is based on stat_cache_enumerate and ignores cache freshness.
+unsigned log_dirent_count(stat_cache_t *cache, const char *path_prefix) {
+    struct stat_cache_iterator *iter;
+    struct stat_cache_entry *entry;
+    unsigned found_entries = 0;
+
+    // BUMP(statcache_enumerate);
+
+    // log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "count_dir_entries(%s)", path_prefix);
+
+    //stat_cache_list_all(cache, path_prefix);
+    // if (!force) {
+    //     time_t timestamp;
+    //     time_t current_time;
+    //     // Pass NULL for gerr; not tracking error, just zero return
+    //     timestamp = stat_cache_read_updated_children(cache, path_prefix, NULL);
+
+    //     if (timestamp == 0) {
+    //         return -STAT_CACHE_NO_DATA;
+    //     }
+
+    //     // Check for cache values which are too old; but timestamp = 0 needs to trigger below
+    //     current_time = time(NULL);
+    //     if (current_time - timestamp > STAT_CACHE_NEGATIVE_TTL) {
+    //         log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "cache value too old: %s %u", path_prefix, (unsigned)timestamp);
+    //         return -STAT_CACHE_OLD_DATA;
+    //     }
+    // }
+
+    iter = stat_cache_iter_init(cache, path_prefix);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "iterator initialized with prefix: %s", iter->key_prefix);
+
+    while ((entry = stat_cache_iter_current(iter))) {
+        // log_print(LOG_NOTICE, SECTION_STATCACHE_ITER, "key: %s", entry->key);
+        // log_print(LOG_NOTICE, SECTION_STATCACHE_ITER, "fn: %s", entry->key + (iter->key_prefix_len - 1));
+        // Ignore negative (non-existent) entries, those tagged with st_mode == 0
+        if (entry->value->st.st_mode != 0) {
+            // f(path_prefix, entry->key + (iter->key_prefix_len - 1), user);
+            ++found_entries;
+        }
+        free(entry);
+        stat_cache_iter_next(iter);
+    }
+    stat_cache_iterator_free(iter);
+    log_print(LOG_DEBUG, SECTION_STATCACHE_ITER, "Done iterating: %u items.", found_entries);
+
+    // if (found_entries == 0)
+    //     return -STAT_CACHE_NO_DATA;
+
+    return found_entries;
+}
+
 void stat_cache_walk(void) {
     leveldb_readoptions_t *roptions;
     struct leveldb_iterator_t *iter;

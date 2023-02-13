@@ -1376,6 +1376,8 @@ static int dav_mkdir(const char *path, mode_t mode) {
     long response_code = 500; // seed it as bad so we can enter the loop
     CURLcode res = CURLE_OK;
     rwp_t rwp = WRITE;
+    char *parentpath;
+    unsigned direntcnt;
 
     if (use_readonly_mode()) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_mkdir: %s aborted; in readonly mode", path);
@@ -1386,6 +1388,25 @@ static int dav_mkdir(const char *path, mode_t mode) {
     BUMP(dav_mkdir);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_DIR, "CALLBACK: %s(%s, %04o)", funcname, path, mode);
+
+    // Highly populated directory check
+    parentpath = path_parent(path);
+    if (parentpath == NULL) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_DIR, "Stat entry for the path %s is NULL.", path);
+    } else {
+        direntcnt = log_dirent_count(config->cache, parentpath);
+        if(direntcnt > MAX_DIRENTS_IN_DIR) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_mkdir: %s; dirent count (%u) above threshold for %s", path, direntcnt, parentpath);
+            // TODO: This is currently just logging but not preventing the dav_mkdir operation.
+            // Once we are confident on the decision to go ahead with blocking the writes,
+            // uncomment/modify the code below to enforce it.
+
+            // log_print(LOG_WARNING, SECTION_FUSEDAV_DIR, "dav_mkdir: %s aborted; dirent count (%u) above threshold for %s", path, direntcnt, parentpath);
+            // g_set_error(&gerr, fusedav_quark(), ENOSPC, "aborted; dirent count above threshold");
+            // return processed_gerror("dav_mkdir: ", path, &gerr);
+        }
+    }
+    free(parentpath);
 
     snprintf(fn, sizeof(fn), "%s/", path);
 
@@ -2129,6 +2150,8 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     struct stat_cache_value value;
     GError *gerr = NULL;
     int fd;
+    char *parentpath;
+    unsigned direntcnt;
 
     if (use_readonly_mode()) {
         log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_create: %s aborted; in readonly mode", path);
@@ -2139,6 +2162,25 @@ static int dav_create(const char *path, mode_t mode, struct fuse_file_info *info
     BUMP(dav_create);
 
     log_print(LOG_INFO, SECTION_FUSEDAV_FILE, "CALLBACK: dav_create(%s, %04o)", path, mode);
+
+    // Highly populated directory check
+    parentpath = path_parent(path);
+    if (parentpath == NULL) {
+        log_print(LOG_DEBUG, SECTION_FUSEDAV_FILE, "Stat entry for the path %s is NULL.", path);
+    } else {
+        direntcnt = log_dirent_count(config->cache, parentpath);
+        if(direntcnt > MAX_DIRENTS_IN_DIR) {
+            log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_create: %s; dirent count (%u) above threshold for %s", path, direntcnt, parentpath);
+            // TODO: This is currently just logging but not preventing the dav_create operation.
+            // Once we are confident on the decision to go ahead with blocking the writes,
+            // uncomment/modify the code below to enforce it.
+
+            // log_print(LOG_WARNING, SECTION_FUSEDAV_FILE, "dav_create: %s aborted; dirent count (%u) above threshold for %s", path, direntcnt, parentpath);
+            // g_set_error(&gerr, fusedav_quark(), ENOSPC, "aborted; dirent count above threshold");
+            // return processed_gerror("dav_create: ", path, &gerr);
+        }
+    }
+    free(parentpath);
 
     info->flags |= O_CREAT | O_TRUNC;
     do_open(path, info, &gerr);
