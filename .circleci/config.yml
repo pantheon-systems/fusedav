@@ -90,6 +90,8 @@ workflows:
       - deploy-dev:
           requires:
             - build-test-dev
+          context:
+            - sig-go-release
           filters:
             branches:
               only:
