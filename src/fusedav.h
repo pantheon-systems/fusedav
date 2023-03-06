@@ -20,3 +20,6 @@
 ***/
 
 #endif
+
+// Part of https://getpantheon.atlassian.net/browse/FS-1165
+#define MAX_DIRENTS_IN_DIR 100000

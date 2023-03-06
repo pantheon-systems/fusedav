@@ -87,6 +87,7 @@ void stat_cache_delete_older(stat_cache_t *cache, const char *key_prefix, unsign
 void stat_cache_walk(void);
 int stat_cache_enumerate(stat_cache_t *cache, const char *key_prefix, void (*f) (const char *path_prefix, 
             const char *filename, void *user), void *user, bool force);
+unsigned log_dirent_count(stat_cache_t *cache, const char *key_prefix);
 bool stat_cache_dir_has_child(stat_cache_t *cache, const char *path);
 void stat_cache_prune(stat_cache_t *cache, bool first);
 
