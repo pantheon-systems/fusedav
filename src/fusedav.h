@@ -22,4 +22,5 @@
 #endif
 
 // Part of https://getpantheon.atlassian.net/browse/FS-1165
-#define MAX_DIRENTS_IN_DIR 100000
+// and https://getpantheon.atlassian.net/browse/FS-1309
+#define MAX_DIRENTS_IN_DIR 200000
