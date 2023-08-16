@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "c.h": "c"
+    },
+    "makefile.launchConfigurations": [
+        {
+            "cwd": "/workspaces/fusedav/src",
+            "binaryPath": "/workspaces/fusedav/src/fusedav",
+            "binaryArgs": []
+        }
+    ],
+    "cmake.configureOnOpen": true
+}
