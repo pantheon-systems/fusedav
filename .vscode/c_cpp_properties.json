@@ -1,0 +1,32 @@
+{
+    "configurations": [
+        {
+            "name": "Linux-gcc-x64",
+            "includePath": [
+                "/workspaces/fusedav/**",
+                "/usr/lib/gcc/x86_64-redhat-linux/8/include",
+                "/usr/local/include",
+                "/usr/include",
+                "/usr/include/fuse",
+                "/usr/include/linux",
+                "/usr/include/glib-2.0",
+                "/usr/lib64/glib-2.0/include"
+            ],
+            "defines": [
+                "HAVE_CONFIG_H"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c99",
+            "cppStandard": "c++98",
+            "intelliSenseMode": "linux-gcc-x64",
+            "mergeConfigurations": false,
+            "browse": {
+                "path": [
+                    "${workspaceFolder}/**"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            }
+        }
+    ],
+    "version": 4
+}

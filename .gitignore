@@ -9,6 +9,7 @@
 /compile
 /depcomp
 /doc
+/extract
 /install-sh
 /missing
 /src/*.plist
