@@ -27,21 +27,12 @@ jobs:
       - checkout
       - setup_remote_docker
       - run:
-          name: Install cpplint
-          command: pip install cpplint
-      - run:
           name: Hack GitHub credentials into git URL
           command: |
             git config --global url."https://$GITHUB_TOKEN:x-oauth-basic@github.com/pantheon-systems/".insteadOf "git@github.com:pantheon-systems/"
       - run:
           name: Set up version
           command: bash scripts/version.sh
-      - run:
-         name: Call cpplint; expected to fail, so set things up to pass
-         command: |
-           set +eo pipefail
-           cpplint --filter=-whitespace/line_length src/*
-           true
       - run:
          name: Build the image
          command: bash scripts/docker-outer.sh
