@@ -1,10 +1,13 @@
 #!/bin/bash
 #
-#  wrapper for pushing rpm's up to both repos
+# push_packagecloud.sh pushes all RPMs for a given Fedora version to the
+# specified Packagecloud repository.
 #
-bin="$(cd -P -- "$(dirname -- "$0")" && pwd -P)"
-if [ -z "$(which package_cloud)" ]; then
-  echo "Error no 'package_cloud' found in PATH"
+# Packagecloud authn must be handled elsewhere, either via setting
+# PACKAGECLOUD_TOKEN or in ${HOME}/.packagecloud.
+
+if ! command -v package_cloud > /dev/null; then
+  echo "package_cloud not in PATH, aborting"
   exit 1
 fi
 
@@ -13,7 +16,7 @@ if [ -z "$1" ] ; then
   exit 1
 fi
 
-BUILD_VERSIONS=${BUILD_VERSIONS:-22 28}
+BUILD_VERSIONS=${BUILD_VERSIONS:-28}
 for i in $BUILD_VERSIONS ; do
-  package_cloud push "pantheon/$1/fedora/$i" $bin/../pkg/$i/fusedav/*.rpm
+  package_cloud push "pantheon/$1/fedora/$i" pkg/$i/fusedav/*.rpm
 done
