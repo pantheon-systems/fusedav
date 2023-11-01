@@ -23,7 +23,6 @@
 /tests/readwhatwaswritten
 /tests/rename
 /tests/trunc
-CHANNEL
 LATEST_RPM
 Makefile.in
 VERSION

@@ -5,7 +5,6 @@
 .git/
 .gitignore
 .vscode/
-CHANNEL
 LATEST_RPM
 README.md
 VERSION
