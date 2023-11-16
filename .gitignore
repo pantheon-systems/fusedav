@@ -23,7 +23,6 @@
 /tests/readwhatwaswritten
 /tests/rename
 /tests/trunc
-LATEST_RPM
 Makefile.in
 VERSION
 _trial_temp*
