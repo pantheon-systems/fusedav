@@ -5,7 +5,6 @@
 .git/
 .gitignore
 .vscode/
-LATEST_RPM
 README.md
 VERSION
 cache/
