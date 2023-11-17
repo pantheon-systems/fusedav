@@ -1,0 +1,95 @@
+name: Build everything
+on:
+  - push
+env:
+  REGISTRY: ghcr.io
+defaults:
+  run:
+    shell: bash
+      # specifying `bash` here ensures `set -eo pipefail` is active
+jobs:
+  build-everything:
+    runs-on: ubuntu-latest
+    permissions:
+      # contents:write allows creating a GitHub Release.
+      # packages:write allows publishing an image to GitHub Packages.
+      contents: write
+      packages: write
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          # autotag requires a reasonably complete git history.
+          fetch-depth: 0
+      - name: Build fusedav-dev image
+        run: docker build --progress plain --target dev -t fusedav-dev .
+      - name: Install autotag
+        run: |
+          curl -fsSL https://github.com/pantheon-systems/autotag/releases/latest/download/autotag_linux_amd64 \
+            -o /usr/local/bin/autotag
+          chmod 0755 /usr/local/bin/autotag
+      - name: Generate new version strings and tag(s)
+        env:
+          IMAGE_NAME: ${{ github.repository }}
+        run: |
+          echo "new-version.sh:"
+          scripts/compute-version.sh | tee new-version.sh
+      - name: Build/tag fusedav image
+        run: |
+          echo START build target extract
+          docker build --progress plain --target extract . --output extract
+          echo DONE build target extract
+          echo
+          echo START build final image
+          . new-version.sh
+          # Use older "maintainer" label instead of "org.opencontainers.image.maintainer"
+          # to overwrite the docker.io/library/fedora:28 value.
+          docker build --progress plain --target runtime \
+            --label "maintainer=nobody@pantheon.io" \
+            --label "org.opencontainers.image.description=FUSE-based DAV client with extensions for performance" \
+            --label "org.opencontainers.image.licenses=GPLv2" \
+            --label "org.opencontainers.image.source=https://github.com/pantheon-systems/fusedav" \
+            --label "org.opencontainers.image.vendor=Pantheon Systems, Inc." \
+            --label "org.opencontainers.image.version=${SEMVER}" \
+            -t fusedav .
+          echo DONE build final image
+          for tag in ${IMAGE_TAGS[@]}; do
+            echo "tag image as ${tag}"
+            docker tag fusedav $tag
+          done
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push final image/tag(s) to container registry
+        run: |
+          . new-version.sh
+          for tag in ${IMAGE_TAGS[@]}; do
+            echo "push ${tag}"
+            docker push $tag
+          done
+      - name: Create (pre-release) GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          . new-version.sh
+          # If NOT master, create a pre-release.
+          # Note that GitHub converts the tilde (`~`) which indicates a pre-release
+          # RPM version to a period (`.`) in the filename.  This should not affect
+          # RPM version comparison operations.
+          echo "Create pre-release release:"
+          gh release create $GITHUB_RELEASE_NAME -p --generate-notes --target $GITHUB_REF_NAME
+          . scripts/upload-gh-assets.sh
+        if: github.ref != 'refs/heads/master'
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          . new-version.sh
+          # Iff master, create a regular release.
+          echo "Create regular release:"
+          gh release create $GITHUB_RELEASE_NAME --generate-notes
+          . scripts/upload-gh-assets.sh
+        if: github.ref == 'refs/heads/master'
