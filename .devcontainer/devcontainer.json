@@ -10,6 +10,7 @@
 			"settings": {},
 			"extensions": [
 				"davidanson.vscode-markdownlint",
+				"github.vscode-github-actions",
 				"ms-azuretools.vscode-docker",
 				"ms-vscode.cpptools-extension-pack",
 				"ms-vscode.makefile-tools",
@@ -20,6 +21,7 @@
 			"settings": {},
 			"extensions": [
 				"davidanson.vscode-markdownlint",
+				"github.vscode-github-actions",
 				"ms-azuretools.vscode-docker",
 				"ms-vscode.cpptools-extension-pack",
 				"ms-vscode.makefile-tools",
@@ -27,6 +29,11 @@
 			]
 		}
 	},
+	// Bind mounting ~/.netrc allows use of the GitHub CLI (`gh`) by running
+	// `export GH_TOKEN=$(awk '{print $6}' ~/.netrc)` within the dev container.
+	"mounts": [
+		"type=bind,source=${localEnv:HOME}/.netrc,target=/home/vscode/.netrc,readonly"
+	],
 	"containerUser": "vscode",
 	"updateRemoteUserUID": true
 }
