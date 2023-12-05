@@ -46,7 +46,7 @@ jobs:
       - run:
           name: Install and Push to Package Cloud
           command: |
-            gem install package_cloud
+            gem install package_cloud -v 0.2.45
             bash scripts/push_packagecloud.sh internal
 
   deploy-prod:
@@ -58,7 +58,7 @@ jobs:
       - run:
           name: Install and Push to Package Cloud
           command: |
-            gem install package_cloud
+            gem install package_cloud -v 0.2.45
             bash scripts/push_packagecloud.sh internal
 
 workflows:
