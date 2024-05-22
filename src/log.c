@@ -192,8 +192,7 @@ static int print_it(const char const *formatwithtid, const char const *msg, int 
                log_key_value[ENVIRONMENT],
                log_key_value[HOST_ADDRESS],
                syscall(SYS_gettid),
-               PACKAGE_VERSION,
-               NULL);
+               PACKAGE_VERSION);
         free(escaped);
         return 0;
     }
