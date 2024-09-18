@@ -1259,7 +1259,7 @@ static int dav_unlink(const char *path) {
         return processed_gerror("dav_unlink: ", path, &gerr);
     }
 
-    log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_unlink: deleted \"%s\")", path);
+    log_print(LOG_NOTICE, SECTION_FUSEDAV_FILE, "dav_unlink: deleted \"%s\"", path);
     return 0;
 }
 
