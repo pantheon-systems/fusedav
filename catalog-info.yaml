@@ -1,13 +1,15 @@
+# Managed by github-terraform — do not edit manually
 ---
 apiVersion: backstage.io/v1alpha1
 kind: Component
 metadata:
-  name: fusedav
-  description: Pantheon filesystem FUSE client (part of Valhalla)
+  name: "fusedav"
+  description: "Pantheon filesystem FUSE client (part of Valhalla)"
   annotations:
-    circleci.com/project-slug: github.com/pantheon-systems/fusedav
-    pantheon.io/service-catalog/subdir: /
+    "backstage.io/techdocs-ref": "dir:docs/"
+    "circleci.com/project-slug": "github.com/pantheon-systems/fusedav"
+    "pantheon.io/service-catalog/subdir": "/"
 spec:
-  type: service
-  lifecycle: production
-  owner: filesystem
+  type: "gcp-service"
+  lifecycle: "production"
+  owner: "filesystem-runtimes"
