@@ -14,7 +14,7 @@
 #
 # runtime is the final runtime image.
 #
-FROM docker.io/library/fedora:28 AS base
+FROM docker.io/library/fedora:45 AS base
 
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
